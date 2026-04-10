@@ -11,7 +11,7 @@
 
 #define BOOT_STACK_SIZE     (768 << 2)
 #define BOOT_TAGS_SIZE      (128 << 3)
-#define BOOT_TMP_SIZE       131072
+#define BOOT_TMP_SIZE       524288
 
 #define MAX_BSS_SECTIONS    256
 

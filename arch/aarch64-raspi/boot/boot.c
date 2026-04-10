@@ -29,7 +29,11 @@ static uint64_t pkg_size;
 
 static void query_memory(void)
 {
-    of_node_t *mem = dt_find_node("/memory");
+    of_node_t *mem = dt_find_node("/memory@0");
+
+    /* Try /memory if /memory@0 doesn't exist (ARM32 DTBs) */
+    if (!mem || !dt_find_property(mem, "reg"))
+        mem = dt_find_node("/memory");
 
     kprintf("[BOOT] Query system memory\n");
     if (mem)
@@ -38,19 +42,42 @@ static void query_memory(void)
         if (p && p->op_length)
         {
             uint32_t *addr = p->op_value;
+            uint64_t lower, upper;
+
             /*
-             * Pi 4 DT /memory reg is <addr-cells=1, size-cells=1> by default
-             * but can be <2,1> or <2,2>. Handle the common 32-bit case.
+             * Pi 4 DT root has #address-cells=2, #size-cells=1
+             * /memory reg = <addr_hi addr_lo size>
+             * But firmware may also use #size-cells=2 for >4GB
              */
-            uint64_t lower = AROS_BE2LONG(addr[0]);
-            uint64_t upper = lower + AROS_BE2LONG(addr[1]);
+            if (p->op_length >= 12)
+            {
+                uint32_t addr_hi = AROS_BE2LONG(addr[0]);
+                uint32_t addr_lo = AROS_BE2LONG(addr[1]);
+                uint32_t size    = AROS_BE2LONG(addr[2]);
+                (void)addr_hi;
+                lower = addr_lo;
+                upper = lower + size;
+            }
+            else
+            {
+                lower = 0;
+                upper = 0;
+            }
+
+            if (upper <= lower)
+            {
+                /* Firmware hasn't patched /memory — use default 2GB */
+                kprintf("[BOOT] /memory reg empty, assuming 2GB RAM\n");
+                lower = 0;
+                upper = 0x80000000UL;
+            }
 
             kprintf("[BOOT] System memory: %08lx-%08lx (%luMB)\n",
                     (unsigned long)lower, (unsigned long)(upper - 1),
                     (unsigned long)((upper - lower) >> 20));
 
             boottag->ti_Tag = KRN_MEMLower;
-            boottag->ti_Data = lower ? lower : 0x10000; /* skip zero page */
+            boottag->ti_Data = lower ? lower : 0x10000;
             boottag++;
 
             boottag->ti_Tag = KRN_MEMUpper;
@@ -58,9 +85,20 @@ static void query_memory(void)
             mem_upper = (unsigned long *)&boottag->ti_Data;
             boottag++;
 
-            /* Tell MMU about RAM */
             mmu_map(lower, upper - lower, 0);
         }
+    }
+    else
+    {
+        kprintf("[BOOT] No /memory node, assuming 2GB RAM\n");
+        boottag->ti_Tag = KRN_MEMLower;
+        boottag->ti_Data = 0x10000;
+        boottag++;
+        boottag->ti_Tag = KRN_MEMUpper;
+        boottag->ti_Data = 0x80000000UL;
+        mem_upper = (unsigned long *)&boottag->ti_Data;
+        boottag++;
+        mmu_map(0, 0x80000000UL, 0);
     }
 }
 
@@ -80,7 +118,17 @@ void boot(void *dtb_ptr)
 
     /* Parse device tree */
     dt_mem_usage = mem_avail();
-    dt_parse(dtb_ptr);
+    if (dtb_ptr && *(uint32_t *)dtb_ptr == AROS_LONG2BE(0xd00dfeed))
+    {
+        kprintf("[BOOT] DTB at %p, size %lu\n", dtb_ptr,
+                (unsigned long)AROS_BE2LONG(((uint32_t *)dtb_ptr)[1]));
+        dt_parse(dtb_ptr);
+    }
+    else
+    {
+        kprintf("[BOOT] No valid DTB (ptr=%p)\n", dtb_ptr);
+        dtb_ptr = (void *)0;
+    }
     dt_mem_usage -= mem_avail();
 
     /* Initialize MMU (tables not loaded yet) */
@@ -96,18 +144,28 @@ void boot(void *dtb_ptr)
             uint32_t *ranges = p->op_value;
             int32_t len = p->op_length;
 
-            while (len > 0)
+            /*
+             * /soc has #address-cells=1, #size-cells=1
+             * but parent (root) has #address-cells=2
+             * So each range entry is 4 cells:
+             *   child_addr(1) parent_hi(1) parent_lo(1) size(1)
+             */
+            while (len >= 16)
             {
-                uint32_t addr_bus = AROS_BE2LONG(*ranges++);
-                uint32_t addr_cpu = AROS_BE2LONG(*ranges++);
-                uint32_t addr_len = AROS_BE2LONG(*ranges++);
-                (void)addr_bus;
+                uint32_t child_addr = AROS_BE2LONG(*ranges++);
+                uint32_t parent_hi  = AROS_BE2LONG(*ranges++);
+                uint32_t parent_lo  = AROS_BE2LONG(*ranges++);
+                uint32_t size       = AROS_BE2LONG(*ranges++);
+                (void)child_addr;
+                (void)parent_hi;
 
-                kprintf("[BOOT] SoC peripheral: %08x-%08x\n",
-                        addr_cpu, addr_cpu + addr_len - 1);
-
-                mmu_map(addr_cpu, addr_len, 1);
-                len -= 12;
+                if (size > 0)
+                {
+                    kprintf("[BOOT] SoC peripheral: %08x-%08x\n",
+                            parent_lo, parent_lo + size - 1);
+                    mmu_map(parent_lo, size, 1);
+                }
+                len -= 16;
             }
         }
     }
@@ -237,7 +295,11 @@ void boot(void *dtb_ptr)
 
         /* Load kernel ELF */
         kprintf("[BOOT] Loading kernel ELF...\n");
-        loadElf(pkg_image);
+        if (!loadElf(pkg_image))
+        {
+            kprintf("[BOOT] WARNING: Failed to load kernel ELF (stub?)\n");
+            entry = (void *)0;
+        }
 
         aarch64_flush_cache(kernel_phys, total_size_ro + total_size_rw);
         aarch64_icache_invalidate(kernel_phys, total_size_ro + total_size_rw);
@@ -285,6 +347,12 @@ void boot(void *dtb_ptr)
             (int)((uintptr_t)boottag - (uintptr_t)entry) / (int)sizeof(struct TagItem));
     kprintf("[BOOT] Bootstrap used %d bytes\n", (int)mem_used());
     kprintf("[BOOT] Jumping to kernel @ %p\n\n", entry);
+
+    if (!entry)
+    {
+        kprintf("[BOOT] No kernel to jump to. System halted.\n");
+        for (;;) __asm__ volatile("wfe");
+    }
 
     entry((struct TagItem *)((uintptr_t)&__bootstrap_end + 0x1000));
 
