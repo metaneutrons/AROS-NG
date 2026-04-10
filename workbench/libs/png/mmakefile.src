@@ -44,13 +44,13 @@ FILES += \
 endif
 
 ## Add for ARM at a later date ...
-#USER_CPPFLAGS += -DPNG_ARM_NEON
-#FILES += \
-#	arm/arm_init \
-#	arm/filter_neon_intrinsics \
-#	arm/palette_neon_intrinsics
-#AFILES += \
-#	arm/filter_neon
+ifneq (,$(findstring aarch64,$(AROS_TARGET_CPU)))
+USER_CPPFLAGS += -DPNG_ARM_NEON
+FILES += \
+	arm/arm_init \
+	arm/filter_neon_intrinsics \
+	arm/palette_neon_intrinsics
+endif
 
 #MM- core-linklibs : linklibs-png
 #MM- linklibs-png : workbench-libs-png-pkgconfig
