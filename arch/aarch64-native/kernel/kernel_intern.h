@@ -1,96 +1,85 @@
 /*
     Copyright (C) 2026, The AROS Development Team. All rights reserved.
 
-    Desc: AArch64 kernel internal definitions
+    Desc: AArch64 kernel internal definitions.
+          Modeled after arch/arm-native/kernel/kernel_intern.h.
 */
 
-#ifndef KERNEL_INTERN_H
-#define KERNEL_INTERN_H
+#ifndef KERNEL_INTERN_H_
+#define KERNEL_INTERN_H_
 
+#include <aros/libcall.h>
 #include <inttypes.h>
 #include <exec/lists.h>
 #include <exec/execbase.h>
 #include <exec/memory.h>
 #include <utility/tagitem.h>
-#include <aros/aarch64/cpucontext.h>
+#include <stdio.h>
+#include <stdarg.h>
 
-/*
- * AARCH64_Implementation — hardware abstraction for SoC-specific functions.
- * Modeled after ARM_Implementation in arch/arm-native/kernel/kernel_arm.h.
- */
-struct AARCH64_Implementation
-{
-    IPTR                ARMI_Family;
-    IPTR                ARMI_Platform;
-    APTR                ARMI_PeripheralBase;
-    uint32_t            ARMI_AffinityMask;
+#include "kernel_aarch64.h"
 
-    void  (*ARMI_Init)(APTR, APTR);
-    void  (*ARMI_InitCore)(APTR, APTR);
-    void  (*ARMI_SendIPI)(uint32_t, uint32_t, uint32_t);
-    APTR  (*ARMI_InitTimer)(APTR);
-    void  (*ARMI_Delay)(int);
-    unsigned int (*ARMI_GetTime)(void);
-    void  (*ARMI_PutChar)(int);
-    void  (*ARMI_SerPutChar)(uint8_t);
-    int   (*ARMI_SerGetChar)(void);
-    void  (*ARMI_IRQInit)(void);
-    void  (*ARMI_IRQEnable)(int);
-    void  (*ARMI_IRQDisable)(int);
-    void  (*ARMI_IRQProcess)(void);
-    void  (*ARMI_LED_Toggle)(int, int);
-    void  (*ARMI_Save_VFP_State)(void *);
-    void  (*ARMI_Restore_VFP_State)(void *);
-    void  (*ARMI_Init_VFP_State)(void *);
-};
+#undef KernelBase
+struct KernelBase;
 
-extern struct AARCH64_Implementation __aarch64_arosintern;
+/* Device tree helpers */
+void dt_set_root(void *r);
+void *dt_find_node(char *key);
+void *dt_find_node_by_phandle(uint32_t phandle);
+void *dt_find_property(void *key, char *propname);
+int dt_get_prop_len(void *prop);
+void *dt_get_prop_value(void *prop);
 
-#define ARM_LED_ON          1
-#define ARM_LED_OFF         0
-#define ARM_LED_POWER       0
-#define ARM_LED_ACTIVITY    1
+/* CPU/platform init */
+void cpu_Probe(struct AARCH64_Implementation *);
+void cpu_Init(struct AARCH64_Implementation *, struct TagItem *);
+void platform_Init(struct AARCH64_Implementation *, struct TagItem *);
 
-/* Platform init */
-void platform_Init(struct AARCH64_Implementation *impl, struct TagItem *msg);
+void core_SetupIntr(void);
+void *KrnAddSysTimerHandler(struct KernelBase *);
 
-/* BCM2711 (Pi 4) hardware addresses */
-#define BCM2711_PERIBASE        0xFE000000UL
-#define BCM2711_GICD_BASE       0xFF841000UL
-#define BCM2711_GICC_BASE       0xFF842000UL
-
-/* Tag helpers (from rom/kernel) */
+/* Tag helpers */
 intptr_t krnGetTagData(Tag tagValue, intptr_t defaultVal, const struct TagItem *tagList);
 struct TagItem *krnFindTagItem(Tag tagValue, const struct TagItem *tagList);
 struct TagItem *krnNextTagItem(const struct TagItem **tagListPtr);
 
-/* Debug output */
+struct KernelBase *getKernelBase(void);
+
+/* Debug */
 #ifdef bug
 #undef bug
 #endif
 #ifdef D
 #undef D
 #endif
+
 #define DEBUG 1
+
 #if DEBUG
 #define D(x) x
+#define DALLOCMEM(x)
 #else
 #define D(x)
+#define DALLOCMEM(x)
 #endif
 
-void kprintf(const char *format, ...);
-#define bug kprintf
+AROS_LD2(int, KrnBug,
+         AROS_LDA(const char *, format, A0),
+         AROS_LDA(va_list, args, A1),
+         struct KernelBase *, KernelBase, 12, Kernel);
+
+static inline void bug(const char *format, ...)
+{
+    struct KernelBase *kbase = getKernelBase();
+    va_list args;
+    va_start(args, format);
+    AROS_SLIB_ENTRY(KrnBug, Kernel, 12)(format, args, kbase);
+    va_end(args);
+}
 
 /*
  * STORE_TASKSTATE — save CPU registers from exception frame to task context.
- *
- * AArch64 exception frame layout (from intvecs.S):
- *   regs[0..28] = x0-x28
- *   regs[29]    = x29 (fp)
- *   regs[30]    = x30 (lr)
- *   regs[31]    = sp_el0
- *   regs[32]    = elr_el1 (pc)
- *   regs[33]    = spsr_el1 (pstate)
+ * AArch64 exception frame: x0-x28, fp, lr, sp_el0, elr_el1, spsr_el1
  */
 #define STORE_TASKSTATE(task, regs)                                             \
     struct ExceptionContext *ctx = task->tc_UnionETask.tc_ETask->et_RegFrame;   \
@@ -120,4 +109,4 @@ void kprintf(const char *format, ...);
     if (__aarch64_arosintern.ARMI_Restore_VFP_State && ctx->fpuContext)          \
         __aarch64_arosintern.ARMI_Restore_VFP_State(ctx->fpuContext);
 
-#endif /* KERNEL_INTERN_H */
+#endif /* KERNEL_INTERN_H_ */

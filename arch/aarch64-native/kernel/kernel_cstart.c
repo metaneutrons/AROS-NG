@@ -7,7 +7,7 @@
 
 #include <stdint.h>
 #include <aros/kernel.h>
-#include "kernel_intern.h"
+#include "kernel_aarch64.h"
 #include "tls.h"
 
 /* BCM2711 PL011 UART — direct access for early boot */

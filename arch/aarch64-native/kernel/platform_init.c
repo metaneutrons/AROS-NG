@@ -12,7 +12,9 @@
  * Platform probe function type.
  * Returns non-zero if this platform matches.
  */
-typedef int (*platform_probe_func)(struct AARCH64_Implementation *, void *);
+typedef int (*platform_probe_func)(struct AARCH64_Implementation *, struct TagItem *);
+
+extern int bcm2711_probe(struct AARCH64_Implementation *impl, struct TagItem *msg);
 
 /*
  * Platform probe table — populated by platform_bcm2711.c, platform_bcm2712.c etc.
@@ -21,25 +23,18 @@ typedef int (*platform_probe_func)(struct AARCH64_Implementation *, void *);
  * For now, we use a simple static table. When the full AROS build system
  * is integrated, this will use DECLARESET(ARMPLATFORMS) / ADD2SET().
  */
-extern int bcm2711_probe(struct AARCH64_Implementation *impl, void *bootmsg);
-
 static platform_probe_func platform_probes[] = {
     bcm2711_probe,
     /* bcm2712_probe will be added for Pi 5 (Task 11) */
     (platform_probe_func)0    /* terminator */
 };
 
-void platform_Init(struct AARCH64_Implementation *impl, void *bootmsg)
+void platform_Init(struct AARCH64_Implementation *impl, struct TagItem *msg)
 {
     int i;
-
-    for (i = 0; platform_probes[i] != (platform_probe_func)0; i++)
+    for (i = 0; platform_probes[i]; i++)
     {
-        if (platform_probes[i](impl, bootmsg))
-        {
-            if (impl->ARMI_LED_Toggle)
-                impl->ARMI_LED_Toggle(ARM_LED_POWER, ARM_LED_ON);
+        if (platform_probes[i](impl, msg))
             return;
-        }
     }
 }

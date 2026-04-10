@@ -276,6 +276,11 @@ LONG launcher()
 #define ALT 27
 #endif
 
+#ifdef __aarch64__
+#define SP 12
+#define ALT 10
+#endif
+
 #ifndef SP
 #define SP  _JMPLEN - 1
 #define ALT _JMPLEN - 1

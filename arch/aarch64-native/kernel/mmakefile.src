@@ -4,32 +4,62 @@ include $(SRCDIR)/config/aros.cfg
   modname=kernel pri=0 arch=raspi-aarch64 \
   includes="-I$(SRCDIR)/$(CURDIR)"
 
+%get_archincludes modname=kernel \
+    includeflag=TARGET_KERNEL_INCLUDES maindir=rom/kernel
+
+%get_archincludes modname=exec \
+    includeflag=TARGET_EXEC_INCLUDES maindir=rom/exec
+
+PRIV_KERNEL_INCLUDES = \
+    $(TARGET_KERNEL_INCLUDES) \
+    -I$(SRCDIR)/rom/kernel \
+    $(TARGET_EXEC_INCLUDES) \
+    -I$(SRCDIR)/rom/exec
+
 TARGETDIR := $(GENDIR)/$(CURDIR)
+KOBJSDIR  := $(GENDIR)/rom/kernel/kobjs
+
+# Arch-specific kernel files compiled into kernel.resource kobj
+CFILES := \
+    kernel_startup \
+    platform_init \
+    platform_bcm2711
+
+AFILES := intvecs
+
+#MM kernel-raspi-aarch64 : kernel-raspi-aarch64-core
+#MM kernel-raspi-aarch64-quick : kernel-raspi-aarch64-core
+
+# core.elf: standalone kernel (kernel_cstart + vectors)
+# Later this will link kobjs; for now it's standalone.
+CORE_OBJS := $(TARGETDIR)/kernel_cstart.o $(TARGETDIR)/intvecs_standalone.o
+
+#MM
+kernel-raspi-aarch64-core: $(OSGENDIR)/boot/core.elf
+
+$(OSGENDIR)/boot/core.elf: $(CORE_OBJS)
+	@$(ECHO) "Creating   $@"
+	%mkdirs_q $(OSGENDIR)/boot
+	@$(TARGET_LD) -T $(SRCDIR)/$(CURDIR)/ldscript.lds -o $@ $^
 
 KERNEL_CFLAGS := -ffreestanding -nostdlib $(CFLAGS_NO_BUILTIN) \
     -I$(SRCDIR)/$(CURDIR) \
     -I$(AROS_DEVELOPER)/include
 
-#MM kernel-raspi-aarch64 : kernel-raspi-aarch64-core
-#MM kernel-raspi-aarch64-core : includes
-
-kernel-raspi-aarch64:
-	@$(NOP)
-
-KERNEL_OBJS := $(TARGETDIR)/kernel_cstart.o $(TARGETDIR)/intvecs.o
-
-#MM
-kernel-raspi-aarch64-core: $(OSGENDIR)/boot/core.elf
-
-$(OSGENDIR)/boot/core.elf: $(KERNEL_OBJS)
-	@$(ECHO) "Creating   $@"
-	%mkdirs_q $(OSGENDIR)/boot
-	@$(TARGET_LD) -T $(SRCDIR)/$(CURDIR)/ldscript.lds -o $@ $^
-
 $(TARGETDIR)/kernel_cstart.o: $(SRCDIR)/$(CURDIR)/kernel_cstart.c
 	%compile_q opt="$(KERNEL_CFLAGS)"
 
-$(TARGETDIR)/intvecs.o: $(SRCDIR)/$(CURDIR)/intvecs.S
+$(TARGETDIR)/intvecs_standalone.o: $(SRCDIR)/$(CURDIR)/intvecs.S
 	%compile_q opt="$(KERNEL_CFLAGS)"
+
+# Arch-specific files for kernel.resource kobj
+#MM kernel-kernel-raspi-aarch64 : includes
+
+USER_INCLUDES := $(PRIV_KERNEL_INCLUDES) -I$(GENINCDIR) -I$(AROS_DEVELOPER)/include
+USER_CPPFLAGS := -DTARGET_SECTION_COMMENT=\"$(AROS_SECTION_COMMENT)\"
+
+%build_archspecific \
+  mainmmake=kernel-kernel modname=kernel maindir=rom/kernel arch=raspi-aarch64 \
+  files="$(CFILES)" asmfiles="$(AFILES)"
 
 %common

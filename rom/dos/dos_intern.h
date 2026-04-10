@@ -44,7 +44,7 @@ struct IntDosBase
     struct ErrorString          errors  __attribute__((aligned(4)));
     struct SignalSemaphore      segsem;
     struct List                 segdata;
-#ifdef __arm__
+#if defined(__arm__) || defined(__aarch64__)
     ULONG                       arm_Arch; /* ARM-specific info for ELF loader */
     BOOL                        arm_VFP;
     BOOL                        arm_VFP_v3;
