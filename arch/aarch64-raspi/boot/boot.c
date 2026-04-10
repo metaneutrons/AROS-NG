@@ -1,99 +1,293 @@
 /*
     Copyright (C) 2026, The AROS Development Team. All rights reserved.
 
-    Desc: AArch64 bootstrap entry point for Raspberry Pi 4.
-          Initializes UART, prints hardware info, halts.
-          Later tasks will add: device tree parsing, memory detection,
-          ELF loading, and jump to kernel.
-    Lang: english
+    Desc: AArch64 bootstrap for Raspberry Pi 4.
+          Parses device tree, detects memory, sets up MMU,
+          loads core.elf, builds kernel tag list, jumps to kernel.
+          Based on arch/arm-raspi/boot/boot.c.
 */
 
-#include <stdint.h>
+#include <inttypes.h>
+#include <aros/macros.h>
+#include <aros/kernel.h>
+#include <string.h>
 
+#include "boot.h"
 #include "serialdebug.h"
+#include "mmu.h"
+#include "elf.h"
+#include "devicetree.h"
 
-/* Read AArch64 system registers */
-static inline uint64_t read_midr_el1(void)
-{
-    uint64_t val;
-    __asm__ volatile("mrs %0, midr_el1" : "=r"(val));
-    return val;
-}
+#define DBOOT(x) x
 
-static inline uint64_t read_mpidr_el1(void)
-{
-    uint64_t val;
-    __asm__ volatile("mrs %0, mpidr_el1" : "=r"(val));
-    return val;
-}
+static const char bootstrapName[] = "Bootstrap/AArch64 v8-a";
 
-static inline uint64_t read_currentel(void)
-{
-    uint64_t val;
-    __asm__ volatile("mrs %0, CurrentEL" : "=r"(val));
-    return val;
-}
+static struct TagItem *boottag;
+static unsigned long *mem_upper;
+static void *pkg_image;
+static uint64_t pkg_size;
 
-static inline uint64_t read_cntfrq_el0(void)
+static void query_memory(void)
 {
-    uint64_t val;
-    __asm__ volatile("mrs %0, cntfrq_el0" : "=r"(val));
-    return val;
+    of_node_t *mem = dt_find_node("/memory");
+
+    kprintf("[BOOT] Query system memory\n");
+    if (mem)
+    {
+        of_property_t *p = dt_find_property(mem, "reg");
+        if (p && p->op_length)
+        {
+            uint32_t *addr = p->op_value;
+            /*
+             * Pi 4 DT /memory reg is <addr-cells=1, size-cells=1> by default
+             * but can be <2,1> or <2,2>. Handle the common 32-bit case.
+             */
+            uint64_t lower = AROS_BE2LONG(addr[0]);
+            uint64_t upper = lower + AROS_BE2LONG(addr[1]);
+
+            kprintf("[BOOT] System memory: %08lx-%08lx (%luMB)\n",
+                    (unsigned long)lower, (unsigned long)(upper - 1),
+                    (unsigned long)((upper - lower) >> 20));
+
+            boottag->ti_Tag = KRN_MEMLower;
+            boottag->ti_Data = lower ? lower : 0x10000; /* skip zero page */
+            boottag++;
+
+            boottag->ti_Tag = KRN_MEMUpper;
+            boottag->ti_Data = upper;
+            mem_upper = (unsigned long *)&boottag->ti_Data;
+            boottag++;
+
+            /* Tell MMU about RAM */
+            mmu_map(lower, upper - lower, 0);
+        }
+    }
 }
 
 void boot(void *dtb_ptr)
 {
-    uint64_t midr, mpidr, el, cntfrq;
+    void (*entry)(struct TagItem *) = (void *)0;
+    uint64_t total_size_ro = 0, total_size_rw = 0;
+    void *fdt = (void *)0;
+    int dt_mem_usage = 0;
 
     serInit();
 
-    kprintf("\n\n");
-    kprintf("AROS - Amiga Research Operating System\n");
-    kprintf("AArch64 Bootstrap (" __DATE__ ")\n");
-    kprintf("========================================\n\n");
+    kprintf("\n\n[BOOT] AROS %s\n", bootstrapName);
 
-    /* Exception level */
-    el = read_currentel() >> 2;
-    kprintf("[BOOT] Exception level: EL%d\n", (int)el);
+    /* Initialize memory allocator */
+    mem_init();
 
-    /* CPU identification */
-    midr = read_midr_el1();
-    kprintf("[BOOT] MIDR_EL1: 0x%08lx\n", midr);
-    kprintf("[BOOT]   Implementer: 0x%02x", (unsigned int)((midr >> 24) & 0xFF));
-    if (((midr >> 24) & 0xFF) == 0x41)
-        kprintf(" (ARM)\n");
-    else
-        kprintf("\n");
-    kprintf("[BOOT]   Part number: 0x%03x", (unsigned int)((midr >> 4) & 0xFFF));
-    if (((midr >> 4) & 0xFFF) == 0xD08)
-        kprintf(" (Cortex-A72)\n");
-    else if (((midr >> 4) & 0xFFF) == 0xD0B)
-        kprintf(" (Cortex-A76)\n");
-    else
-        kprintf("\n");
+    /* Parse device tree */
+    dt_mem_usage = mem_avail();
+    dt_parse(dtb_ptr);
+    dt_mem_usage -= mem_avail();
 
-    /* Core ID */
-    mpidr = read_mpidr_el1();
-    kprintf("[BOOT] MPIDR_EL1: 0x%016lx (core %d)\n",
-            mpidr, (int)(mpidr & 0x3));
+    /* Initialize MMU (tables not loaded yet) */
+    mmu_init();
 
-    /* Timer frequency */
-    cntfrq = read_cntfrq_el0();
-    kprintf("[BOOT] Timer frequency: %lu Hz\n", cntfrq);
+    /* Detect SoC peripherals from device tree */
+    of_node_t *soc = dt_find_node("/soc");
+    if (soc)
+    {
+        of_property_t *p = dt_find_property(soc, "ranges");
+        if (p)
+        {
+            uint32_t *ranges = p->op_value;
+            int32_t len = p->op_length;
 
-    /* DTB pointer */
-    kprintf("[BOOT] DTB pointer: %p\n", dtb_ptr);
+            while (len > 0)
+            {
+                uint32_t addr_bus = AROS_BE2LONG(*ranges++);
+                uint32_t addr_cpu = AROS_BE2LONG(*ranges++);
+                uint32_t addr_len = AROS_BE2LONG(*ranges++);
+                (void)addr_bus;
 
-    /* Memory info */
-    kprintf("[BOOT] UART0 (PL011): 0x%08x\n", 0xFE201000);
-    kprintf("[BOOT] Kernel loaded at: 0x00080000\n");
-    kprintf("[BOOT] Stack at: 0x00400000\n");
+                kprintf("[BOOT] SoC peripheral: %08x-%08x\n",
+                        addr_cpu, addr_cpu + addr_len - 1);
 
-    kprintf("[BOOT] Handing off to kernel...\n\n");
+                mmu_map(addr_cpu, addr_len, 1);
+                len -= 12;
+            }
+        }
+    }
 
-    /* Call kernel entry point (monolithic image — no ELF load needed) */
+    /* Map GIC-400 area (not in /soc ranges on Pi 4) */
+    mmu_map(0xFF800000UL, 0x00800000UL, 1);
 
-    /* Should not return */
-    for (;;)
-        __asm__ volatile("wfe");
+    kprintf("[BOOT] Booted on %s\n",
+            (char *)dt_find_property(dt_find_node("/"), "model")->op_value);
+
+    /* Set up boot tag list */
+    boottag = (struct TagItem *)((uintptr_t)&__bootstrap_end + 0x1000);
+    boottag = (struct TagItem *)(((uintptr_t)boottag + 15) & ~15);
+
+    boottag->ti_Tag = KRN_Platform;
+    boottag->ti_Data = 0x2711;
+    boottag++;
+
+    boottag->ti_Tag = KRN_BootLoader;
+    boottag->ti_Data = (IPTR)bootstrapName;
+    boottag++;
+
+    kprintf("[BOOT] DT memory usage: %d bytes\n", dt_mem_usage);
+
+    query_memory();
+
+    kprintf("[BOOT] Bootstrap @ %p-%p\n", &__bootstrap_start, &__bootstrap_end);
+
+    boottag->ti_Tag = KRN_ProtAreaStart;
+    boottag->ti_Data = (IPTR)&__bootstrap_start;
+    boottag++;
+
+    boottag->ti_Tag = KRN_ProtAreaEnd;
+    boottag->ti_Data = (IPTR)&__bootstrap_end;
+    boottag++;
+
+    /* Find initrd (core.elf or package) */
+    of_node_t *chosen = dt_find_node("/chosen");
+    if (chosen)
+    {
+        of_property_t *p = dt_find_property(chosen, "linux,initrd-start");
+        if (p)
+            pkg_image = (void *)(uintptr_t)AROS_BE2LONG(*(uint32_t *)p->op_value);
+        else
+            pkg_image = (void *)0;
+
+        p = dt_find_property(chosen, "linux,initrd-end");
+        if (p)
+            pkg_size = AROS_BE2LONG(*(uint32_t *)p->op_value) - (uintptr_t)pkg_image;
+        else
+            pkg_size = 0;
+    }
+
+    /* If no initrd, use embedded core.elf */
+    if (!pkg_image)
+    {
+        pkg_image = &_binary_core_bin_start;
+        pkg_size = (uintptr_t)&_binary_core_bin_end - (uintptr_t)&_binary_core_bin_start;
+    }
+
+    kprintf("[BOOT] Kernel image: %p-%p (%lu bytes)\n",
+            pkg_image, (void *)((uintptr_t)pkg_image + pkg_size - 1), (unsigned long)pkg_size);
+
+    if (mem_upper)
+    {
+        *mem_upper = *mem_upper & ~4095;
+
+        uintptr_t kernel_phys = *mem_upper;
+        uint64_t size_ro, size_rw;
+
+        /* Calculate kernel size */
+        getElfSize(pkg_image, &size_rw, &size_ro);
+        total_size_ro = (size_ro + 4095) & ~4095;
+        total_size_rw = (size_rw + 4095) & ~4095;
+
+        /* Reserve space for flattened device tree */
+        total_size_ro += (dt_total_size() + 31) & ~31;
+        /* Reserve space for unpacked device tree */
+        total_size_ro += (dt_mem_usage + 31) & ~31;
+
+        /* Align to 2MB boundary */
+        total_size_ro = (total_size_ro + 0x1FFFFF) & ~0x1FFFFF;
+        total_size_rw = (total_size_rw + 0x1FFFFF) & ~0x1FFFFF;
+
+        kernel_phys = *mem_upper - total_size_ro - total_size_rw;
+
+        /* Identity-mapped: virtual = physical */
+        uintptr_t kernel_virt = kernel_phys;
+
+        bzero((void *)kernel_phys, total_size_ro + total_size_rw);
+
+        kprintf("[BOOT] Kernel physical: %p\n", (void *)kernel_phys);
+        kprintf("[BOOT] Kernel RO: %luKB, RW: %luKB\n",
+                (unsigned long)(total_size_ro >> 10),
+                (unsigned long)(total_size_rw >> 10));
+
+        /* Copy flattened device tree */
+        if (dt_total_size() > 0)
+        {
+            long dt_size = (dt_total_size() + 31) & ~31;
+            memcpy((void *)(kernel_phys + total_size_ro - dt_size),
+                   dtb_ptr, dt_size);
+            fdt = (void *)(kernel_virt + total_size_ro - dt_size);
+
+            boottag->ti_Tag = KRN_FlattenedDeviceTree;
+            boottag->ti_Data = (IPTR)fdt;
+            boottag++;
+        }
+
+        *mem_upper = kernel_phys;
+
+        entry = (void (*)(struct TagItem *))kernel_virt;
+
+        initAllocator(kernel_phys, kernel_phys + total_size_ro, 0);
+
+        boottag->ti_Tag = KRN_KernelLowest;
+        boottag->ti_Data = kernel_virt;
+        boottag++;
+
+        boottag->ti_Tag = KRN_KernelHighest;
+        boottag->ti_Data = kernel_virt + total_size_ro + total_size_rw;
+        boottag++;
+
+        boottag->ti_Tag = KRN_KernelPhysLowest;
+        boottag->ti_Data = kernel_phys;
+        boottag++;
+
+        /* Load kernel ELF */
+        kprintf("[BOOT] Loading kernel ELF...\n");
+        loadElf(pkg_image);
+
+        aarch64_flush_cache(kernel_phys, total_size_ro + total_size_rw);
+        aarch64_icache_invalidate(kernel_phys, total_size_ro + total_size_rw);
+
+        boottag->ti_Tag = KRN_KernelBss;
+        boottag->ti_Data = (IPTR)tracker;
+        boottag++;
+    }
+
+    /* Re-parse device tree in kernel area */
+    if (dt_total_size() > 0 && fdt)
+    {
+        long dt_size = (dt_total_size() + 31) & ~31;
+        long dt_unpack = (dt_mem_usage + 31) & ~31;
+        void *dt_location = (void *)((uintptr_t)fdt - dt_unpack);
+
+        kprintf("[BOOT] Re-parsing DT at %p\n", dt_location);
+        explicit_mem_init(dt_location, dt_unpack);
+        dt_parse(fdt);
+
+        boottag->ti_Tag = KRN_OpenFirmwareTree;
+        boottag->ti_Data = (IPTR)dt_location;
+        boottag++;
+
+        of_node_t *ch = dt_find_node("/chosen");
+        if (ch)
+        {
+            of_property_t *p = dt_find_property(ch, "bootargs");
+            if (p)
+            {
+                boottag->ti_Tag = KRN_CmdLine;
+                boottag->ti_Data = (IPTR)p->op_value;
+                boottag++;
+            }
+        }
+    }
+
+    /* Enable MMU */
+    mmu_load();
+
+    boottag->ti_Tag = TAG_DONE;
+    boottag->ti_Data = 0;
+
+    kprintf("[BOOT] Kernel tags: %d entries\n",
+            (int)((uintptr_t)boottag - (uintptr_t)entry) / (int)sizeof(struct TagItem));
+    kprintf("[BOOT] Bootstrap used %d bytes\n", (int)mem_used());
+    kprintf("[BOOT] Jumping to kernel @ %p\n\n", entry);
+
+    entry((struct TagItem *)((uintptr_t)&__bootstrap_end + 0x1000));
+
+    kprintf("[BOOT] Kernel returned! Halting.\n");
+    for (;;) __asm__ volatile("wfe");
 }

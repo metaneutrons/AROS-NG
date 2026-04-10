@@ -1,14 +1,15 @@
-
 include $(SRCDIR)/config/aros.cfg
 
 TARGETDIR       := $(GENDIR)/$(CURDIR)
-FILES           := boot serialdebug
+FILES           := boot mmu support serialdebug elf devicetree
 ASMFILES        := startup64
-USER_CFLAGS     := -Wall -ffreestanding -nostdlib $(CFLAGS_NO_BUILTIN)
+USER_CFLAGS     := -Wall -ffreestanding $(CFLAGS_NO_BUILTIN)
 USER_CPPFLAGS   := -DTARGET_SECTION_COMMENT=\"$(AROS_SECTION_COMMENT)\"
-USER_INCLUDES   := -isystem $(SRCDIR)/$(CURDIR)/include
+USER_INCLUDES   := -isystem $(SRCDIR)/$(CURDIR)/include -I$(SRCDIR)/rom/openfirmware
 USER_AFLAGS     := -I$(GENINCDIR)
 OPTIMIZATION_CFLAGS := -O2
+
+BOOTSTRAP_LD := $(CROSSTOOLSDIR)/aarch64-aros-ld
 
 #MM kernel-raspi-aarch64 : kernel-raspi-aarch64-bootimg
 #MM kernel-raspi-aarch64-bootimg : includes
@@ -19,17 +20,35 @@ kernel-raspi-aarch64:
 #MM
 kernel-raspi-aarch64-bootimg: $(AROSDIR)/aros-aarch64-raspi.img
 
-BOOTSTRAP_LD := $(CROSSTOOLSDIR)/aarch64-aros-ld
+# Check if core.elf exists; if not, create a minimal stub
+CORE_ELF := $(OSGENDIR)/boot/core.elf
 
-$(AROSDIR)/aros-aarch64-raspi.img: $(foreach f, $(ASMFILES), $(TARGETDIR)/$(f).o) $(foreach f, $(FILES), $(TARGETDIR)/$(f).o)
+$(TARGETDIR)/core.bin.o: $(CORE_ELF)
+	@$(ECHO) "Embedding  core.elf"
+	@$(CP) $(CORE_ELF) $(TARGETDIR)/core.bin
+	@cd $(TARGETDIR) && $(BOOTSTRAP_LD) -r --format binary \
+		--oformat elf64-littleaarch64 core.bin -o $@
+
+# Minimal stub core.elf if the real one doesn't exist yet
+$(CORE_ELF):
+	@$(ECHO) "Creating   stub core.elf (kernel not built yet)"
+	%mkdirs_q $(OSGENDIR)/boot
+	@printf '\177ELF\002\001\001\000\000\000\000\000\000\000\000\000\002\000\267\000' > $@
+	@truncate -s 64 $@ 2>/dev/null || dd if=/dev/zero bs=1 count=44 >> $@ 2>/dev/null
+
+$(AROSDIR)/aros-aarch64-raspi.img: $(TARGETDIR)/core.bin.o $(foreach f, $(ASMFILES), $(TARGETDIR)/$(f).o) $(foreach f, $(FILES), $(TARGETDIR)/$(f).o)
 	@$(ECHO) "Creating   $@"
 	@$(MKDIR) $(dir $@)
-	@$(BOOTSTRAP_LD) --entry=_start --script=$(SRCDIR)/$(CURDIR)/ldscript.lds \
+	@$(BOOTSTRAP_LD) -Map $(OSGENDIR)/boot/aros-aarch64-raspi.img.map \
+		--entry=_start --script=$(SRCDIR)/$(CURDIR)/ldscript.lds \
 		$(foreach f, $(ASMFILES), $(TARGETDIR)/$(f).o) \
 		$(foreach f, $(FILES), $(TARGETDIR)/$(f).o) \
-		-o $(TARGETDIR)/aros-aarch64-raspi.elf
-	@$(TARGET_DEF_STRIP) $(TARGETDIR)/aros-aarch64-raspi.elf
-	@$(TARGET_OBJCOPY) -O binary $(TARGETDIR)/aros-aarch64-raspi.elf $@
+		$(TARGETDIR)/core.bin.o \
+		-L$(AROS_LIB) -lstdc.static \
+		-o $(OSGENDIR)/boot/aros-aarch64-raspi.elf
+	@$(TARGET_DEF_STRIP) --strip-unneeded -R .note -R .comment \
+		$(OSGENDIR)/boot/aros-aarch64-raspi.elf
+	@$(TARGET_OBJCOPY) -O binary $(OSGENDIR)/boot/aros-aarch64-raspi.elf $@
 
 $(TARGETDIR)/%.o : %.c
 	%compile_q
