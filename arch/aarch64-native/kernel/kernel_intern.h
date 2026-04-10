@@ -7,76 +7,117 @@
 #ifndef KERNEL_INTERN_H
 #define KERNEL_INTERN_H
 
-#include <stdint.h>
+#include <inttypes.h>
+#include <exec/lists.h>
+#include <exec/execbase.h>
+#include <exec/memory.h>
+#include <utility/tagitem.h>
+#include <aros/aarch64/cpucontext.h>
 
 /*
  * AARCH64_Implementation — hardware abstraction for SoC-specific functions.
- *
- * DECISION: Modeled after ARM_Implementation in arch/arm-native/kernel/kernel_arm.h.
- * Each SoC (BCM2711, BCM2712) registers its functions via the ARMPLATFORMS
- * symbol set. Kernel code calls through these pointers only.
- * Date: 2026-04-10
+ * Modeled after ARM_Implementation in arch/arm-native/kernel/kernel_arm.h.
  */
 struct AARCH64_Implementation
 {
-    uint64_t            ARMI_Family;        /* ARM architecture version      */
-    uint64_t            ARMI_Platform;      /* Platform ID from device tree  */
-    void               *ARMI_PeripheralBase;/* SoC peripheral base address   */
-    uint32_t            ARMI_AffinityMask;  /* CPU affinity mask             */
+    IPTR                ARMI_Family;
+    IPTR                ARMI_Platform;
+    APTR                ARMI_PeripheralBase;
+    uint32_t            ARMI_AffinityMask;
 
-    /* Platform init callbacks */
-    void  (*ARMI_Init)(void *kbase, void *sbase);
-    void  (*ARMI_InitCore)(void *kbase, void *sbase);
-
-    /* IPI for SMP */
-    void  (*ARMI_SendIPI)(uint32_t ipi, uint32_t data, uint32_t cpumask);
-
-    /* Timer */
-    void *(*ARMI_InitTimer)(void *kbase);
-    void  (*ARMI_Delay)(int usec);
-    uint64_t (*ARMI_GetTime)(void);
-
-    /* Serial / debug output */
-    void  (*ARMI_PutChar)(int c);
-    void  (*ARMI_SerPutChar)(uint8_t c);
+    void  (*ARMI_Init)(APTR, APTR);
+    void  (*ARMI_InitCore)(APTR, APTR);
+    void  (*ARMI_SendIPI)(uint32_t, uint32_t, uint32_t);
+    APTR  (*ARMI_InitTimer)(APTR);
+    void  (*ARMI_Delay)(int);
+    unsigned int (*ARMI_GetTime)(void);
+    void  (*ARMI_PutChar)(int);
+    void  (*ARMI_SerPutChar)(uint8_t);
     int   (*ARMI_SerGetChar)(void);
-
-    /* Interrupt controller */
     void  (*ARMI_IRQInit)(void);
-    void  (*ARMI_IRQEnable)(int irq);
-    void  (*ARMI_IRQDisable)(int irq);
+    void  (*ARMI_IRQEnable)(int);
+    void  (*ARMI_IRQDisable)(int);
     void  (*ARMI_IRQProcess)(void);
-
-    /* LED control */
-    void  (*ARMI_LED_Toggle)(int led, int state);
-
-    /* VFP/NEON state management */
-    void  (*ARMI_Save_VFP_State)(void *buf);
-    void  (*ARMI_Restore_VFP_State)(void *buf);
-    void  (*ARMI_Init_VFP_State)(void *buf);
+    void  (*ARMI_LED_Toggle)(int, int);
+    void  (*ARMI_Save_VFP_State)(void *);
+    void  (*ARMI_Restore_VFP_State)(void *);
+    void  (*ARMI_Init_VFP_State)(void *);
 };
 
 extern struct AARCH64_Implementation __aarch64_arosintern;
 
-/* LED constants */
 #define ARM_LED_ON          1
 #define ARM_LED_OFF         0
 #define ARM_LED_POWER       0
 #define ARM_LED_ACTIVITY    1
 
-/* Platform init — iterates ARMPLATFORMS symbol set */
-void platform_Init(struct AARCH64_Implementation *impl, void *bootmsg);
+/* Platform init */
+void platform_Init(struct AARCH64_Implementation *impl, struct TagItem *msg);
 
-/*
- * BCM2711 (Pi 4) hardware addresses.
- * DECISION: Defined here as SSOT until a dedicated hardware/bcm2711.h is created.
- * Date: 2026-04-10
- */
+/* BCM2711 (Pi 4) hardware addresses */
 #define BCM2711_PERIBASE        0xFE000000UL
 #define BCM2711_GICD_BASE       0xFF841000UL
 #define BCM2711_GICC_BASE       0xFF842000UL
 
-/* Debug output — uses ARMI_SerPutChar if available */
+/* Tag helpers (from rom/kernel) */
+intptr_t krnGetTagData(Tag tagValue, intptr_t defaultVal, const struct TagItem *tagList);
+struct TagItem *krnFindTagItem(Tag tagValue, const struct TagItem *tagList);
+struct TagItem *krnNextTagItem(const struct TagItem **tagListPtr);
+
+/* Debug output */
+#ifdef bug
+#undef bug
+#endif
+#ifdef D
+#undef D
+#endif
+#define DEBUG 1
+#if DEBUG
+#define D(x) x
+#else
+#define D(x)
+#endif
+
 void kprintf(const char *format, ...);
+#define bug kprintf
+
+/*
+ * STORE_TASKSTATE — save CPU registers from exception frame to task context.
+ *
+ * AArch64 exception frame layout (from intvecs.S):
+ *   regs[0..28] = x0-x28
+ *   regs[29]    = x29 (fp)
+ *   regs[30]    = x30 (lr)
+ *   regs[31]    = sp_el0
+ *   regs[32]    = elr_el1 (pc)
+ *   regs[33]    = spsr_el1 (pstate)
+ */
+#define STORE_TASKSTATE(task, regs)                                             \
+    struct ExceptionContext *ctx = task->tc_UnionETask.tc_ETask->et_RegFrame;   \
+    int __i;                                                                    \
+    for (__i = 0; __i < 29; __i++)                                              \
+        ctx->r[__i] = ((uint64_t *)regs)[__i];                                 \
+    ctx->fp     = ((uint64_t *)regs)[29];                                       \
+    ctx->lr     = ((uint64_t *)regs)[30];                                       \
+    ctx->sp     = ((uint64_t *)regs)[31];                                       \
+    task->tc_SPReg = (void *)ctx->sp;                                           \
+    ctx->pc     = ((uint64_t *)regs)[32];                                       \
+    ctx->pstate = ((uint64_t *)regs)[33];                                       \
+    if (__aarch64_arosintern.ARMI_Save_VFP_State && ctx->fpuContext)             \
+        __aarch64_arosintern.ARMI_Save_VFP_State(ctx->fpuContext);
+
+#define RESTORE_TASKSTATE(task, regs)                                           \
+    struct ExceptionContext *ctx = task->tc_UnionETask.tc_ETask->et_RegFrame;   \
+    int __i;                                                                    \
+    for (__i = 0; __i < 29; __i++)                                              \
+        ((uint64_t *)regs)[__i] = ctx->r[__i];                                 \
+    ((uint64_t *)regs)[29] = ctx->fp;                                           \
+    ((uint64_t *)regs)[30] = ctx->lr;                                           \
+    ctx->sp = (intptr_t)task->tc_SPReg;                                         \
+    ((uint64_t *)regs)[31] = ctx->sp;                                           \
+    ((uint64_t *)regs)[32] = ctx->pc;                                           \
+    ((uint64_t *)regs)[33] = ctx->pstate;                                       \
+    if (__aarch64_arosintern.ARMI_Restore_VFP_State && ctx->fpuContext)          \
+        __aarch64_arosintern.ARMI_Restore_VFP_State(ctx->fpuContext);
 
 #endif /* KERNEL_INTERN_H */

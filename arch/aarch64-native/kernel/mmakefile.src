@@ -6,21 +6,30 @@ include $(SRCDIR)/config/aros.cfg
 
 TARGETDIR := $(GENDIR)/$(CURDIR)
 
+KERNEL_CFLAGS := -ffreestanding -nostdlib $(CFLAGS_NO_BUILTIN) \
+    -I$(SRCDIR)/$(CURDIR) \
+    -I$(AROS_DEVELOPER)/include
+
 #MM kernel-raspi-aarch64 : kernel-raspi-aarch64-core
 #MM kernel-raspi-aarch64-core : includes
 
 kernel-raspi-aarch64:
 	@$(NOP)
 
+KERNEL_OBJS := $(TARGETDIR)/kernel_cstart.o $(TARGETDIR)/intvecs.o
+
 #MM
 kernel-raspi-aarch64-core: $(OSGENDIR)/boot/core.elf
 
-$(OSGENDIR)/boot/core.elf: $(TARGETDIR)/kernel_stub.o
+$(OSGENDIR)/boot/core.elf: $(KERNEL_OBJS)
 	@$(ECHO) "Creating   $@"
 	%mkdirs_q $(OSGENDIR)/boot
 	@$(TARGET_LD) -T $(SRCDIR)/$(CURDIR)/ldscript.lds -o $@ $^
 
-$(TARGETDIR)/kernel_stub.o: $(SRCDIR)/$(CURDIR)/kernel_stub.c
-	%compile_q opt="-ffreestanding -nostdlib $(CFLAGS_NO_BUILTIN)"
+$(TARGETDIR)/kernel_cstart.o: $(SRCDIR)/$(CURDIR)/kernel_cstart.c
+	%compile_q opt="$(KERNEL_CFLAGS)"
+
+$(TARGETDIR)/intvecs.o: $(SRCDIR)/$(CURDIR)/intvecs.S
+	%compile_q opt="$(KERNEL_CFLAGS)"
 
 %common
