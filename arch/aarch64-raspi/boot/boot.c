@@ -92,8 +92,6 @@ void boot(void *dtb_ptr)
     kprintf("[BOOT] Handing off to kernel...\n\n");
 
     /* Call kernel entry point (monolithic image — no ELF load needed) */
-    extern void kernel_cstart(void);
-    kernel_cstart();
 
     /* Should not return */
     for (;;)

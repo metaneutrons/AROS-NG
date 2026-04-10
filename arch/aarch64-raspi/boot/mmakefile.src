@@ -3,20 +3,32 @@ include $(SRCDIR)/config/aros.cfg
 
 TARGETDIR       := $(GENDIR)/$(CURDIR)
 FILES           := boot serialdebug
+ASMFILES        := startup64
 USER_CFLAGS     := -Wall -ffreestanding -nostdlib $(CFLAGS_NO_BUILTIN)
+USER_CPPFLAGS   := -DTARGET_SECTION_COMMENT=\"$(AROS_SECTION_COMMENT)\"
 USER_INCLUDES   := -isystem $(SRCDIR)/$(CURDIR)/include
+USER_AFLAGS     := -I$(GENINCDIR)
 OPTIMIZATION_CFLAGS := -O2
 
-#MM kernel-raspi-aarch64 :
+#MM kernel-raspi-aarch64 : kernel-raspi-aarch64-bootimg
+#MM kernel-raspi-aarch64-bootimg : includes
+
+kernel-raspi-aarch64:
+	@$(NOP)
 
 #MM
-distfiles-raspi-aarch64-bootimg: $(AROSDIR)/aros-aarch64-raspi.img
+kernel-raspi-aarch64-bootimg: $(AROSDIR)/aros-aarch64-raspi.img
 
-$(AROSDIR)/aros-aarch64-raspi.img: $(TARGETDIR)/startup64.o $(foreach f, $(FILES), $(TARGETDIR)/$(f).o)
+BOOTSTRAP_LD := $(CROSSTOOLSDIR)/aarch64-aros-ld
+
+$(AROSDIR)/aros-aarch64-raspi.img: $(foreach f, $(ASMFILES), $(TARGETDIR)/$(f).o) $(foreach f, $(FILES), $(TARGETDIR)/$(f).o)
 	@$(ECHO) "Creating   $@"
-	@$(KERNEL_LD) --entry=_start --script=$(SRCDIR)/$(CURDIR)/ldscript.lds \
-		$(TARGETDIR)/startup64.o $(foreach f, $(FILES), $(TARGETDIR)/$(f).o) \
+	@$(MKDIR) $(dir $@)
+	@$(BOOTSTRAP_LD) --entry=_start --script=$(SRCDIR)/$(CURDIR)/ldscript.lds \
+		$(foreach f, $(ASMFILES), $(TARGETDIR)/$(f).o) \
+		$(foreach f, $(FILES), $(TARGETDIR)/$(f).o) \
 		-o $(TARGETDIR)/aros-aarch64-raspi.elf
+	@$(TARGET_DEF_STRIP) $(TARGETDIR)/aros-aarch64-raspi.elf
 	@$(TARGET_OBJCOPY) -O binary $(TARGETDIR)/aros-aarch64-raspi.elf $@
 
 $(TARGETDIR)/%.o : %.c
