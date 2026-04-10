@@ -30,6 +30,8 @@
 #define R_AARCH64_LDST16_ABS_LO12_NC   284
 #define R_AARCH64_LDST8_ABS_LO12_NC    278
 #define R_AARCH64_LDST128_ABS_LO12_NC  299
+#define R_AARCH64_ADR_GOT_PAGE         311
+#define R_AARCH64_LD64_GOT_LO12_NC     312
 #define R_AARCH64_MOVW_UABS_G0_NC      264
 #define R_AARCH64_MOVW_UABS_G1_NC      266
 #define R_AARCH64_MOVW_UABS_G2_NC      268
@@ -71,8 +73,10 @@ int getElfSize(void *elf_file, uint64_t *size_rw, uint64_t *size_ro)
     struct elfheader *eh = (struct elfheader *)elf_file;
     uint64_t s_ro = 0, s_rw = 0;
 
+    kprintf("[BOOT:ELF] Header check..\n");
     if (checkHeader(eh))
     {
+        kprintf("[BOOT:ELF] OK, %d sections, entry=%p\n", int_shnum, (void*)eh->entry);
         struct sheader *sh = (struct sheader *)((uintptr_t)elf_file + eh->shoff);
         
 
@@ -304,6 +308,28 @@ static int relocate(struct elfheader *eh, struct sheader *sh, long shrel_idx,
             break;
         }
 
+        /*
+         * GOT relocations: In a statically-linked kernel, GOT entries
+         * point directly to the symbol. We treat ADR_GOT_PAGE like
+         * ADR_PREL_PG_HI21 and LD64_GOT_LO12_NC like LDST64_ABS_LO12_NC,
+         * since the GOT entry contains the final address.
+         */
+        case R_AARCH64_ADR_GOT_PAGE:
+        {
+            int64_t off = ((s + voff) & ~0xFFF) - ((int64_t)p_addr & ~0xFFF);
+            uint32_t immlo = (off >> 12) & 0x3;
+            uint32_t immhi = (off >> 14) & 0x7FFFF;
+            *(uint32_t *)p_addr = (*(uint32_t *)p_addr & 0x9F00001F) | (immlo << 29) | (immhi << 5);
+            break;
+        }
+
+        case R_AARCH64_LD64_GOT_LO12_NC:
+        {
+            uint32_t imm12 = ((s + voff) & 0xFFF) >> 3;
+            *(uint32_t *)p_addr = (*(uint32_t *)p_addr & 0xFFC003FF) | (imm12 << 10);
+            break;
+        }
+
         default:
             kprintf("[BOOT:ELF] Unknown relocation %d\n", reltype);
             return 0;
@@ -312,15 +338,17 @@ static int relocate(struct elfheader *eh, struct sheader *sh, long shrel_idx,
     return 1;
 }
 
-int loadElf(void *elf_file)
+uintptr_t loadElf(void *elf_file)
 {
     struct elfheader *eh = (struct elfheader *)elf_file;
 
     
 
 
+    kprintf("[BOOT:ELF] Header check..\n");
     if (checkHeader(eh))
     {
+        kprintf("[BOOT:ELF] OK, %d sections, entry=%p\n", int_shnum, (void*)eh->entry);
         struct sheader *sh = (struct sheader *)((uintptr_t)elf_file + eh->shoff);
         uintptr_t deltas[int_shnum];
 
@@ -354,6 +382,32 @@ int loadElf(void *elf_file)
                     return 0;
             }
         }
+
+        /* Return address of _start symbol */
+    for (unsigned i = 0; i < int_shnum; i++)
+    {
+        if (sh[i].type == SHT_SYMTAB)
+        {
+            struct symbol *sym = (struct symbol *)sh[i].addr;
+            unsigned nsyms = sh[i].size / sizeof(struct symbol);
+            char *strtab = (char *)sh[sh[i].link].addr;
+            for (unsigned j = 0; j < nsyms; j++)
+            {
+                if (sym[j].name && strtab)
+                {
+                    char *name = strtab + sym[j].name;
+                    if (name[0]=='_' && name[1]=='s' && name[2]=='t' &&
+                        name[3]=='a' && name[4]=='r' && name[5]=='t' && name[6]==0)
+                    {
+                        /* sym[j].value = offset within section */
+                        uintptr_t entry = (uintptr_t)sh[sym[j].shindex].addr + sym[j].value;
+                        kprintf("[BOOT:ELF] _start at %p\n", (void*)entry);
+                        return entry;
+                    }
+                }
+            }
+        }
     }
-    return 1;
+    } /* checkHeader */
+    return 0;
 }

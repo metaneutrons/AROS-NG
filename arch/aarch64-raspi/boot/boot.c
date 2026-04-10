@@ -277,7 +277,7 @@ void boot(void *dtb_ptr)
 
         *mem_upper = kernel_phys;
 
-        entry = (void (*)(struct TagItem *))kernel_virt;
+        
 
         initAllocator(kernel_phys, kernel_phys + total_size_ro, 0);
 
@@ -293,12 +293,19 @@ void boot(void *dtb_ptr)
         boottag->ti_Data = kernel_phys;
         boottag++;
 
-        /* Load kernel ELF */
+        /* Load kernel ELF -- entry point returned by loadElf */
         kprintf("[BOOT] Loading kernel ELF...\n");
-        if (!loadElf(pkg_image))
         {
-            kprintf("[BOOT] WARNING: Failed to load kernel ELF (stub?)\n");
-            entry = (void *)0;
+            uintptr_t elf_entry = loadElf(pkg_image);
+            if (!elf_entry)
+            {
+                kprintf("[BOOT] WARNING: Failed to load kernel ELF\n");
+                entry = (void *)0;
+            }
+            else
+            {
+                entry = (void (*)(struct TagItem *))elf_entry;
+            }
         }
 
         aarch64_flush_cache(kernel_phys, total_size_ro + total_size_rw);

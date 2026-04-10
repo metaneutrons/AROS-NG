@@ -17,10 +17,10 @@ PRIV_KERNEL_INCLUDES = \
     -I$(SRCDIR)/rom/exec
 
 TARGETDIR := $(GENDIR)/$(CURDIR)
-KOBJSDIR  := $(GENDIR)/rom/kernel/kobjs
 
 # Arch-specific kernel files compiled into kernel.resource kobj
 CFILES := \
+    kernel_cstart \
     kernel_startup \
     platform_init \
     platform_bcm2711
@@ -30,27 +30,27 @@ AFILES := intvecs
 #MM kernel-raspi-aarch64 : kernel-raspi-aarch64-core
 #MM kernel-raspi-aarch64-quick : kernel-raspi-aarch64-core
 
-# core.elf: standalone kernel (kernel_cstart + vectors)
-# Later this will link kobjs; for now it's standalone.
-CORE_OBJS := $(TARGETDIR)/kernel_cstart.o $(TARGETDIR)/intvecs_standalone.o
+# core.elf: links kernel.resource, exec.library, task.resource kobjs.
+# kernel_cstart.c and intvecs.S are compiled into kernel_resource.o
+# via %build_archspecific, so we don't link them separately.
+
+#MM kernel-raspi-aarch64-core : kernel-kernel-kobj kernel-exec-kobj kernel-task-kobj
+#MM kernel-raspi-aarch64-core-quick : kernel-kernel-kobj-quick kernel-exec-kobj-quick kernel-task-kobj-quick
 
 #MM
 kernel-raspi-aarch64-core: $(OSGENDIR)/boot/core.elf
 
-$(OSGENDIR)/boot/core.elf: $(CORE_OBJS)
+$(OSGENDIR)/boot/core.elf: $(KOBJSDIR)/kernel_resource.o $(KOBJSDIR)/exec_library.o $(KOBJSDIR)/task_resource.o
 	@$(ECHO) "Creating   $@"
 	%mkdirs_q $(OSGENDIR)/boot
-	@$(TARGET_LD) -T $(SRCDIR)/$(CURDIR)/ldscript.lds -o $@ $^
+	@$(TARGET_LD) -Map $(OSGENDIR)/boot/core.map \
+	    -T $(SRCDIR)/$(CURDIR)/ldscript.lds \
+	    -o $@ $^ \
+	    -L$(AROS_LIB) -larossupport -lautoinit -llibinit -lstdc.static
 
-KERNEL_CFLAGS := -ffreestanding -nostdlib $(CFLAGS_NO_BUILTIN) \
+KERNEL_CFLAGS := -ffreestanding $(CFLAGS_NO_BUILTIN) \
     -I$(SRCDIR)/$(CURDIR) \
     -I$(AROS_DEVELOPER)/include
-
-$(TARGETDIR)/kernel_cstart.o: $(SRCDIR)/$(CURDIR)/kernel_cstart.c
-	%compile_q opt="$(KERNEL_CFLAGS)"
-
-$(TARGETDIR)/intvecs_standalone.o: $(SRCDIR)/$(CURDIR)/intvecs.S
-	%compile_q opt="$(KERNEL_CFLAGS)"
 
 # Arch-specific files for kernel.resource kobj
 #MM kernel-kernel-raspi-aarch64 : includes

@@ -2,7 +2,6 @@
     Copyright (C) 2026, The AROS Development Team. All rights reserved.
 
     Desc: Linker script for AArch64 core.elf (kernel).
-          Loaded by bootstrap at runtime address.
           _start must be at offset 0 (entry point = load address).
 */
 
@@ -13,20 +12,23 @@ SECTIONS
     . = 0;
 
     .text : {
-        /* kernel_cstart.o first — _start at offset 0 */
-        *kernel_cstart.o(.text .text.*)
+        /* _start at offset 0 — kernel entry point */
+        *(.text.startup)
+        /* Vector table needs 2048-byte alignment */
+        . = ALIGN(2048);
+        /* Everything else */
         *(.text .text.*)
     }
 
-    .rodata : {
+    .rodata : ALIGN(8) {
         *(.rodata .rodata.*)
     }
 
-    .data : {
+    .data : ALIGN(8) {
         *(.data .data.*)
     }
 
-    .bss : {
+    .bss : ALIGN(8) {
         *(.bss .bss.*)
         *(COMMON)
     }
@@ -34,6 +36,5 @@ SECTIONS
     /DISCARD/ : {
         *(.comment)
         *(.note*)
-        *(.eh_frame*)
     }
 }

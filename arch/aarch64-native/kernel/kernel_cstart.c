@@ -7,7 +7,7 @@
 
 #include <stdint.h>
 #include <aros/kernel.h>
-#include "kernel_aarch64.h"
+#include "kernel_intern.h"
 #include "tls.h"
 
 /* BCM2711 PL011 UART — direct access for early boot */
@@ -20,20 +20,19 @@
 extern void VectorTable(void);
 
 /* Forward declarations */
-static void uart_putc(char c);
-static void uart_puts(const char *s);
-static void uart_puthex(uint64_t val);
-static void clear_bss(struct TagItem *msg);
-static void setup_vectors(void);
-static void cpu_Probe(struct AARCH64_Implementation *impl);
+void uart_putc(char c);
+void uart_puts(const char *s);
+void uart_puthex(uint64_t val);
+void clear_bss(struct TagItem *msg);
+void setup_vectors(void);
+void cpu_Probe(struct AARCH64_Implementation *impl);
 void kernel_cstart(struct TagItem *msg);
 
 /* Globals */
-struct AARCH64_Implementation __aarch64_arosintern
-    __attribute__((aligned(8), section(".data"))) = {0};
+extern struct AARCH64_Implementation __aarch64_arosintern;
 
-struct ExecBase *SysBase __attribute__((section(".data"))) = NULL;
-struct TagItem *BootMsg __attribute__((section(".data"))) = NULL;
+extern struct ExecBase *SysBase;
+extern struct TagItem *BootMsg;
 
 /* Stack for the kernel (40KB) */
 static uint64_t stack[5120] __attribute__((used, aligned(16)));
@@ -45,9 +44,11 @@ static uint64_t stack[5120] __attribute__((used, aligned(16)));
  *
  * Written in asm to avoid the compiler spilling x0 to the old stack
  * before we switch to the new one.
+ *
+ * Placed in .text.startup section so the linker script can put it first.
  */
 __asm__ (
-    ".text\n"
+    ".section .text.startup, \"ax\"\n"
     ".globl _start\n"
     ".type _start, %function\n"
     "_start:\n"
@@ -55,6 +56,7 @@ __asm__ (
     "   add  x1, x1, :lo12:stack + 40960\n"
     "   mov  sp, x1\n"
     "   b    kernel_cstart\n"
+    ".text\n"
 );
 
 /*
@@ -183,7 +185,7 @@ void __attribute__((noinline)) kernel_cstart(struct TagItem *msg)
 /*
  * Clear BSS sections listed in KRN_KernelBss tag.
  */
-static void clear_bss(struct TagItem *msg)
+void clear_bss(struct TagItem *msg)
 {
     struct TagItem *tag = msg;
     while (tag->ti_Tag != TAG_DONE)
@@ -204,12 +206,12 @@ static void clear_bss(struct TagItem *msg)
     }
 }
 
-static void setup_vectors(void)
+void setup_vectors(void)
 {
     __asm__ volatile("msr vbar_el1, %0; isb" : : "r"((uint64_t)&VectorTable));
 }
 
-static void cpu_Probe(struct AARCH64_Implementation *impl)
+void cpu_Probe(struct AARCH64_Implementation *impl)
 {
     uint64_t midr, cntfrq;
     __asm__ volatile("mrs %0, midr_el1" : "=r"(midr));
@@ -228,7 +230,7 @@ static void cpu_Probe(struct AARCH64_Implementation *impl)
 }
 
 /* Minimal UART output — no dependencies */
-static void uart_putc(char c)
+void uart_putc(char c)
 {
     while (*(volatile uint32_t *)(PL011_BASE + PL011_FR) & PL011_FR_TXFF) ;
     if (c == '\n') {
@@ -238,9 +240,9 @@ static void uart_putc(char c)
     *(volatile uint32_t *)(PL011_BASE + PL011_DR) = c;
 }
 
-static void uart_puts(const char *s) { while (*s) uart_putc(*s++); }
+void uart_puts(const char *s) { while (*s) uart_putc(*s++); }
 
-static void uart_puthex(uint64_t val)
+void uart_puthex(uint64_t val)
 {
     const char h[] = "0123456789abcdef";
     int started = 0;
