@@ -318,10 +318,12 @@ int loadElf(void *elf_file)
 
     
 
+
     if (checkHeader(eh))
     {
         struct sheader *sh = (struct sheader *)((uintptr_t)elf_file + eh->shoff);
         uintptr_t deltas[int_shnum];
+
 
         
 

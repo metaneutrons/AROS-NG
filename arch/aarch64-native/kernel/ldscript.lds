@@ -11,6 +11,10 @@ SECTIONS
 {
     . = 0;
 
+    .text.startup : {
+        *(.text.startup)
+    }
+
     .text : {
         *(.text .text.*)
     }
