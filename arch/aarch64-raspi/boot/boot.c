@@ -229,7 +229,7 @@ void boot(void *dtb_ptr)
     kprintf("[BOOT] Kernel image: %p-%p (%lu bytes)\n",
             pkg_image, (void *)((uintptr_t)pkg_image + pkg_size - 1), (unsigned long)pkg_size);
 
-    if (mem_upper)
+    if (mem_upper && pkg_size > 256)
     {
         *mem_upper = *mem_upper & ~4095;
 
@@ -237,7 +237,13 @@ void boot(void *dtb_ptr)
         uint64_t size_ro, size_rw;
 
         /* Calculate kernel size */
-        getElfSize(pkg_image, &size_rw, &size_ro);
+        if (pkg_size > 64)
+            getElfSize(pkg_image, &size_rw, &size_ro);
+        else
+        {
+            size_ro = 0;
+            size_rw = 0;
+        }
         total_size_ro = (size_ro + 4095) & ~4095;
         total_size_rw = (size_rw + 4095) & ~4095;
 

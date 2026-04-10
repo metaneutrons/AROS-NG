@@ -12,7 +12,7 @@ OPTIMIZATION_CFLAGS := -O2
 BOOTSTRAP_LD := $(CROSSTOOLSDIR)/aarch64-aros-ld
 
 #MM kernel-raspi-aarch64 : kernel-raspi-aarch64-bootimg
-#MM kernel-raspi-aarch64-bootimg : includes
+#MM kernel-raspi-aarch64-bootimg : includes kernel-raspi-aarch64-core
 
 kernel-raspi-aarch64:
 	@$(NOP)
@@ -28,13 +28,6 @@ $(TARGETDIR)/core.bin.o: $(CORE_ELF)
 	@$(CP) $(CORE_ELF) $(TARGETDIR)/core.bin
 	@cd $(TARGETDIR) && $(BOOTSTRAP_LD) -r --format binary \
 		--oformat elf64-littleaarch64 core.bin -o $@
-
-# Minimal stub core.elf if the real one doesn't exist yet
-$(CORE_ELF):
-	@$(ECHO) "Creating   stub core.elf (kernel not built yet)"
-	%mkdirs_q $(OSGENDIR)/boot
-	@printf '\177ELF\002\001\001\000\000\000\000\000\000\000\000\000\002\000\267\000' > $@
-	@truncate -s 64 $@ 2>/dev/null || dd if=/dev/zero bs=1 count=44 >> $@ 2>/dev/null
 
 $(AROSDIR)/aros-aarch64-raspi.img: $(TARGETDIR)/core.bin.o $(foreach f, $(ASMFILES), $(TARGETDIR)/$(f).o) $(foreach f, $(FILES), $(TARGETDIR)/$(f).o)
 	@$(ECHO) "Creating   $@"
