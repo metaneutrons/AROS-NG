@@ -1,0 +1,34 @@
+
+include $(SRCDIR)/config/aros.cfg
+
+TARGETDIR       := $(GENDIR)/$(CURDIR)
+FILES           := boot serialdebug
+USER_CFLAGS     := -Wall -ffreestanding -nostdlib $(CFLAGS_NO_BUILTIN)
+USER_INCLUDES   := -isystem $(SRCDIR)/$(CURDIR)/include
+OPTIMIZATION_CFLAGS := -O2
+
+#MM kernel-raspi-aarch64 :
+
+#MM
+distfiles-raspi-aarch64-bootimg: $(AROSDIR)/aros-aarch64-raspi.img
+
+$(AROSDIR)/aros-aarch64-raspi.img: $(TARGETDIR)/startup64.o $(foreach f, $(FILES), $(TARGETDIR)/$(f).o)
+	@$(ECHO) "Creating   $@"
+	@$(KERNEL_LD) --entry=_start --script=$(SRCDIR)/$(CURDIR)/ldscript.lds \
+		$(TARGETDIR)/startup64.o $(foreach f, $(FILES), $(TARGETDIR)/$(f).o) \
+		-o $(TARGETDIR)/aros-aarch64-raspi.elf
+	@$(TARGET_OBJCOPY) -O binary $(TARGETDIR)/aros-aarch64-raspi.elf $@
+
+$(TARGETDIR)/%.o : %.c
+	%compile_q
+
+$(TARGETDIR)/%.o : %.S
+	%compile_q
+
+$(TARGETDIR)/%.d : %.c
+	%mkdepend_q
+
+DEPS := $(foreach f, $(FILES), $(TARGETDIR)/$(f).d)
+-include $(DEPS)
+
+%common

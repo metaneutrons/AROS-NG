@@ -2037,11 +2037,20 @@ case "$target_os" in
             *aarch64*)
                 PLATFORM_EXECSMP="#define __AROSPLATFORM_SMP__"
                 aros_target_cpu="aarch64"
+                target_cpu="aarch64"
                 gcc_default_cpu="armv8-a+crc+simd"
-                gcc_default_cpu_tune="cortex-a53"
+                gcc_default_cpu_tune="cortex-a72"
                 gcc_default_fpu="neon-fp-armv8"
                 aros_object_format="aarch64elf_aros"
+                gcc_target_cpu="aarch64"
+                kernel_tool_prefix="aarch64-none-elf-"
                 llvm_target_cpu="AArch64"
+
+                aros_config_cflags="$aros_config_cflags"
+                aros_config_cxxflags="$aros_config_cxxflags"
+                aros_config_aflags="$aros_config_aflags"
+                aros_kernel_cflags="$aros_kernel_cflags"
+                aros_target_mkdep="$aros_target_mkdep -Daarch64"
                 ;;
             *armhf*)
                 PLATFORM_EXECSMP="#define __AROSPLATFORM_SMP__"

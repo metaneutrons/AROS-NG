@@ -2,7 +2,7 @@
 #define AROS_AARCH64_CPU_H
 
 /*
-    Copyright � 2016, The AROS Development Team. All rights reserved.
+    Copyright © 2016, The AROS Development Team. All rights reserved.
     $Id$
 
     NOTE: This file must compile *without* any other header !
@@ -75,21 +75,29 @@ register unsigned char* AROS_GET_SP __asm__("%sp");
 
 /*
     One entry in a libraries' jumptable. For assembler compatibility, the
-    field jmp should contain the code for an absolute jmp to a 32bit
-    address. There are also a couple of macros which you should use to
-    access the vector table from C.
+    fields contain AArch64 instructions that perform an absolute jump to
+    a 64-bit address:
+        ldr x16, .+8       (0x58000050)  — load target from next 8 bytes
+        br  x16             (0xd61f0200)  — branch to target
+        .quad target_addr                 — 64-bit target address
+
+    DECISION: x16 (ip0) is used as the scratch register because AAPCS64
+    designates x16/x17 as intra-procedure-call scratch registers that
+    callers must not rely on being preserved.
+    Date: 2026-04-10
 */
 struct FullJumpVec
 {
-    unsigned long jmp;
-    unsigned long vec;
+    unsigned int jmp[2];    /* Two 32-bit AArch64 instructions          */
+    unsigned long vec;      /* 64-bit target address                    */
 };
 #define __AROS_SET_FULLJMP(v,a) \
 do \
 {  \
     struct FullJumpVec *_v = (v); \
-    _v->jmp = 0xe51ff004; 		/* ldr pc, [pc, #-4] */ 	\
-    _v->vec = (a); 		/* target_address */ 	\
+    _v->jmp[0] = 0x58000050;   /* ldr x16, .+8             */  \
+    _v->jmp[1] = 0xd61f0200;   /* br  x16                  */  \
+    _v->vec    = (unsigned long)(a); /* 64-bit target address */  \
 } while (0)
 
 struct JumpVec

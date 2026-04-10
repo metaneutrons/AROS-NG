@@ -1,0 +1,46 @@
+{
+  "name": "aros-aarch64",
+  "description": "AROS AArch64 porting agent — enterprise-grade bare-metal OS development for Raspberry Pi 4/5",
+  "prompt": "file://.kiro/prompts/aarch64-port.md",
+  "tools": [
+    "fs_read",
+    "fs_write",
+    "execute_bash",
+    "grep",
+    "glob",
+    "code",
+    "web_search",
+    "web_fetch",
+    "knowledge",
+    "todo_list"
+  ],
+  "allowedTools": [
+    "fs_read",
+    "grep",
+    "glob",
+    "code",
+    "knowledge"
+  ],
+  "resources": [
+    "skill://.kiro/docs/aarch64-plan.md",
+    "file://arch/aarch64-all/**/*",
+    "file://arch/arm-native/kernel/kernel_arm.h",
+    "file://arch/arm-native/kernel/platform_init.c",
+    "file://arch/arm-native/kernel/platform_bcm2708.c",
+    "file://arch/arm-native/kernel/kernel_intern.h",
+    "file://arch/arm-native/kernel/kernel_startup.c",
+    "file://arch/arm-raspi/boot/boot.c",
+    "file://arch/arm-raspi/boot/mmakefile.src",
+    "file://arch/arm-all/include/aros/genmodule.h",
+    "file://configure.in"
+  ],
+  "hooks": {
+    "agentSpawn": [
+      {
+        "command": "echo '=== AROS AArch64 Port ===' && echo 'AROS source: ~/Source/AROS' && echo 'Circle ref:  ~/Source/circle' && echo 'Target: RPi4 (BCM2711) → RPi5 (BCM2712)' && ls -d arch/aarch64-* 2>/dev/null || echo 'No aarch64 arch dirs yet'",
+        "description": "Show project status on agent start"
+      }
+    ]
+  },
+  "welcomeMessage": "AROS AArch64 porting agent active. Engineering standards loaded. What task are we working on?"
+}
