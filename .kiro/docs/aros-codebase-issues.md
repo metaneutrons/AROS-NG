@@ -60,6 +60,12 @@ description: Bugs and issues found in the AROS codebase during AArch64 porting. 
 
 ## Architecture Isolation Lessons
 
+### Embedded binary data must be 8-byte aligned on AArch64
+- **File**: `arch/aarch64-raspi/boot/mmakefile.src`
+- **Problem**: Using `ld -r --format binary` to embed core.elf produces unaligned data. AArch64 `ldr x0, [x1, #offset]` on unaligned addresses causes Data Abort (ESR 0x96000021) even with SCTLR_EL1.A=0 in QEMU.
+- **Fix**: Use `.incbin` with `.balign 8` in an assembly wrapper instead of `--format binary`.
+- **Impact**: Any AArch64 code that embeds binary data via the linker must ensure 8-byte alignment.
+
 ### How `arch/arm-native/` code gets pulled into AArch64 builds
 The AROS `%build_module` macro generates dependency chains:
 ```

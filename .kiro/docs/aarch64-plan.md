@@ -47,16 +47,16 @@ arch/
 - **Status**: DONE (created in initial commit `18e687c19a`)
 
 ### Task 5: AArch64 bootstrap — serial boot on Pi 4
-- **Status**: DONE — boots on QEMU raspi4b with real Pi 4 DTB
-- **Commits**: `c7aafea7e8` (initial), `4deed75977` (DTB fix), `5413b8f6f1` (MMU + kernel stub)
-- **What works**: EL2→EL1, UART, DTB parsing, memory detection, SoC detection, MMU enable
-- **What's broken**: ELF loader crashes on relocatable core.elf — RELA handling needs debugging
+- **Status**: DONE — full bootstrap→kernel handoff working on QEMU raspi4b
+- **Commits**: `c7aafea7e8` (initial), `4deed75977` (DTB fix), `5413b8f6f1` (MMU), `948227007a` (alignment fix), `6c706da9a0` (kernel handoff)
+- **What works**: EL2→EL1, UART, DTB parsing, memory detection, SoC detection, MMU enable, ELF loading with RELA relocations, kernel entry
+- **Key bugs found**: Embedded ELF must be 8-byte aligned (use .incbin with .balign 8, not --format binary). Entry point must be first function in .text.
 - **QEMU command**: `qemu-system-aarch64 -M raspi4b -m 2G -serial stdio -display none -dtb bcm2711-rpi-4-b.dtb -kernel aros-aarch64-raspi.img`
 
 ### Task 6: AArch64 kernel startup — exec initialization
-- **Status**: PARTIALLY DONE — stub kernel created, GIC/timer/vectors written but not yet linked into core.elf
-- **Blocker**: ELF loader in bootstrap crashes on relocatable core.elf. Must debug RELA relocation handling before kernel handoff works.
-- **Next step**: Debug elf.c — likely issue with `int_shnum` global state or section header traversal on REL-type objects.
+- **Status**: PARTIALLY DONE — stub kernel runs, prints to UART, reports CPU/EL/MMU state
+- **Next step**: Replace stub with real kernel_cstart that initializes ExecBase, memory headers, and calls InitCode(RTF_SINGLETASK)
+- **Requires**: kernel.resource, exec.library kobjs built by the AROS build system
 - **Objective**: Kernel starts, initializes exec.library, reaches idle loop.
 - **Work**:
   - `arch/aarch64-native/kernel/kernel_startup.c` — entry, BSS clear, exception stacks, CPU probe, platform init, SysBase, memory pools, resident scan
