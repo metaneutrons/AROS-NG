@@ -54,9 +54,11 @@ arch/
 - **QEMU command**: `qemu-system-aarch64 -M raspi4b -m 2G -serial stdio -display none -dtb bcm2711-rpi-4-b.dtb -kernel aros-aarch64-raspi.img`
 
 ### Task 6: AArch64 kernel startup — exec initialization
-- **Status**: PARTIALLY DONE — stub kernel runs, prints to UART, reports CPU/EL/MMU state
-- **Next step**: Replace stub with real kernel_cstart that initializes ExecBase, memory headers, and calls InitCode(RTF_SINGLETASK)
-- **Requires**: kernel.resource, exec.library kobjs built by the AROS build system
+- **Status**: PARTIALLY DONE — kernel_cstart runs, parses tags, sets up TLS, installs vectors
+- **Commit**: `b81d67c98e`
+- **What works**: Tag parsing (memory, protected area, platform), TLS via TPIDR_EL1, VBAR_EL1 exception vectors, CPU probe (Cortex-A72), BSS clearing
+- **What's missing**: Linking against kernel.resource/exec.library kobjs for `krnPrepareExecBase`, `krnCreateTLSFMemHeader`, `InitCode`
+- **Next step**: Get the AROS build system to compile kernel.resource and exec.library for aarch64, then link them into core.elf
 - **Objective**: Kernel starts, initializes exec.library, reaches idle loop.
 - **Work**:
   - `arch/aarch64-native/kernel/kernel_startup.c` — entry, BSS clear, exception stacks, CPU probe, platform init, SysBase, memory pools, resident scan

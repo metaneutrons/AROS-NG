@@ -70,6 +70,11 @@ description: Technical decisions and rationale for the AROS AArch64 port. Consul
 - **Relocation types implemented**: R_AARCH64_ABS64, ABS32, CALL26, JUMP26, ADR_PREL_PG_HI21, ADD_ABS_LO12_NC, LDST*_ABS_LO12_NC.
 - **Status**: Compiles but crashes on the stub core.elf. Needs debugging — likely issue with section header parsing of REL-type (relocatable) ELF objects.
 
+### Stack switch in _start must be pure assembly
+- **Decision**: `_start` is a top-level `__asm__()` block, not a C function with inline asm.
+- **Rationale**: If `_start` is a C function, the compiler may spill `x0` (the tags pointer argument) to the old bootstrap stack before the inline asm switches to the new kernel stack. Then `ldr x0, [sp, #offset]` reads garbage from the new stack. Pure asm avoids this by switching SP before any C code runs.
+- **Bug found**: With C `_start`, GCC generated `str x0, [sp, #24]` (save to old stack), `mov sp, x1` (switch), `ldr x0, [sp, #24]` (load from new stack = garbage). All boot tags showed as 0.
+
 ## Files Created/Modified
 
 ### New directories
