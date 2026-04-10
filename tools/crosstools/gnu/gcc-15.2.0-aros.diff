@@ -1684,7 +1684,24 @@ diff -ruN gcc-15.2.0/libgcc/config/m68k/t-aros gcc-15.2.0.aros/libgcc/config/m68
 diff -ruN gcc-15.2.0/libgcc/config.host gcc-15.2.0.aros/libgcc/config.host
 --- gcc-15.2.0/libgcc/config.host	2025-08-08 06:51:44.833420855 +0000
 +++ gcc-15.2.0.aros/libgcc/config.host	2020-12-27 16:58:14.310000000 +0000
-@@ -527,6 +527,12 @@
+@@ -402,6 +402,16 @@
+ esac
+ 
+ case ${host} in
++aarch64*-*-aros*)
++	extra_parts="$extra_parts crtbegin.o crtend.o crti.o crtn.o"
++	extra_parts="$extra_parts crtfastmath.o"
++	tmake_file="${tmake_file} ${cpu_type}/t-aarch64"
++	tmake_file="${tmake_file} ${cpu_type}/t-lse"
++	tmake_file="${tmake_file} ${cpu_type}/t-softfp t-softfp t-crtfm"
++	tmake_file="${tmake_file} t-dfprules"
++	md_unwind_def_header=aarch64/aarch64-unwind-def.h
++	md_unwind_header=aarch64/aarch64-unwind.h
++	;;
+ aarch64*-*-elf | aarch64*-*-rtems*)
+ 	extra_parts="$extra_parts crtbegin.o crtend.o crti.o crtn.o"
+ 	extra_parts="$extra_parts crtfastmath.o"
+@@ -527,6 +537,12 @@
  	unwind_header=config/arm/unwind-arm.h
  	extra_parts="$extra_parts crti.o crtn.o"
  	;;
