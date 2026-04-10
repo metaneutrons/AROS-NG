@@ -19,7 +19,6 @@ $(OSGENDIR)/boot/core.elf: $(TARGETDIR)/kernel_stub.o
 	@$(ECHO) "Creating   $@"
 	%mkdirs_q $(OSGENDIR)/boot
 	@$(TARGET_LD) -T $(SRCDIR)/$(CURDIR)/ldscript.lds -o $@ $^
-	@$(TARGET_STRIP) --strip-unneeded -R .note -R .comment $@
 
 $(TARGETDIR)/kernel_stub.o: $(SRCDIR)/$(CURDIR)/kernel_stub.c
 	%compile_q opt="-ffreestanding -nostdlib $(CFLAGS_NO_BUILTIN)"

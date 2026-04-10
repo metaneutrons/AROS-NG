@@ -24,10 +24,9 @@ kernel-raspi-aarch64-bootimg: $(AROSDIR)/aros-aarch64-raspi.img
 CORE_ELF := $(OSGENDIR)/boot/core.elf
 
 $(TARGETDIR)/core.bin.o: $(CORE_ELF)
-	@$(ECHO) "Embedding  core.elf"
-	@$(CP) $(CORE_ELF) $(TARGETDIR)/core.bin
-	@cd $(TARGETDIR) && $(BOOTSTRAP_LD) -r --format binary \
-		--oformat elf64-littleaarch64 core.bin -o $@
+	@$(ECHO) "Embedding  core.elf (aligned)"
+	@printf '.section .rodata\n.balign 8\n.global _binary_core_bin_start\n_binary_core_bin_start:\n.incbin "%s"\n.global _binary_core_bin_end\n_binary_core_bin_end:\n' $< > $(TARGETDIR)/core_embed.S
+	@$(TARGET_CC) -c $(TARGETDIR)/core_embed.S -o $@
 
 $(AROSDIR)/aros-aarch64-raspi.img: $(TARGETDIR)/core.bin.o $(foreach f, $(ASMFILES), $(TARGETDIR)/$(f).o) $(foreach f, $(FILES), $(TARGETDIR)/$(f).o)
 	@$(ECHO) "Creating   $@"

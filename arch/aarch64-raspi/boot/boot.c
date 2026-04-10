@@ -237,13 +237,7 @@ void boot(void *dtb_ptr)
         uint64_t size_ro, size_rw;
 
         /* Calculate kernel size */
-        if (pkg_size > 64)
-            getElfSize(pkg_image, &size_rw, &size_ro);
-        else
-        {
-            size_ro = 0;
-            size_rw = 0;
-        }
+        getElfSize(pkg_image, &size_rw, &size_ro);
         total_size_ro = (size_ro + 4095) & ~4095;
         total_size_rw = (size_rw + 4095) & ~4095;
 
@@ -315,6 +309,9 @@ void boot(void *dtb_ptr)
         boottag++;
     }
 
+    /* Enable MMU */
+    mmu_load();
+
     /* Re-parse device tree in kernel area */
     if (dt_total_size() > 0 && fdt)
     {
@@ -342,9 +339,6 @@ void boot(void *dtb_ptr)
             }
         }
     }
-
-    /* Enable MMU */
-    mmu_load();
 
     boottag->ti_Tag = TAG_DONE;
     boottag->ti_Data = 0;

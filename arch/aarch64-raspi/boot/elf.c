@@ -74,6 +74,7 @@ int getElfSize(void *elf_file, uint64_t *size_rw, uint64_t *size_ro)
     if (checkHeader(eh))
     {
         struct sheader *sh = (struct sheader *)((uintptr_t)elf_file + eh->shoff);
+        
 
         for (unsigned i = 0; i < int_shnum; i++)
         {
@@ -314,13 +315,15 @@ static int relocate(struct elfheader *eh, struct sheader *sh, long shrel_idx,
 int loadElf(void *elf_file)
 {
     struct elfheader *eh = (struct elfheader *)elf_file;
-    uintptr_t deltas[int_shnum];
 
-    DELF(kprintf("[BOOT] loadElf(%p)\n", eh));
+    
 
     if (checkHeader(eh))
     {
         struct sheader *sh = (struct sheader *)((uintptr_t)elf_file + eh->shoff);
+        uintptr_t deltas[int_shnum];
+
+        
 
         for (unsigned i = 0; i < int_shnum; i++)
         {
