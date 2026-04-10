@@ -21,6 +21,8 @@
 #define AROS_PRINTER_MAGIC   0xccc3c031      /* xor %eax,%eax, retq, int3 */
 #elif defined(__arm__)
 #define AROS_PRINTER_MAGIC   0xe12fff1e      /* bx lr */
+#elif defined(__aarch64__)
+#define AROS_PRINTER_MAGIC   0xd65f03c0      /* ret */
 #elif defined(__ppc__)
 #define AROS_PRINTER_MAGIC   0x4e800020      /* blr */
 #elif defined(__riscv)
