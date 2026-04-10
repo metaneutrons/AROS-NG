@@ -58,6 +58,21 @@ description: Bugs and issues found in the AROS codebase during AArch64 porting. 
 - **Workaround**: Don't use `__attribute__((aligned))` types in `va_arg`. The C standard says `va_arg` expects the promoted type.
 - **Affects**: Any code using `va_arg(ap, STACKED <type>)` on AArch64 with GCC 15.
 
+### 9. Systematic `__arm__` guard audit for AArch64
+- **Commit**: `170d814179`
+- **Problem**: Many shared source files use `#ifdef __arm__` for ARM-specific behavior (va_list struct, register names, ELF relocations). AArch64 shares some of these properties but not all.
+- **Fixed files**:
+  - `rom/exec/rawdofmt.c` — va_list is struct on AArch64 too
+  - `rom/exec/exec_util.h` — PC/FP register names for ExceptionContext
+  - `rom/dos/dos_intern.h` — arm_Arch/VFP fields shared
+  - `rom/processor/defaults.h` — PROCESSORARCH_ARM for AArch64
+  - `compiler/crt/posixc/__vfork.c` — jmp_buf SP/ALT offsets
+  - `arch/aarch64-all/include/aros/cpu.h` — _aros_not_implemented signature
+- **NOT fixed (needs dedicated work)**:
+  - `rom/dos/internalloadseg_elf.c` — needs full AArch64 RELA relocation support (R_AARCH64_ADR_PREL_PG_HI21, ADD_ABS_LO12_NC, CALL26, JUMP26, ABS64, LDST*). This is the DOS ELF loader for loading executables at runtime, separate from the bootstrap ELF loader.
+  - `compiler/crt/stdc/math/math_private.h` — SECTIONCOMMENT defaults to `#` which works for AArch64 GAS
+  - `workbench/tools/SysExplorer/cpu_arm.c` — ARM32-only CPU info display
+
 ## Architecture Isolation Lessons
 
 ### Embedded binary data must be 8-byte aligned on AArch64
