@@ -205,7 +205,7 @@ AC_PATH_PROG([CMAKE],[cmake])
 # Regenerated from the script, so there is no need to cache them.
 
 aros_build_host=$host
-aros_host_cpp="$CPP"
+aros_host_cpp=`echo "$CPP" | sed 's/-std=[[^ ]]*//'`
 aros_host_cc="$CC"
 aros_host_cxx="$CXX"
 base_ld_name=${HOST_TOOLCHAIN_PREFIX}ld${HOST_TOOLCHAIN_SUFFIX}
@@ -603,9 +603,11 @@ esac
 base_ar_name=${HOST_TOOLCHAIN_PREFIX}ar${HOST_TOOLCHAIN_SUFFIX}
 AROS_PROG(AR_BASE,$base_ar_name)
 aros_host_ar_flags="cr"
-aros_host_cmd_ar="$AR_BASE $aros_host_ar_flags"
-AROS_PATH_PROG(aros_host_plain_ar,$aros_host_cmd_ar)
-aros_host_ar=`echo $aros_host_cmd_ar | sed -e "s|$base_ar_name|$aros_host_plain_ar|g"`
+AC_PATH_PROG(aros_host_plain_ar,$base_ar_name)
+if test "x$aros_host_plain_ar" = "x" ; then
+    aros_host_plain_ar="ar"
+fi
+aros_host_ar="$aros_host_plain_ar $aros_host_ar_flags"
 AROS_REQUIRED(ar,$aros_host_ar)
 base_ranlib_name=${HOST_TOOLCHAIN_PREFIX}ranlib${HOST_TOOLCHAIN_SUFFIX}
 AROS_PROG(RANLIB_BASE,$base_ranlib_name)

@@ -5,27 +5,4 @@ include $(SRCDIR)/config/aros.cfg
   modname=kernel pri=0 arch=raspi-aarch64 \
   includes="-I$(SRCDIR)/$(CURDIR)"
 
-%get_archincludes modname=kernel \
-    includeflag=TARGET_KERNEL_INCLUDES maindir=rom/kernel
-
-%get_archincludes modname=exec \
-    includeflag=TARGET_EXEC_INCLUDES maindir=rom/exec
-
-PRIV_KERNEL_INCLUDES = \
-    $(TARGET_KERNEL_INCLUDES) \
-	-I$(SRCDIR)/rom/kernel \
-	$(TARGET_EXEC_INCLUDES) \
-	-I$(SRCDIR)/rom/exec
-
-# Source files will be added as they are implemented in later tasks
-CFILES :=
-
-#MM kernel-kernel-raspi-aarch64 : kernel-kernel-aarch64-includes kernel-kernel-includes
-
-USER_INCLUDES := $(PRIV_KERNEL_INCLUDES)
-USER_CPPFLAGS := -D__AROS_EXEC_LIBRARY__ \
-	        -DAROS_ARCHITECTURE=\"$(AROS_TARGET_PLATFORM)\"
-
-%build_archspecific \
-  mainmmake=kernel-kernel maindir=rom/kernel arch=raspi-aarch64 \
-  files=$(CFILES) modname=kernel
+%common

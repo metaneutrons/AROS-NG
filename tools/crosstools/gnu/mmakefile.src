@@ -9,6 +9,9 @@ BINUTILS_EXTRA_OPTS += --libdir=$(CROSSTOOLSDIR)/lib
 BINUTILS_EXTRA_OPTS += --with-sysroot=$(AROS_DEVELOPER)
 BINUTILS_EXTRA_OPTS += --disable-werror
 BINUTILS_EXTRA_OPTS += --disable-nls
+ifeq ($(AROS_HOST_ARCH),darwin)
+    BINUTILS_EXTRA_OPTS += --with-system-zlib
+endif
 ifeq (yes, $(TARGET_LTO))
 BINUTILS_EXTRA_OPTS += --enable-plugins --enable-lto
 endif
@@ -106,6 +109,9 @@ ifneq (yes,$(TARGET_LTO))
 GCC_COMMON_OPTS += --disable-plugins
 endif
 GCC_COMMON_OPTS += --disable-nls
+ifeq ($(AROS_HOST_ARCH),darwin)
+    GCC_COMMON_OPTS += --with-system-zlib
+endif
 GCC_COMMON_OPTS += --disable-libssp
 GCC_COMMON_OPTS += --disable-libstdcxx-pch
 GCC_COMMON_OPTS += --disable-build-with-cxx
@@ -147,7 +153,7 @@ GDB_EXTRA_OPTS += --libdir=$(CROSSTOOLSDIR)/lib
 # Use the correct GCC repository depending if it is a release or snapshot build...
 GNU_REPOSITORY := gnu://
 ifeq (,$(findstring -,$(GCC_VERSION)))
-GCC_REPOSITORY := $(GNU_REPOSITORY)/gcc/gcc-$(GCC_VERSION) ftp://ftp.mirrorservice.org/sites/sourceware.org/pub/gcc/releases/gcc-$(GCC_VERSION)
+GCC_REPOSITORY := $(GNU_REPOSITORY)/gcc/gcc-$(GCC_VERSION) https://gcc.gnu.org/pub/gcc/releases/gcc-$(GCC_VERSION) ftp://ftp.mirrorservice.org/sites/sourceware.org/pub/gcc/releases/gcc-$(GCC_VERSION)
 else
 GCC_REPOSITORY := ftp://ftp.mirrorservice.org/sites/sourceware.org/pub/gcc/snapshots/$(GCC_VERSION)
 endif
