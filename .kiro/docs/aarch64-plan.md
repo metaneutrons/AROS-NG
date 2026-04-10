@@ -34,68 +34,29 @@ arch/
 ## Phase 1 — AArch64 Core (Pi 4 serial boot)
 
 ### Task 1: Fix AArch64 core headers and build system
-- **Status**: NOT STARTED
-- **Objective**: `configure --target=raspi-aarch64` completes, build starts.
-- **Work**:
-  - Fix `arch/aarch64-all/include/aros/cpu.h`: replace ARM32 FullJumpVec (`0xe51ff004`) with AArch64 (`ldr x16, .+8; br x16`)
-  - Update `configure.in` aarch64 raspi case: `cortex-a72` tuning for Pi 4
-  - Create directory skeleton + minimal `mmakefile.src` files
-- **Demo**: `./configure --target=raspi-aarch64` succeeds
-- **Depends on**: nothing
+- **Status**: DONE
+- **Commits**: `e86bed3c16` through `02336f5b62` (crosstools), `aa38bffce8`, `f3500b486f` (build fixes)
 
 ### Task 2: AArch64 genmodule.h — library call stubs
-- **Status**: NOT STARTED
-- **Objective**: AROS libraries compile for AArch64.
-- **Work**:
-  - Create `arch/aarch64-all/include/aros/genmodule.h`
-  - Implement `AROS_GM_LIBFUNCSTUB` using `ldr x16, [x12, #offset]; br x16`
-  - Implement `AROS_GM_RELLIBFUNCSTUB`, `AROS_GM_STACKCALL`, `AROS_GM_STACKALIAS`
-- **Reference**: `arch/arm-all/include/aros/genmodule.h` (adapt inline asm to AArch64)
-- **Demo**: Library stubs disassemble correctly via `objdump -d`
-- **Depends on**: Task 1
+- **Status**: DONE (created in initial commit `18e687c19a`)
 
 ### Task 3: AArch64 exec core — context switching and stack swap
-- **Status**: NOT STARTED
-- **Objective**: Exec can switch between tasks on AArch64.
-- **Work**:
-  - `arch/aarch64-all/exec/execstubs.S` — SVC entry/exit, library call wrappers
-  - `arch/aarch64-all/exec/preparecontext.c` — init task register context
-  - `arch/aarch64-all/exec/stackswap.S` — save x19-x30/sp, switch, restore
-  - `arch/aarch64-all/exec/newstackswap.c`, `alert_cpu.c`
-  - Update `cpucontext.h` if VFP/NEON state fields needed
-- **Reference**: `arch/arm-all/exec/`, Circle `setjmp.S` for register list
-- **Demo**: Object files compile and link without errors
-- **Depends on**: Task 1
+- **Status**: DONE (created in initial commit `18e687c19a`)
 
 ### Task 4: AArch64 setjmp/longjmp and POSIX signal variants
-- **Status**: NOT STARTED
-- **Objective**: C runtime support for AROS libraries and applications.
-- **Work**:
-  - `arch/aarch64-all/stdc/setjmp.S`, `longjmp.S` (x19-x30, sp)
-  - `arch/aarch64-all/stdc/fenv.c` (FPCR/FPSR)
-  - `arch/aarch64-all/posixc/sigsetjmp.S`, `siglongjmp.S`, `vfork.S`, `vfork_longjmp.S`
-- **Reference**: Circle `setjmp.S` AArch64 section
-- **Demo**: stdc and posixc libraries build for aarch64
-- **Depends on**: Task 1
+- **Status**: DONE (created in initial commit `18e687c19a`)
 
 ### Task 5: AArch64 bootstrap — serial boot on Pi 4
-- **Status**: NOT STARTED
-- **Objective**: Bootable `aros-aarch64-raspi.img` prints to UART on Pi 4.
-- **Work**:
-  - `arch/aarch64-raspi/boot/startup64.S` — EL2→EL1, VBAR, stack (from Circle `startup64.S`, GPLv3)
-  - `arch/aarch64-raspi/boot/mmu.c` — AArch64 page tables, 64KB granule (from Circle `translationtable64.cpp`, GPLv3)
-  - `arch/aarch64-raspi/boot/serialdebug.c` — PL011 UART at `0xFE201000`
-  - `arch/aarch64-raspi/boot/boot.c` — device tree, memory query, load core.elf, jump to kernel
-  - `arch/aarch64-raspi/boot/elf.c` — ELF64 loader (`EM_AARCH64`)
-  - `arch/aarch64-raspi/boot/devicetree.c`, `vc_mb.c`, `vc_fb.c`, `kprintf.c`, `support.c`
-  - `arch/aarch64-raspi/boot/ldscript.lds`, `mmakefile.src`
-  - `boot/config.txt`: `arm_64bit=1`, `kernel=aros-aarch64-raspi.img`, `enable_uart=1`
-- **Reference**: Circle `startup64.S`, `translationtable64.cpp`; AROS `arch/arm-raspi/boot/`
-- **Demo**: Serial console shows AROS bootstrap messages on Pi 4 / QEMU
-- **Depends on**: Tasks 1-4
+- **Status**: DONE — boots on QEMU raspi4b with real Pi 4 DTB
+- **Commits**: `c7aafea7e8` (initial), `4deed75977` (DTB fix), `5413b8f6f1` (MMU + kernel stub)
+- **What works**: EL2→EL1, UART, DTB parsing, memory detection, SoC detection, MMU enable
+- **What's broken**: ELF loader crashes on relocatable core.elf — RELA handling needs debugging
+- **QEMU command**: `qemu-system-aarch64 -M raspi4b -m 2G -serial stdio -display none -dtb bcm2711-rpi-4-b.dtb -kernel aros-aarch64-raspi.img`
 
 ### Task 6: AArch64 kernel startup — exec initialization
-- **Status**: NOT STARTED
+- **Status**: PARTIALLY DONE — stub kernel created, GIC/timer/vectors written but not yet linked into core.elf
+- **Blocker**: ELF loader in bootstrap crashes on relocatable core.elf. Must debug RELA relocation handling before kernel handoff works.
+- **Next step**: Debug elf.c — likely issue with `int_shnum` global state or section header traversal on REL-type objects.
 - **Objective**: Kernel starts, initializes exec.library, reaches idle loop.
 - **Work**:
   - `arch/aarch64-native/kernel/kernel_startup.c` — entry, BSS clear, exception stacks, CPU probe, platform init, SysBase, memory pools, resident scan
