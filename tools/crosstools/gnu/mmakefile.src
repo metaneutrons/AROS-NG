@@ -113,6 +113,7 @@ ifeq ($(AROS_HOST_ARCH),darwin)
     GCC_COMMON_OPTS += --with-system-zlib
 endif
 GCC_COMMON_OPTS += --disable-libssp
+GCC_COMMON_OPTS += --disable-gcov
 GCC_COMMON_OPTS += --disable-libstdcxx-pch
 GCC_COMMON_OPTS += --disable-build-with-cxx
 GCC_COMMON_OPTS += --disable-build-poststage1-with-cxx
