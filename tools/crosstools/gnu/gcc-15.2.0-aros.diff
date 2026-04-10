@@ -1459,6 +1459,15 @@ diff -ruN gcc-15.2.0/libatomic/libatomic_i.h gcc-15.2.0.aros/libatomic/libatomic
  
  /* Macros for handing sub-word sized quantities.  */
  #define MASK_1		((UWORD)0xff)
+diff -ruN gcc-15.2.0/libgcc/config/aarch64/t-aros gcc-15.2.0.aros/libgcc/config/aarch64/t-aros
+--- gcc-15.2.0/libgcc/config/aarch64/t-aros	1970-01-01 00:00:00.000000000 +0000
++++ gcc-15.2.0.aros/libgcc/config/aarch64/t-aros	2026-04-10 00:00:00.000000000 +0000
+@@ -0,0 +1,5 @@
++# AROS-specific libgcc overrides for AArch64.
++# Suppress -Werror for warnings triggered by AROS system headers
++# (struct SemaphoreRequest has a spinlock_t padding field that
++# triggers -Wmissing-field-initializers with aggregate init).
++LIBGCC2_CFLAGS += -Wno-error=missing-field-initializers
 diff -ruN gcc-15.2.0/libgcc/config/arm/t-aros gcc-15.2.0.aros/libgcc/config/arm/t-aros
 --- gcc-15.2.0/libgcc/config/arm/t-aros	1970-01-01 00:00:00.000000000 +0000
 +++ gcc-15.2.0.aros/libgcc/config/arm/t-aros	2020-12-27 16:58:14.310000000 +0000
@@ -1691,7 +1700,7 @@ diff -ruN gcc-15.2.0/libgcc/config.host gcc-15.2.0.aros/libgcc/config.host
 +aarch64*-*-aros*)
 +	extra_parts="$extra_parts crtbegin.o crtend.o crti.o crtn.o"
 +	extra_parts="$extra_parts crtfastmath.o"
-+	tmake_file="${tmake_file} ${cpu_type}/t-aarch64"
++	tmake_file="${tmake_file} ${cpu_type}/t-aarch64 ${cpu_type}/t-aros"
 +	tmake_file="${tmake_file} ${cpu_type}/t-lse"
 +	tmake_file="${tmake_file} ${cpu_type}/t-softfp t-softfp t-crtfm"
 +	tmake_file="${tmake_file} t-dfprules"
