@@ -89,10 +89,13 @@ void boot(void *dtb_ptr)
     kprintf("[BOOT] Kernel loaded at: 0x00080000\n");
     kprintf("[BOOT] Stack at: 0x00400000\n");
 
-    kprintf("\n[BOOT] Bootstrap complete. System halted.\n");
-    kprintf("[BOOT] Next: device tree parsing, memory detection, kernel load.\n");
+    kprintf("[BOOT] Handing off to kernel...\n\n");
 
-    /* Halt */
+    /* Call kernel entry point (monolithic image — no ELF load needed) */
+    extern void kernel_cstart(void);
+    kernel_cstart();
+
+    /* Should not return */
     for (;;)
         __asm__ volatile("wfe");
 }
