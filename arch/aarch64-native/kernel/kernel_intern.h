@@ -67,6 +67,15 @@ extern struct AARCH64_Implementation __aarch64_arosintern;
 /* Platform init — iterates ARMPLATFORMS symbol set */
 void platform_Init(struct AARCH64_Implementation *impl, void *bootmsg);
 
+/*
+ * BCM2711 (Pi 4) hardware addresses.
+ * DECISION: Defined here as SSOT until a dedicated hardware/bcm2711.h is created.
+ * Date: 2026-04-10
+ */
+#define BCM2711_PERIBASE        0xFE000000UL
+#define BCM2711_GICD_BASE       0xFF841000UL
+#define BCM2711_GICC_BASE       0xFF842000UL
+
 /* Debug output — uses ARMI_SerPutChar if available */
 void kprintf(const char *format, ...);
 

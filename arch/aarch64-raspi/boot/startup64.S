@@ -97,9 +97,21 @@ bss_loop:
     b       bss_loop
 bss_done:
 
-    /* Set up stack (below kernel at 4MB, grows down) */
+    /* Set up stacks:
+     * SP_EL1 = 0x00380000 (exception/IRQ stack, grows down)
+     * SP_EL0 = 0x00400000 (main stack, grows down)
+     *
+     * DECISION: We switch to EL1h (SPSel=1) to set SP_EL1,
+     * then back to EL1t (SPSel=0) for the main loop.
+     * IRQs taken at EL1 use SP_EL1 (vector group 1).
+     * Date: 2026-04-10
+     */
+    msr     spsel, #1           /* select SP_EL1 */
+    ldr     x0, =0x00380000
+    mov     sp, x0              /* SP_EL1 = exception stack */
+    msr     spsel, #0           /* select SP_EL0 */
     ldr     x0, =0x00400000
-    mov     sp, x0
+    mov     sp, x0              /* SP_EL0 = main stack */
 
     /* Restore DTB pointer as first argument to boot() */
     mov     x0, x20

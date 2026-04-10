@@ -12,17 +12,9 @@
 #include "kernel_intern.h"
 
 /*
- * BCM2711 peripheral addresses.
- * DECISION: Defined here as SSOT for BCM2711. A shared header
- * (hardware/bcm2711.h) will be created when more drivers need these.
- * Date: 2026-04-10
+ * BCM2711 peripheral addresses from kernel_intern.h (SSOT).
  */
-#define BCM2711_PERIBASE        0xFE000000UL
 #define BCM2711_PL011_BASE      (BCM2711_PERIBASE + 0x201000)
-
-/* GIC-400 addresses (for Task 7) */
-#define BCM2711_GICD_BASE       0xFF841000UL
-#define BCM2711_GICC_BASE       0xFF842000UL
 
 /* PL011 register offsets */
 #define PL011_DR                0x00
