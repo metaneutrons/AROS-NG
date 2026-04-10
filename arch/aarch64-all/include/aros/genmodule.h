@@ -51,7 +51,8 @@
             #fname " :\n"                                               \
             "\tadrp x16, " #libbasename "\n"                            \
             "\tldr  x16, [x16, #:lo12:" #libbasename "]\n"             \
-            "\tldr  x17, [x16, #%c0]\n"                                \
+            "\tmov  x17, #%c0\n"                                       \
+            "\tldr  x17, [x16, x17]\n"                                 \
             "\tbr   x17\n"                                              \
             : : "i" ((-lvo*LIB_VECTSIZE))                               \
         );                                                              \
@@ -96,7 +97,8 @@
             "\tldr  x30,    [sp, #64]\n"                                \
             "\tldp  x0, x1, [sp], #80\n"                                \
             /* Load function address and tail-call */                   \
-            "\tldr  x17, [x16, #%c0]\n"                                \
+            "\tmov  x17, #%c0\n"                                       \
+            "\tldr  x17, [x16, x17]\n"                                 \
             "\tbr   x17\n"                                              \
             : : "i" ((-lvo*LIB_VECTSIZE))                               \
         );                                                              \

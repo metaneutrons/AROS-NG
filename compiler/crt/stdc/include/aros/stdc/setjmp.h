@@ -19,6 +19,8 @@
 #   define _JMPLEN 15
 #elif __powerpc__
 #   define _JMPLEN 58
+#elif __aarch64__
+#   define _JMPLEN 22
 #elif __arm__
 #   define _JMPLEN 63
 #elif __riscv64

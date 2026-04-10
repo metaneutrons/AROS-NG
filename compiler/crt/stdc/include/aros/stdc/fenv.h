@@ -11,6 +11,8 @@
 #   include <aros/x86_64/fenv.h>
 #elif defined __powerpc__
 #   include <aros/ppc/fenv.h>
+#elif defined __aarch64__
+#   include <aros/aarch64/fenv.h>
 #elif defined __arm__
 #   include <aros/arm/fenv.h>
 #elif defined __riscv64

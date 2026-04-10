@@ -1,7 +1,10 @@
 /*-
- * Copyright (c) 2002, 2003 David Schultz <das@FreeBSD.ORG>
- * Copyright (2) 2014 The FreeBSD Foundation
+ * Copyright (c) 2003 David Schultz <das@FreeBSD.ORG>
+ * Copyright (c) 2014 The FreeBSD Foundation
  * All rights reserved.
+ *
+ * Portions of this software were developed by Andrew Turner
+ * under sponsorship from the FreeBSD Foundation.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -23,10 +26,11 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- * $FreeBSD: head/lib/libc/aarch64/_fpmath.h 281197 2015-04-07 09:52:14Z andrew $
  */
 
+/*
+ * AArch64: long double is IEEE 754 quad precision (128-bit).
+ */
 union IEEEl2bits {
 	long double	e;
 	struct {
@@ -43,7 +47,6 @@ union IEEEl2bits {
 };
 
 #define	LDBL_NBIT	0
-#define	LDBL_IMPLICIT_NBIT
 #define	mask_nbit_l(u)	((void)0)
 
 #define	LDBL_MANH_SIZE	48
