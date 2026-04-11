@@ -26,6 +26,8 @@ CFILES := \
     platform_bcm2711 \
     gic400 \
     timer \
+    vc_fb \
+    font8x14 \
     tags
 
 AFILES := intvecs

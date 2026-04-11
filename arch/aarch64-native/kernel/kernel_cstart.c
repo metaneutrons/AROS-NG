@@ -205,6 +205,16 @@ void __attribute__((noinline)) kernel_cstart(struct TagItem *msg)
     D(bug("[Kernel] SysBase @ 0x%p, KernelBase @ 0x%p\n",
           SysBase, __tls->KernelBase));
 
+    /* --- Framebuffer init --- */
+    extern int vcfb_init(void);
+    extern void fb_Putc(char chr);
+    if (vcfb_init())
+    {
+        /* Print banner on screen */
+        const char *banner = "[Kernel] AROS AArch64 on Raspberry Pi 4\n";
+        while (*banner) fb_Putc(*banner++);
+    }
+
     /* --- GIC-400 and timer initialization --- */
 
     #define BCM2711_GICD_BASE   0xFF841000UL
