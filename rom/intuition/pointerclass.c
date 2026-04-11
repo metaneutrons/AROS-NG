@@ -174,6 +174,11 @@ IPTR PointerClass__OM_NEW(Class *cl, Object *o, struct opSet *msg)
         }
     }
 
+    /* If we never called DoSuperMethodA, o still points to the class.
+       Return NULL to indicate failure. */
+    if ((IPTR)o == (IPTR)cl)
+        return (IPTR)NULL;
+
     return (IPTR)o;
 }
 
