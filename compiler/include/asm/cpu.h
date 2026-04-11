@@ -36,6 +36,9 @@
 #       endif
 #   endif
 #endif
+#ifdef __aarch64__
+#   include <asm/aarch64/cpu.h>
+#endif
 
 /* Some default generic definitions. */
 #ifndef HALT
