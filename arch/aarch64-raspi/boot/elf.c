@@ -264,22 +264,46 @@ static int relocate(struct elfheader *eh, struct sheader *sh, long shrel_idx,
             break;
         }
         /*
-         * GOT relocations: In a statically-linked kernel, GOT entries
-         * point directly to the symbol. We treat ADR_GOT_PAGE like
-         * ADR_PREL_PG_HI21 and LD64_GOT_LO12_NC like LDST64_ABS_LO12_NC,
-         * since the GOT entry contains the final address.
+         * GOT relocations: The code expects to load a pointer from a GOT
+         * entry, then dereference it. We allocate GOT slots in the RW area
+         * and store the symbol address there.
          */
         case R_AARCH64_ADR_GOT_PAGE:
         {
-            int64_t off = ((s + voff) & ~0xFFF) - ((int64_t)p_addr & ~0xFFF);
+            /* Allocate a GOT slot and store the symbol address */
+            uint64_t *got_slot = (uint64_t *)ptr_rw;
+            ptr_rw = (ptr_rw + 7) & ~7;
+            got_slot = (uint64_t *)ptr_rw;
+            ptr_rw += 8;
+            *got_slot = (uint64_t)(s + voff);
+
+            int64_t off = ((int64_t)(uintptr_t)got_slot & ~0xFFF) - ((int64_t)p_addr & ~0xFFF);
             uint32_t immlo = (off >> 12) & 0x3;
             uint32_t immhi = (off >> 14) & 0x7FFFF;
             *(uint32_t *)p_addr = (*(uint32_t *)p_addr & 0x9F00001F) | (immlo << 29) | (immhi << 5);
+
+            /* Peek ahead for the paired LD64_GOT_LO12_NC */
+            if (i + 1 < numrel)
+            {
+                struct relo *next = rel + 1;
+                if (ELF64_R_TYPE(next->info) == R_AARCH64_LD64_GOT_LO12_NC)
+                {
+                    uintptr_t np = (uintptr_t)&section[next->offset - orig_addr];
+                    uint32_t imm12 = ((uintptr_t)got_slot & 0xFFF) >> 3;
+                    *(uint32_t *)np = (*(uint32_t *)np & 0xFFC003FF) | (imm12 << 10);
+                    rel++;
+                    i++;
+                }
+            }
             break;
         }
         case R_AARCH64_LD64_GOT_LO12_NC:
         {
-            uint32_t imm12 = ((s + voff) & 0xFFF) >> 3;
+            /* Standalone LD64_GOT_LO12_NC (not paired) — allocate GOT slot */
+            uint64_t *got_slot = (uint64_t *)((ptr_rw + 7) & ~7);
+            ptr_rw = (uintptr_t)got_slot + 8;
+            *got_slot = (uint64_t)(s + voff);
+            uint32_t imm12 = ((uintptr_t)got_slot & 0xFFF) >> 3;
             *(uint32_t *)p_addr = (*(uint32_t *)p_addr & 0xFFC003FF) | (imm12 << 10);
             break;
         }

@@ -31,7 +31,6 @@ int dt_get_prop_len(void *prop);
 void *dt_get_prop_value(void *prop);
 
 /* CPU/platform init */
-void cpu_Probe(struct AARCH64_Implementation *);
 void cpu_Init(struct AARCH64_Implementation *, struct TagItem *);
 void platform_Init(struct AARCH64_Implementation *, struct TagItem *);
 

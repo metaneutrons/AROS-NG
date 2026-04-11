@@ -5,12 +5,32 @@
           Ported from arch/arm-native/kernel/kernel_startup.c.
 */
 
-#include <stdint.h>
 #include <aros/kernel.h>
+#include <aros/symbolsets.h>
+#include <aros/aarch64/cpucontext.h>
+#include <exec/memory.h>
+#include <exec/memheaderext.h>
+#include <exec/tasks.h>
+#include <exec/alerts.h>
+#include <exec/execbase.h>
+#include <proto/kernel.h>
+#include <proto/exec.h>
+
+#include <strings.h>
+#include <string.h>
+
+#include "exec_intern.h"
+#include "etask.h"
+#include "tlsf.h"
+
 #include "kernel_intern.h"
+#include "kernel_debug.h"
+#include "kernel_romtags.h"
+
+#undef KernelBase
 #include "tls.h"
 
-/* BCM2711 PL011 UART — direct access for early boot */
+/* BCM2711 PL011 UART — direct access for early boot (before bug() works) */
 #define PL011_BASE  0xFE201000UL
 #define PL011_DR    0x00
 #define PL011_FR    0x18
@@ -23,14 +43,12 @@ extern void VectorTable(void);
 void uart_putc(char c);
 void uart_puts(const char *s);
 void uart_puthex(uint64_t val);
-void clear_bss(struct TagItem *msg);
-void setup_vectors(void);
-void cpu_Probe(struct AARCH64_Implementation *impl);
+static void clear_bss(struct TagItem *msg);
+static void setup_vectors(void);
 void kernel_cstart(struct TagItem *msg);
 
-/* Globals */
+/* Globals — defined in kernel_startup.c */
 extern struct AARCH64_Implementation __aarch64_arosintern;
-
 extern struct ExecBase *SysBase;
 extern struct TagItem *BootMsg;
 
@@ -39,13 +57,8 @@ static uint64_t stack[5120] __attribute__((used, aligned(16), section(".data")))
 
 /*
  * _start — entry point, called by bootstrap.
- * Must be at offset 0 in .text.
  * x0 = pointer to TagItem list from bootstrap.
- *
- * Written in asm to avoid the compiler spilling x0 to the old stack
- * before we switch to the new one.
- *
- * Placed in .text.startup section so the linker script can put it first.
+ * Placed in .text.startup so linker script can order it first.
  */
 __asm__ (
     ".section .text.startup, \"ax\"\n"
@@ -61,9 +74,12 @@ __asm__ (
 
 /*
  * kernel_cstart — main kernel initialization.
+ * Follows the same sequence as arch/arm-native/kernel/kernel_startup.c.
  */
 void __attribute__((noinline)) kernel_cstart(struct TagItem *msg)
 {
+    UWORD *ranges[3];
+    struct MemHeader *mh;
     unsigned long memlower = 0, memupper = 0;
     unsigned long protlower = 0, protupper = 0;
     struct TagItem *tag;
@@ -78,10 +94,23 @@ void __attribute__((noinline)) kernel_cstart(struct TagItem *msg)
 
     /* Install exception vectors */
     setup_vectors();
-    uart_puts("[Kernel] Exception vectors installed\n");
 
     /* Probe CPU */
-    cpu_Probe(&__aarch64_arosintern);
+    {
+        uint64_t midr, cntfrq;
+        __asm__ volatile("mrs %0, midr_el1" : "=r"(midr));
+        __asm__ volatile("mrs %0, cntfrq_el0" : "=r"(cntfrq));
+        __aarch64_arosintern.ARMI_Family = 8;
+
+        uart_puts("[Kernel] CPU: ");
+        uint32_t part = (midr >> 4) & 0xFFF;
+        if (part == 0xD08) uart_puts("Cortex-A72");
+        else if (part == 0xD0B) uart_puts("Cortex-A76");
+        else { uart_puts("Unknown-"); uart_puthex(part); }
+        uart_puts(", Timer: ");
+        uart_puthex(cntfrq);
+        uart_puts(" Hz\n");
+    }
 
     /* Parse boot tags */
     tag = msg;
@@ -112,14 +141,6 @@ void __attribute__((noinline)) kernel_cstart(struct TagItem *msg)
     uart_puthex(memlower);
     uart_puts(" - ");
     uart_puthex(memupper);
-    uart_puts(" (");
-    uart_puthex((memupper - memlower) >> 20);
-    uart_puts(" MB)\n");
-
-    uart_puts("[Kernel] Protected: ");
-    uart_puthex(protlower);
-    uart_puts(" - ");
-    uart_puthex(protupper);
     uart_puts("\n");
 
     /* Allocate TLS in protected area */
@@ -135,57 +156,77 @@ void __attribute__((noinline)) kernel_cstart(struct TagItem *msg)
     /* Set TLS pointer in TPIDR_EL1 */
     __asm__ volatile("msr tpidr_el1, %0" : : "r"(__tls));
 
-    uart_puts("[Kernel] TLS at ");
+    uart_puts("[Kernel] TLS @ ");
     uart_puthex((uint64_t)__tls);
     uart_puts("\n");
 
     /* Adjust memory lower bound past protected area */
-    if (memlower >= protlower && memlower < protupper)
+    if (memlower >= protlower)
         memlower = protupper;
 
-    uart_puts("[Kernel] Available memory: ");
+    /* --- Memory and ExecBase initialization --- */
+
+    mh = (struct MemHeader *)memlower;
+
+    uart_puts("[Kernel] Creating TLSF memory @ ");
     uart_puthex(memlower);
-    uart_puts(" - ");
-    uart_puthex(memupper);
+    uart_puts(", size ");
+    uart_puthex(memupper - memlower);
     uart_puts("\n");
 
+    /* Initialize TLSF memory allocator */
+    krnCreateTLSFMemHeader("System Memory", 0, mh,
+        (memupper - memlower),
+        MEMF_FAST | MEMF_PUBLIC | MEMF_KICK | MEMF_LOCAL);
+
+    /* Protect the bootstrap area from allocation */
+    if (memlower < protlower)
+    {
+        ((struct MemHeaderExt *)mh)->mhe_AllocAbs(
+            (struct MemHeaderExt *)mh,
+            protupper - protlower, (void *)protlower);
+    }
+
+    /* Kernel ROM ranges for resident scanning */
+    ranges[0] = (UWORD *)krnGetTagData(KRN_KernelLowest, 0, BootMsg);
+    ranges[1] = (UWORD *)krnGetTagData(KRN_KernelHighest, 0, BootMsg);
+    ranges[2] = (UWORD *)-1;
+
+    uart_puts("[Kernel] Preparing ExecBase...\n");
+    krnPrepareExecBase(ranges, mh, BootMsg);
+
+    __tls->SysBase = SysBase;
+
+    uart_puts("[Kernel] SysBase @ ");
+    uart_puthex((uint64_t)SysBase);
+    uart_puts("\n");
+
+    D(bug("[Kernel] SysBase @ 0x%p, KernelBase @ 0x%p\n",
+          SysBase, __tls->KernelBase));
+
+    /* --- Run resident modules --- */
+
+    uart_puts("[Kernel] InitCode(RTF_SINGLETASK)...\n");
+    InitCode(RTF_SINGLETASK, 0);
+
+    uart_puts("[Kernel] InitCode(RTF_COLDSTART)...\n");
+    InitCode(RTF_COLDSTART, 0);
+
     /*
-     * TODO: When the full AROS build system links kernel.resource and
-     * exec.library into core.elf, the following sequence will be enabled:
-     *
-     *   krnCreateTLSFMemHeader("System Memory", 0, mh,
-     *       memupper - memlower, MEMF_FAST|MEMF_PUBLIC|MEMF_KICK|MEMF_LOCAL);
-     *   krnPrepareExecBase(ranges, mh, BootMsg);
-     *   __tls->SysBase = SysBase;
-     *   InitCode(RTF_SINGLETASK, 0);
-     *   InitCode(RTF_COLDSTART, 0);
-     *
-     * For now, we halt here to prove the boot chain works.
+     * If we get here, no COLDSTART resident took over.
+     * This is expected until we have timer.device, DOS, etc.
      */
-
-    /* Read SCTLR to verify MMU state */
-    uint64_t sctlr;
-    __asm__ volatile("mrs %0, sctlr_el1" : "=r"(sctlr));
-    uart_puts("[Kernel] SCTLR_EL1: ");
-    uart_puthex(sctlr);
-    uart_puts(" (MMU=");
-    uart_putc((sctlr & 1) ? '1' : '0');
-    uart_puts(", D$=");
-    uart_putc((sctlr & 4) ? '1' : '0');
-    uart_puts(", I$=");
-    uart_putc((sctlr & (1<<12)) ? '1' : '0');
-    uart_puts(")\n");
-
-    uart_puts("\n[Kernel] Boot chain complete. Waiting for full kernel build.\n");
-    uart_puts("[Kernel] System halted.\n");
+    uart_puts("[Kernel] exec.library is alive! SysBase @ ");
+    uart_puthex((uint64_t)SysBase);
+    uart_puts("\n");
+    uart_puts("[Kernel] No COLDSTART residents -- system idle.\n");
 
     for (;;) __asm__ volatile("wfe");
 }
 
-/*
- * Clear BSS sections listed in KRN_KernelBss tag.
- */
-void clear_bss(struct TagItem *msg)
+/* --- Helper functions --- */
+
+static void clear_bss(struct TagItem *msg)
 {
     struct TagItem *tag = msg;
     while (tag->ti_Tag != TAG_DONE)
@@ -206,30 +247,12 @@ void clear_bss(struct TagItem *msg)
     }
 }
 
-void setup_vectors(void)
+static void setup_vectors(void)
 {
     __asm__ volatile("msr vbar_el1, %0; isb" : : "r"((uint64_t)&VectorTable));
 }
 
-void cpu_Probe(struct AARCH64_Implementation *impl)
-{
-    uint64_t midr, cntfrq;
-    __asm__ volatile("mrs %0, midr_el1" : "=r"(midr));
-    __asm__ volatile("mrs %0, cntfrq_el0" : "=r"(cntfrq));
-
-    impl->ARMI_Family = 8;
-
-    uart_puts("[Kernel] CPU: ");
-    uint32_t part = (midr >> 4) & 0xFFF;
-    if (part == 0xD08) uart_puts("Cortex-A72");
-    else if (part == 0xD0B) uart_puts("Cortex-A76");
-    else { uart_puts("Unknown-"); uart_puthex(part); }
-    uart_puts(", Timer: ");
-    uart_puthex(cntfrq);
-    uart_puts(" Hz\n");
-}
-
-/* Minimal UART output — no dependencies */
+/* Minimal UART output — no dependencies, for early boot before bug() works */
 void uart_putc(char c)
 {
     while (*(volatile uint32_t *)(PL011_BASE + PL011_FR) & PL011_FR_TXFF) ;
@@ -253,17 +276,32 @@ void uart_puthex(uint64_t val)
     }
 }
 
-/* Stub for ExceptionHandler called from intvecs.S */
+/* Exception/interrupt stubs called from intvecs.S */
 void ExceptionHandler(uint64_t exception, void *frame)
 {
+    uint64_t esr, elr, far;
+    __asm__ volatile("mrs %0, esr_el1" : "=r"(esr));
+    __asm__ volatile("mrs %0, elr_el1" : "=r"(elr));
+    __asm__ volatile("mrs %0, far_el1" : "=r"(far));
+
     uart_puts("\n*** EXCEPTION ");
     uart_puthex(exception);
     uart_puts(" ***\n");
+    uart_puts("  ESR_EL1: ");
+    uart_puthex(esr);
+    uart_puts(" (EC=");
+    uart_puthex((esr >> 26) & 0x3F);
+    uart_puts(")\n");
+    uart_puts("  ELR_EL1: ");
+    uart_puthex(elr);
+    uart_puts("\n");
+    uart_puts("  FAR_EL1: ");
+    uart_puthex(far);
+    uart_puts("\n");
     for (;;) __asm__ volatile("wfe");
 }
 
-/* Stub for InterruptHandler called from intvecs.S */
 void InterruptHandler(void)
 {
-    /* TODO: GIC-400 dispatch */
+    /* TODO: GIC-400 dispatch (Task 7) */
 }

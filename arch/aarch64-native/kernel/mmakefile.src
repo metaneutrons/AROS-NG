@@ -23,7 +23,8 @@ CFILES := \
     kernel_cstart \
     kernel_startup \
     platform_init \
-    platform_bcm2711
+    platform_bcm2711 \
+    tags
 
 AFILES := intvecs
 
