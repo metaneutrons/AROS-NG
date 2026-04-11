@@ -97,7 +97,7 @@ static int FNAME_BCMSDC(BCM2708Init)(struct SDCardBase *SDCardBase)
     if ((__BCM2708Bus = AllocPooled(SDCardBase->sdcard_MemPool, sizeof(struct sdcard_Bus))) != NULL)
     {
         __BCM2708Bus->sdcb_DeviceBase = SDCardBase;
-        __BCM2708Bus->sdcb_IOBase = (APTR)ARASAN_BASE;
+        __BCM2708Bus->sdcb_IOBase = (APTR)(ARM_PERIIOBASE + 0x340000);
         __BCM2708Bus->sdcb_BusIRQ = IRQ_VC_ARASANSDIO;
 
         __BCM2708Bus->sdcb_ClockMax = AROS_LE2LONG(MBoxMessage[6]);
