@@ -54,11 +54,10 @@ arch/
 - **QEMU command**: `qemu-system-aarch64 -M raspi4b -m 2G -serial stdio -display none -dtb bcm2711-rpi-4-b.dtb -kernel aros-aarch64-raspi.img`
 
 ### Task 6: AArch64 kernel startup — exec initialization
-- **Status**: PARTIALLY DONE — kernel_cstart runs, parses tags, sets up TLS, installs vectors
-- **Commit**: `b81d67c98e`
-- **What works**: Tag parsing (memory, protected area, platform), TLS via TPIDR_EL1, VBAR_EL1 exception vectors, CPU probe (Cortex-A72), BSS clearing
-- **What's missing**: Linking against kernel.resource/exec.library kobjs for `krnPrepareExecBase`, `krnCreateTLSFMemHeader`, `InitCode`
-- **Next step**: Get the AROS build system to compile kernel.resource and exec.library for aarch64, then link them into core.elf
+- **Status**: DONE — exec.library alive, SysBase created, InitCode runs
+- **Commits**: `b81d67c98e` (initial), `44c0bc917f` (kobjs link), `1782dcb351` (BSS fix), `0d5e60ddd6` (exec init)
+- **What works**: Tag parsing, TLS via TPIDR_EL1, VBAR_EL1 exception vectors, CPU probe (Cortex-A72), BSS clearing, TLSF memory (955MB), krnPrepareExecBase, InitCode(RTF_SINGLETASK + RTF_COLDSTART), kernel.resource + task.resource initialized
+- **Key bugs found**: 1) Stack was in .bss — clear_bss destroyed it (fix: section(".data")). 2) GOT relocations in bootstrap ELF loader treated as direct refs — needed actual GOT slot allocation. 3) `__aros_libreq_SysBase` GOT-indirect load crashed Task_InitLib.
 - **Objective**: Kernel starts, initializes exec.library, reaches idle loop.
 - **Work**:
   - `arch/aarch64-native/kernel/kernel_startup.c` — entry, BSS clear, exception stacks, CPU probe, platform init, SysBase, memory pools, resident scan
