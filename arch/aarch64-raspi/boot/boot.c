@@ -350,8 +350,12 @@ void boot(void *dtb_ptr)
     boottag->ti_Tag = TAG_DONE;
     boottag->ti_Data = 0;
 
-    kprintf("[BOOT] Kernel tags: %d entries\n",
-            (int)((uintptr_t)boottag - (uintptr_t)entry) / (int)sizeof(struct TagItem));
+    {
+        struct TagItem *tag_base = (struct TagItem *)((uintptr_t)&__bootstrap_end + 0x1000);
+        tag_base = (struct TagItem *)(((uintptr_t)tag_base + 15) & ~15);
+        kprintf("[BOOT] Kernel tags: %d entries\n",
+                (int)((uintptr_t)boottag - (uintptr_t)tag_base) / (int)sizeof(struct TagItem));
+    }
     kprintf("[BOOT] Bootstrap used %d bytes\n", (int)mem_used());
     kprintf("[BOOT] Jumping to kernel @ %p\n\n", entry);
 

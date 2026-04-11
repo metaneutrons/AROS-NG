@@ -34,8 +34,8 @@ extern struct AARCH64_Implementation __aarch64_arosintern;
 extern struct ExecBase *SysBase;
 extern struct TagItem *BootMsg;
 
-/* Stack for the kernel (40KB) */
-static uint64_t stack[5120] __attribute__((used, aligned(16)));
+/* Stack for the kernel (40KB) -- in .data so clear_bss does not zero it */
+static uint64_t stack[5120] __attribute__((used, aligned(16), section(".data")));
 
 /*
  * _start — entry point, called by bootstrap.
