@@ -101,8 +101,14 @@ arch/
 - **Demo**: AROS boot messages on HDMI display
 - **Depends on**: Task 7
 
-### Task 9: USB HID — keyboard and mouse via xHCI
-- **Status**: NOT STARTED
+### Task 9: USB HID — keyboard and mouse via DWC2 (usb2otg)
+- **Status**: DONE (build) — all modules compile, runtime testing needs Task 10 (DOS/filesystem)
+- **Commit**: `c25455e026`
+- **What was done**: Ported usb2otg DWC2 driver from ARM32 (fixed ARM32 asm nops, 64-bit cast). Created asm/cpu.h for AArch64 (dsb/dmb/isb). Created mbox.resource for BCM2711. Added `__aarch64__` guard to compiler/include/asm/cpu.h dispatcher.
+- **What builds**: usb2otg.device, mbox.resource, poseidon.library, hub/hid/bootkeyboard/bootmouse classes, usbromstartup.resource
+- **What's needed for runtime**: KrnGetSystemAttr(KATTR_PeripheralBase) returning 0xFE000000, DWC2 IRQ (GIC SPI 73 = IRQ 105) wired, modules loaded from BSP ROM or filesystem
+- **Note**: QEMU raspi4b does NOT emulate xHCI (PCIe not implemented). It emulates the DWC2 OTG controller at 0xFE980000, which is what usb2otg drives. Real Pi 4 uses xHCI via PCIe for USB 3.0 ports — xHCI driver needed later for real hardware.
+- **TODO**: Build mbox.resource as a proper resident (currently standalone). Consider packaging USB modules into BSP ROM for testing before DOS is available.
 - **Objective**: User input working.
 - **Work**:
   - xHCI HCD for Poseidon USB stack (from Circle `lib/usb/xhci*.cpp`, GPLv3). Pi 4 xHCI at `0xFE9C0000`.
