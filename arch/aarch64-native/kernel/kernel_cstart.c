@@ -29,6 +29,30 @@
 #include "kernel_romtags.h"
 #include "gic400.h"
 
+/*
+ * Patched AllocMem that strips MEMF_CHIP — AArch64 has no chip memory.
+ * Follows the same pattern as arch/arm-native/kernel/platform_init.c.
+ */
+void *(*__chip_AllocMem)();
+
+#define ExecAllocMem(byteSize, requirements) \
+    AROS_CALL2(void *, __chip_AllocMem, \
+        AROS_LCA(ULONG, byteSize, D0), \
+        AROS_LCA(ULONG, requirements, D1), \
+        struct ExecBase *, SysBase)
+
+AROS_LH2(APTR, AllocMem,
+        AROS_LHA(ULONG, byteSize, D0),
+        AROS_LHA(ULONG, requirements, D1),
+        struct ExecBase *, SysBase, 33, Kernel)
+{
+    AROS_LIBFUNC_INIT
+    if (requirements & MEMF_CHIP)
+        requirements &= ~MEMF_CHIP;
+    return ExecAllocMem(byteSize, requirements);
+    AROS_LIBFUNC_EXIT
+}
+
 #undef KernelBase
 #include "tls.h"
 
@@ -238,6 +262,20 @@ void __attribute__((noinline)) kernel_cstart(struct TagItem *msg)
 
     uart_puts("[Kernel] InitCode(RTF_SINGLETASK)...\n");
     InitCode(RTF_SINGLETASK, 0);
+
+    /*
+     * Patch AllocMem to ignore MEMF_CHIP — AArch64 has no chip memory.
+     * Must happen after RTF_SINGLETASK (kernel.resource init) but before
+     * RTF_COLDSTART (graphics/intuition init which allocate sprite data
+     * with MEMF_CHIP).
+     */
+    {
+        #include <defines/exec_LVO.h>
+        extern void *(*__chip_AllocMem)();
+        __chip_AllocMem = SetFunction((struct Library *)SysBase,
+            -LVOAllocMem * LIB_VECTSIZE,
+            AROS_SLIB_ENTRY(AllocMem, Kernel, LVOAllocMem));
+    }
 
     uart_puts("[Kernel] InitCode(RTF_COLDSTART)...\n");
     InitCode(RTF_COLDSTART, 0);
