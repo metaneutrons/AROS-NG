@@ -89,7 +89,10 @@ arch/
 - **Depends on**: Task 6
 
 ### Task 8: Framebuffer and boot console
-- **Status**: NOT STARTED
+- **Status**: DONE — HDMI framebuffer working, text rendered on screen
+- **Commit**: `79e802b8b2`
+- **What works**: VideoCore mailbox property interface (0xFE00B880, channel 8), 640x480x32 framebuffer allocation, 8x14 bitmap font rendering, mirror-buffer scrolling, fb_Putc() API
+- **Verified**: QEMU screendump shows "[Kernel] AROS AArch64 on Raspberry Pi 4" on display
 - **Objective**: Visual output on HDMI.
 - **Work**:
   - VideoCore mailbox framebuffer at `0xFE00B880` (same API as Pi 1-3)
