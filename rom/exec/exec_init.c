@@ -193,6 +193,17 @@ AROS_UFH3S(struct ExecBase *, GM_UNIQUENAME(init),
     /* Set the bootstrapping task incase errors occur... */
     DINIT("Preparing the Bootstrap task @ 0x%p", t);
     SET_THIS_TASK(t);
+    {
+        extern void uart_puts(const char *);
+        extern void uart_puthex(uint64_t);
+        uart_puts("[Exec] SET_THIS_TASK(");
+        uart_puthex((uint64_t)t);
+        uart_puts(") -> GET=");
+        uart_puthex((uint64_t)GET_THIS_TASK);
+        uart_puts(" SysBase->ThisTask=");
+        uart_puthex((uint64_t)SysBase->ThisTask);
+        uart_puts("\n");
+    }
     DINIT("ThisTask is now 0x%p", GET_THIS_TASK);
 
     /* Create the first ETask structure and attach CPU context */

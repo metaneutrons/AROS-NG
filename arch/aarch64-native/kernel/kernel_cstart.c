@@ -67,6 +67,7 @@ __asm__ (
     ".globl _start\n"
     ".type _start, %function\n"
     "_start:\n"
+    "   msr  spsel, #1\n"          /* EL1h: use SP_EL1 everywhere */
     "   adrp x1, stack + 40960\n"
     "   add  x1, x1, :lo12:stack + 40960\n"
     "   mov  sp, x1\n"

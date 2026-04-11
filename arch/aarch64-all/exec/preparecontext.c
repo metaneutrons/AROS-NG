@@ -95,33 +95,46 @@ BOOL PrepareContext(struct Task *task, APTR entryPoint, APTR fallBack,
      * context restore path, it will pop this frame.
      *
      * Frame layout (growing downward):
-     *   [SP+0]   x19, x20
-     *   [SP+16]  x21, x22
-     *   [SP+32]  x23, x24
-     *   [SP+48]  x25, x26
-     *   [SP+64]  x27, x28
-     *   [SP+80]  ELR_EL1, SPSR_EL1
-     *   [SP+96]  x29 (fp), x30 (lr)
+     *   [SP+0]   x0, x1
+     *   [SP+16]  x2, x3
+     *   [SP+32]  x4, x5
+     *   [SP+48]  x6, x7
+     *   [SP+64]  x19, x20
+     *   [SP+80]  x21, x22
+     *   [SP+96]  x23, x24
+     *   [SP+112] x25, x26
+     *   [SP+128] x27, x28
+     *   [SP+144] ELR_EL1, SPSR_EL1
+     *   [SP+160] x29 (fp), x30 (lr)
      */
     {
         IPTR *sp = (IPTR *)task->tc_SPReg;
-        /* 7 pairs = 14 slots = 112 bytes */
-        sp -= 14;
+        /* 11 pairs = 22 slots = 176 bytes */
+        sp -= 22;
 
-        sp[0]  = 0;                    /* x19 */
-        sp[1]  = 0;                    /* x20 */
-        sp[2]  = 0;                    /* x21 */
-        sp[3]  = 0;                    /* x22 */
-        sp[4]  = 0;                    /* x23 */
-        sp[5]  = 0;                    /* x24 */
-        sp[6]  = 0;                    /* x25 */
-        sp[7]  = 0;                    /* x26 */
-        sp[8]  = 0;                    /* x27 */
-        sp[9]  = 0;                    /* x28 */
-        sp[10] = (IPTR)entryPoint;     /* ELR_EL1 — where eret jumps to */
-        sp[11] = 0x00000005;           /* SPSR_EL1 — EL1h, interrupts enabled */
-        sp[12] = 0;                    /* x29 (fp) */
-        sp[13] = (IPTR)fallBack;       /* x30 (lr) — return address */
+        /* Arguments x0-x7 */
+        {
+            int i;
+            for (i = 0; i < numargs && i < 8; i++)
+                sp[i] = args[i];
+            for (; i < 8; i++)
+                sp[i] = 0;
+        }
+
+        sp[8]  = 0;                    /* x19 */
+        sp[9]  = 0;                    /* x20 */
+        sp[10] = 0;                    /* x21 */
+        sp[11] = 0;                    /* x22 */
+        sp[12] = 0;                    /* x23 */
+        sp[13] = 0;                    /* x24 */
+        sp[14] = 0;                    /* x25 */
+        sp[15] = 0;                    /* x26 */
+        sp[16] = 0;                    /* x27 */
+        sp[17] = 0;                    /* x28 */
+        sp[18] = (IPTR)entryPoint;     /* ELR_EL1 — where eret jumps to */
+        sp[19] = 0x00000005;           /* SPSR_EL1 — EL1h, interrupts enabled */
+        sp[20] = 0;                    /* x29 (fp) */
+        sp[21] = (IPTR)fallBack;       /* x30 (lr) — return address */
 
         task->tc_SPReg = (APTR)sp;
         ctx->sp = (IPTR)sp;

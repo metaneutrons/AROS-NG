@@ -148,8 +148,8 @@ SynchronousStub:
 .Ldo_switch:
     /*
      * Save current task's context.
-     * We save: x19-x28 (callee-saved), x29 (fp), x30 (lr),
-     *          SP (current), ELR_EL1 (return PC), SPSR_EL1
+     * We save: x0-x7 (args), x19-x28 (callee-saved), x29 (fp), x30 (lr),
+     *          ELR_EL1 (return PC), SPSR_EL1
      * These are saved on the current stack, then we store SP
      * into the task's ExceptionContext.
      */
@@ -162,9 +162,14 @@ SynchronousStub:
     stp     x23, x24, [sp, #-16]!
     stp     x21, x22, [sp, #-16]!
     stp     x19, x20, [sp, #-16]!
+    stp     x6,  x7,  [sp, #-16]!
+    stp     x4,  x5,  [sp, #-16]!
+    stp     x2,  x3,  [sp, #-16]!
+    stp     x0,  x1,  [sp, #-16]!
 
     /* Save SP into current task's context */
-    bl      switch_save_sp          /* pass SP in x0 */
+    mov     x0, sp
+    bl      switch_save_sp          /* x0 = SP with saved regs */
 
     /* Pick next task */
     bl      switch_dispatch         /* returns new task SP in x0 */
@@ -173,6 +178,10 @@ SynchronousStub:
     mov     sp, x0
 
     /* Restore registers */
+    ldp     x0,  x1,  [sp], #16
+    ldp     x2,  x3,  [sp], #16
+    ldp     x4,  x5,  [sp], #16
+    ldp     x6,  x7,  [sp], #16
     ldp     x19, x20, [sp], #16
     ldp     x21, x22, [sp], #16
     ldp     x23, x24, [sp], #16
@@ -269,10 +278,6 @@ IRQStub:
     /* Restore ELR and SPSR */
     ldp     x29, x30, [sp], #16
     msr     elr_el1, x29
-    /* Force EL1h mode on return to prevent accidental EL0 drop */
-    bic     x30, x30, #0xF
-    mov     x29, #0x5
-    orr     x30, x30, x29
     msr     spsr_el1, x30
 
     ldp     x29, x30, [sp], #16
