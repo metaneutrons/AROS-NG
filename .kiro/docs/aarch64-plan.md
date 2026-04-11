@@ -119,7 +119,12 @@ arch/
 - **Depends on**: Task 7
 
 ### Task 10: SD card, DOS, and Workbench boot
-- **Status**: NOT STARTED
+- **Status**: IN PROGRESS — BSP ROM loads 42 modules, InitCode runs SINGLETASK+COLDSTART
+- **Commit**: `889c3d9ef8`
+- **What works**: PKG format BSP ROM loading (2.8MB, 42 modules), AArch64 ELF relocations in dos.library, KrnGetSystemAttr, SD card platform driver, exception vectors for debugging
+- **Key fix**: Device memory alignment fault (EC=0x25) — without MMU, AArch64 enforces alignment on 64-bit access. Fixed by copying unaligned ELF modules to aligned buffer before parsing.
+- **Modules loaded**: dos, poseidon, graphics, layers, intuition, keymap, partition, utility, oop, aros, expansion, timer, input, gameport, keyboard, console, shell, shellcommands, filesystem handlers (con/ram/fat/sfs/afs), USB stack (hub/hid/bootkeyboard/bootmouse/massstorage), sdcard, mbox, gfx/mouse/keyboard HIDDs, and more
+- **TODO**: Debug what happens after COLDSTART — DOS should be trying to boot from SD card. Need SD card image with FAT filesystem for QEMU testing.
 - **Objective**: Full AROS Workbench on Pi 4.
 - **Work**:
   - SD card driver for EMMC2 (`0xFE340000`, SDHCI-compatible)
