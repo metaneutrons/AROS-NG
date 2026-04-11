@@ -89,14 +89,13 @@ arch/
 - **Depends on**: Task 6
 
 ### Task 8: Framebuffer and boot console
-- **Status**: DONE — HDMI framebuffer working, vc4gfx HIDD ported and initializing
-- **Commits**: `79e802b8b2` (bootstrap FB), `8cf3a3e423` (vc4gfx port)
-- **What works**: VideoCore mailbox property interface (0xFE00B880, channel 8), 640x480x32 framebuffer allocation, 8x14 bitmap font rendering, mirror-buffer scrolling, fb_Putc() API. vc4gfx HIDD ported from ARM32, builds clean, initializes at runtime, detects 64MB GPU RAM, creates display mode and bitmap objects.
-- **vc4gfx port details**: Copied from arch/arm-native/soc/broadcom/2708/hidd/vc4gfx/ to arch/aarch64-raspi/hidd/vc4gfx/. Fixed (ULONG)memhandle→(ULONG)(IPTR)memhandle (3 places), int-to-pointer casts, removed unused hidd/pci.h. Uses mmake target hidd-vc4gfx-bcm2711 to avoid conflict with arm-native hidd-vc4gfx.
-- **Current issue**: Crash during OnScreenBM creation — framebuffer address from VCTAG_FBALLOC needs investigation (bus-to-physical mapping via 0x3fffffff mask)
-- **Verified**: QEMU screendump shows "[Kernel] AROS AArch64 on Raspberry Pi 4" on display
-- **Objective**: Visual output on HDMI.
-- **Demo**: AROS boot messages on HDMI display
+- **Status**: DONE — HDMI framebuffer working, vc4gfx HIDD fully operational, graphical boot screen renders
+- **Commits**: `79e802b8b2` (bootstrap FB), `8cf3a3e423` (vc4gfx port), `34b6d87da1` (MEMF_CHIP fix)
+- **What works**: VideoCore mailbox property interface (0xFE00B880, channel 8), 640x480x32 framebuffer allocation, vc4gfx HIDD creates OnScreenBM and OffScreenBM objects, cgxbootpic renders AROS eye logo, dosboot shows "Waiting for bootable media" screen with device icons
+- **Key bugs fixed**:
+  - PointerClass OM_NEW returned class pointer on failure instead of NULL (`527ed55d94`)
+  - MEMF_CHIP allocations failed (no chip memory on AArch64) — patched AllocMem via SetFunction (`34b6d87da1`)
+- **Verified**: QEMU screendump shows full AROS graphical boot screen (eye logo + "Waiting for bootable media")
 - **Depends on**: Task 7
 
 ### Task 9: USB HID — keyboard and mouse via DWC2 (usb2otg)
@@ -117,20 +116,19 @@ arch/
 - **Depends on**: Task 7
 
 ### Task 10: SD card, DOS, and Workbench boot
-- **Status**: IN PROGRESS — all COLDSTART modules init successfully, vc4gfx display driver initializing, crash in framebuffer bitmap creation
-- **Commits**: `889c3d9ef8` (BSP ROM), `510888149c`..`c8b26dad77` (interrupt fix, context switch, TLS sync), `0a43bea304` (inputclass fix)
-- **What works**: PKG format BSP ROM loading (30+ modules), timer interrupts at 50Hz, SVC-based cooperative context switching, full COLDSTART init sequence, EL1h mode, TLS/SysBase ThisTask sync. All devices open successfully (timer, keyboard, gameport). vc4gfx HIDD initializes, detects GPU RAM, creates display mode.
+- **Status**: IN PROGRESS — graphical boot screen renders, dosboot waiting for bootable media
+- **Commits**: `889c3d9ef8` (BSP ROM), `510888149c`..`c8b26dad77` (interrupt fix, context switch, TLS sync), `0a43bea304` (inputclass fix), `527ed55d94` (pointerclass fix), `34b6d87da1` (MEMF_CHIP fix)
+- **What works**: Full COLDSTART init sequence (45 modules), timer interrupts at 50Hz, SVC-based context switching, vc4gfx display driver registered, cgxbootpic boot logo rendered, dosboot "Waiting for bootable media" screen displayed. System runs stable (no crashes, 60+ second uptime).
 - **Key fixes applied**:
-  - exec_platform.h: AROS_NO_ATOMIC_OPERATIONS support (prevents Disable/Enable in IRQ handler)
-  - KrnIsSuper(): TLS SupervisorCount tracks exception context (also incremented in SVC handler)
-  - SVC handler: full register save (x0-x7 + x19-x28 + ELR/SPSR + fp/lr = 176-byte frame)
-  - EL1h mode: kernel runs in EL1h consistently (SPSel=1), matching SVC handler stack usage
-  - TLS/SysBase ThisTask sync: dual-write in SET_THIS_TASK, TLS sync in switch_dispatch
-  - exec_platform.h copied to arch/aarch64-native/exec/ for exec module build
-  - SD card driver: ULONG→IPTR for 64-bit pointers, dynamic peripheral base
-  - **inputclass.hidd missing from BSP ROM**: keyboard.hidd and mouse.hidd (pri 45) depend on inputclass.hidd (pri 45) as superclass CLID_Hidd_Input. Without it, keyboard.device and gameport.device failed to open. Fixed by adding inputclass.hidd to PKG_HIDDS before mouse/keyboard.
-- **Current failure**: Crash during vc4gfx OnScreenBM creation (framebuffer bitmap). The VCTAG_FBALLOC mailbox call succeeds but the returned bus address may not be properly mapped. Exception at FAR=0xffffffffffffffd8 suggests NULL pointer dereference.
-- **Next steps**: Debug vc4gfx OnScreenBM crash, get Intuition screen visible, then SD card + DOS
+  - exec_platform.h: AROS_NO_ATOMIC_OPERATIONS support
+  - KrnIsSuper(): TLS SupervisorCount tracks exception context
+  - SVC handler: full register save (176-byte frame)
+  - EL1h mode: kernel runs in EL1h consistently
+  - TLS/SysBase ThisTask sync: dual-write in SET_THIS_TASK
+  - inputclass.hidd added to BSP ROM (keyboard/mouse HIDD dependency)
+  - PointerClass OM_NEW: return NULL on failure instead of class pointer
+  - MEMF_CHIP: patched AllocMem to strip MEMF_CHIP (no chip memory on AArch64)
+- **Next steps**: SD card EMMC2 driver (SDHCI at 0xFE340000), mount filesystem, boot to Workbench
 - **Objective**: Full AROS Workbench on Pi 4.
 - **Work**:
   - SD card driver for EMMC2 (`0xFE340000`, SDHCI-compatible)
