@@ -29,6 +29,14 @@ CFILES := \
     vc_fb \
     font8x14 \
     getsystemattr \
+    kernel_debug \
+    cli \
+    sti \
+    issuper \
+    switch \
+    schedule \
+    dispatch \
+    kernel_syscall \
     tags
 
 AFILES := intvecs

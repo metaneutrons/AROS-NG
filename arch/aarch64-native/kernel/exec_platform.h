@@ -8,7 +8,6 @@
 #define __EXEC_PLATFORM_H
 
 #include <aros/config.h>
-#include <aros/atomic.h>
 
 #include "tls.h"
 
@@ -33,12 +32,36 @@ struct Exec_PlatformData
 #define TDNESTCOUNT_GET     ({ __GET_TLS()->TDNestCnt; })
 #define TDNESTCOUNT_SET(val) do { __GET_TLS()->TDNestCnt = (val); } while(0)
 
+/*
+ * Schedule flag operations.
+ *
+ * When AROS_NO_ATOMIC_OPERATIONS is defined (e.g. in intserver_vblank.c,
+ * kernel_scheduler.c — code that runs with interrupts disabled or from
+ * within interrupt handlers), use simple non-atomic operations.
+ * Otherwise use AROS_ATOMIC_OR/AND which, if no arch-specific atomics
+ * exist, fall back to Disable()/Enable() — which is unsafe from IRQ context.
+ */
+#if defined(AROS_NO_ATOMIC_OPERATIONS)
+
+#define FLAG_SCHEDQUANTUM_CLEAR  do { __GET_TLS()->ScheduleFlags &= ~TLSSF_Quantum; } while(0)
+#define FLAG_SCHEDQUANTUM_SET    do { __GET_TLS()->ScheduleFlags |= TLSSF_Quantum; } while(0)
+#define FLAG_SCHEDSWITCH_CLEAR   do { __GET_TLS()->ScheduleFlags &= ~TLSSF_Switch; } while(0)
+#define FLAG_SCHEDSWITCH_SET     do { __GET_TLS()->ScheduleFlags |= TLSSF_Switch; } while(0)
+#define FLAG_SCHEDDISPATCH_CLEAR do { __GET_TLS()->ScheduleFlags &= ~TLSSF_Dispatch; } while(0)
+#define FLAG_SCHEDDISPATCH_SET   do { __GET_TLS()->ScheduleFlags |= TLSSF_Dispatch; } while(0)
+
+#else /* !AROS_NO_ATOMIC_OPERATIONS */
+
+#include <aros/atomic.h>
+
 #define FLAG_SCHEDQUANTUM_CLEAR  do { AROS_ATOMIC_AND(__GET_TLS()->ScheduleFlags, ~TLSSF_Quantum); } while(0)
 #define FLAG_SCHEDQUANTUM_SET    do { AROS_ATOMIC_OR(__GET_TLS()->ScheduleFlags, TLSSF_Quantum); } while(0)
 #define FLAG_SCHEDSWITCH_CLEAR   do { AROS_ATOMIC_AND(__GET_TLS()->ScheduleFlags, ~TLSSF_Switch); } while(0)
 #define FLAG_SCHEDSWITCH_SET     do { AROS_ATOMIC_OR(__GET_TLS()->ScheduleFlags, TLSSF_Switch); } while(0)
 #define FLAG_SCHEDDISPATCH_CLEAR do { AROS_ATOMIC_AND(__GET_TLS()->ScheduleFlags, ~TLSSF_Dispatch); } while(0)
 #define FLAG_SCHEDDISPATCH_SET   do { AROS_ATOMIC_OR(__GET_TLS()->ScheduleFlags, TLSSF_Dispatch); } while(0)
+
+#endif /* !AROS_NO_ATOMIC_OPERATIONS */
 
 #define FLAG_SCHEDQUANTUM_ISSET  ({ (__GET_TLS()->ScheduleFlags & TLSSF_Quantum) ? TRUE : FALSE; })
 #define FLAG_SCHEDSWITCH_ISSET   ({ (__GET_TLS()->ScheduleFlags & TLSSF_Switch) ? TRUE : FALSE; })

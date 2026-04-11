@@ -122,7 +122,8 @@ arch/
 - **Status**: IN PROGRESS — BSP ROM loads 42 modules, InitCode runs SINGLETASK+COLDSTART
 - **Commit**: `889c3d9ef8`
 - **What works**: PKG format BSP ROM loading (2.8MB, 42 modules), AArch64 ELF relocations in dos.library, KrnGetSystemAttr, SD card platform driver, exception vectors for debugging
-- **Key fix**: Device memory alignment fault (EC=0x25) — without MMU, AArch64 enforces alignment on 64-bit access. Fixed by copying unaligned ELF modules to aligned buffer before parsing.
+- **Key fix 1**: Device memory alignment fault (EC=0x25) — without MMU, AArch64 enforces alignment on 64-bit access. Fixed by copying unaligned ELF modules to aligned buffer before parsing.
+- **Key fix 2**: Timer/interrupts stopped after exec init. Root cause: (a) exec_platform.h lacked `AROS_NO_ATOMIC_OPERATIONS` support — `FLAG_SCHEDSWITCH_SET` etc. in VBlankServer/kernel_scheduler fell back to `Disable()/Enable()` wrappers (since no aarch64 atomic.h exists), calling `Disable()/Enable()` from within the IRQ handler. (b) `KrnIsSuper()` always returned FALSE (generic fallback), so `Enable()` called `KrnSti()` (unmasking IRQs in IRQ handler) and `KrnSchedule()` (SVC from IRQ handler, corrupting ELR_EL1/SPSR_EL1). Fix: added `AROS_NO_ATOMIC_OPERATIONS` dual-path to exec_platform.h (matching arm-native pattern), implemented `KrnIsSuper()` via TLS `SupervisorCount` incremented/decremented in `InterruptHandler()`.
 - **Modules loaded**: dos, poseidon, graphics, layers, intuition, keymap, partition, utility, oop, aros, expansion, timer, input, gameport, keyboard, console, shell, shellcommands, filesystem handlers (con/ram/fat/sfs/afs), USB stack (hub/hid/bootkeyboard/bootmouse/massstorage), sdcard, mbox, gfx/mouse/keyboard HIDDs, and more
 - **TODO**: Debug what happens after COLDSTART — DOS should be trying to boot from SD card. Need SD card image with FAT filesystem for QEMU testing.
 - **Objective**: Full AROS Workbench on Pi 4.

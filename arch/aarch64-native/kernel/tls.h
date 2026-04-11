@@ -18,6 +18,8 @@ typedef struct tls
     ULONG               ScheduleFlags;
     BYTE                IDNestCnt;
     BYTE                TDNestCnt;
+    BYTE                SupervisorCount; /* >0 when in exception handler */
+    BYTE                Pad0;
 } tls_t;
 
 #define TLSSF_Quantum   (1 << 0)

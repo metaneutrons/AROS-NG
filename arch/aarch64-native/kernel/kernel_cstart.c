@@ -13,6 +13,7 @@
 #include <exec/tasks.h>
 #include <exec/alerts.h>
 #include <exec/execbase.h>
+#include <exec/resident.h>
 #include <proto/kernel.h>
 #include <proto/exec.h>
 
@@ -153,6 +154,7 @@ void __attribute__((noinline)) kernel_cstart(struct TagItem *msg)
     __tls->ThisTask = NULL;
     __tls->IDNestCnt = -1;
     __tls->TDNestCnt = -1;
+    __tls->SupervisorCount = 0;
 
     /* Set TLS pointer in TPIDR_EL1 */
     __asm__ volatile("msr tpidr_el1, %0" : : "r"(__tls));
@@ -237,6 +239,41 @@ void __attribute__((noinline)) kernel_cstart(struct TagItem *msg)
     InitCode(RTF_SINGLETASK, 0);
 
     uart_puts("[Kernel] InitCode(RTF_COLDSTART)...\n");
+
+    /* Check interrupt state */
+    {
+        uint64_t daif;
+        __asm__ volatile("mrs %0, daif" : "=r"(daif));
+        uart_puts("[Kernel] DAIF before COLDSTART: ");
+        uart_puthex(daif);
+        uart_puts("\n");
+    }
+
+    /* Dump COLDSTART residents for debugging */
+    {
+        IPTR *list = SysBase->ResModules;
+        if (list)
+        {
+            while (*list)
+            {
+                if (*list & RESLIST_NEXT)
+                {
+                    list = (IPTR *)(*list & ~RESLIST_NEXT);
+                    continue;
+                }
+                struct Resident *res = (struct Resident *)*list++;
+                if (res->rt_Flags & RTF_COLDSTART)
+                {
+                    uart_puts("[Kernel]   COLD pri=");
+                    uart_puthex(res->rt_Pri & 0xFF);
+                    uart_puts(" ");
+                    uart_puts(res->rt_Name ? (const char *)res->rt_Name : "?");
+                    uart_puts("\n");
+                }
+            }
+        }
+    }
+
     InitCode(RTF_COLDSTART, 0);
 
     /*
@@ -314,10 +351,11 @@ void uart_puthex(uint64_t val)
 /* Exception/interrupt stubs called from intvecs.S */
 void ExceptionHandler(uint64_t exception, void *frame)
 {
-    uint64_t esr, elr, far;
+    uint64_t esr, elr, far, spsr;
     __asm__ volatile("mrs %0, esr_el1" : "=r"(esr));
     __asm__ volatile("mrs %0, elr_el1" : "=r"(elr));
     __asm__ volatile("mrs %0, far_el1" : "=r"(far));
+    __asm__ volatile("mrs %0, spsr_el1" : "=r"(spsr));
 
     uart_puts("\n*** EXCEPTION ");
     uart_puthex(exception);
@@ -330,6 +368,9 @@ void ExceptionHandler(uint64_t exception, void *frame)
     uart_puts("  ELR_EL1: ");
     uart_puthex(elr);
     uart_puts("\n");
+    uart_puts("  SPSR_EL1: ");
+    uart_puthex(spsr);
+    uart_puts("\n");
     uart_puts("  FAR_EL1: ");
     uart_puthex(far);
     uart_puts("\n");
@@ -338,5 +379,11 @@ void ExceptionHandler(uint64_t exception, void *frame)
 
 void InterruptHandler(void)
 {
+    tls_t *__tls;
+    __asm__ volatile("mrs %0, tpidr_el1" : "=r"(__tls));
+    __tls->SupervisorCount++;
+
     gic400_HandleIRQ(gic400_GetGICCBase());
+
+    __tls->SupervisorCount--;
 }
