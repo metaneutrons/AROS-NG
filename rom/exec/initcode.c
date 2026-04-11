@@ -3,7 +3,6 @@
 
     Desc: Initialize resident modules
 */
-#define DEBUG 1
 #include <aros/debug.h>
 #include <exec/resident.h>
 #include <proto/exec.h>
@@ -55,8 +54,6 @@
 
     DINITCODE("enter InitCode(0x%02lx, %ld)", startClass, version);
 
-    bug("[InitCode] startClass=0x%lx version=%ld\n", (unsigned long)startClass, (long)version);
-
     if (startClass == RTF_COLDSTART)
     {
         /*
@@ -93,7 +90,6 @@
 
             if ((res->rt_Version >= version) && (res->rt_Flags & startClass))
             {
-                bug("[InitCode] INIT: %s (ver=%d flags=0x%x)\n", res->rt_Name, res->rt_Version, res->rt_Flags);
                 DINITCODE("calling InitResident (%ld %02lx \"%s\")",
                     res->rt_Pri, res->rt_Flags, res->rt_Name);
                 InitResident(res, BNULL);

@@ -240,41 +240,6 @@ void __attribute__((noinline)) kernel_cstart(struct TagItem *msg)
     InitCode(RTF_SINGLETASK, 0);
 
     uart_puts("[Kernel] InitCode(RTF_COLDSTART)...\n");
-
-    /* Check interrupt state */
-    {
-        uint64_t daif;
-        __asm__ volatile("mrs %0, daif" : "=r"(daif));
-        uart_puts("[Kernel] DAIF before COLDSTART: ");
-        uart_puthex(daif);
-        uart_puts("\n");
-    }
-
-    /* Dump COLDSTART residents for debugging */
-    {
-        IPTR *list = SysBase->ResModules;
-        if (list)
-        {
-            while (*list)
-            {
-                if (*list & RESLIST_NEXT)
-                {
-                    list = (IPTR *)(*list & ~RESLIST_NEXT);
-                    continue;
-                }
-                struct Resident *res = (struct Resident *)*list++;
-                if (res->rt_Flags & RTF_COLDSTART)
-                {
-                    uart_puts("[Kernel]   COLD pri=");
-                    uart_puthex(res->rt_Pri & 0xFF);
-                    uart_puts(" ");
-                    uart_puts(res->rt_Name ? (const char *)res->rt_Name : "?");
-                    uart_puts("\n");
-                }
-            }
-        }
-    }
-
     InitCode(RTF_COLDSTART, 0);
 
     /*

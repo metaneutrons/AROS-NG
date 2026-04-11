@@ -16,8 +16,6 @@
 
 void ServiceTask(struct ExecBase *SysBase)
 {
-    extern void uart_puts(const char *);
-    uart_puts("[ServiceTask] started\n");
 #if defined(__AROSEXEC_SMP__)
     struct Task *serviceTask;
 #endif
@@ -34,18 +32,8 @@ void ServiceTask(struct ExecBase *SysBase)
     do
     { /* forever */
 
-        uart_puts("[ServiceTask] loop\n");
-        {
-            extern void uart_puthex(uint64_t);
-            struct MsgPort *port = PrivExecBase(SysBase)->ServicePort;
-            uart_puts("[ServiceTask] port=");
-            uart_puthex((uint64_t)port);
-            uart_puts("\n");
-        }
-
         while ((task = (struct Task *)GetMsg(PrivExecBase(SysBase)->ServicePort)))
         {
-            uart_puts("[ServiceTask] got msg\n");
             DREMTASK("ServiceTask: Request for Task 0x%p, State %08X\n", task, task->tc_State);
             taskRequeue = TRUE;
 
@@ -125,7 +113,6 @@ void ServiceTask(struct ExecBase *SysBase)
             }
         }
 
-        uart_puts("[ServiceTask] WaitPort\n");
         WaitPort(PrivExecBase(SysBase)->ServicePort);
     } while(1);
 }

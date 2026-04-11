@@ -119,13 +119,19 @@ arch/
 - **Depends on**: Task 7
 
 ### Task 10: SD card, DOS, and Workbench boot
-- **Status**: IN PROGRESS — BSP ROM loads 42 modules, InitCode runs SINGLETASK+COLDSTART
-- **Commit**: `889c3d9ef8`
-- **What works**: PKG format BSP ROM loading (2.8MB, 42 modules), AArch64 ELF relocations in dos.library, KrnGetSystemAttr, SD card platform driver, exception vectors for debugging
-- **Key fix 1**: Device memory alignment fault (EC=0x25) — without MMU, AArch64 enforces alignment on 64-bit access. Fixed by copying unaligned ELF modules to aligned buffer before parsing.
-- **Key fix 2**: Timer/interrupts stopped after exec init. Root cause: (a) exec_platform.h lacked `AROS_NO_ATOMIC_OPERATIONS` support — `FLAG_SCHEDSWITCH_SET` etc. in VBlankServer/kernel_scheduler fell back to `Disable()/Enable()` wrappers (since no aarch64 atomic.h exists), calling `Disable()/Enable()` from within the IRQ handler. (b) `KrnIsSuper()` always returned FALSE (generic fallback), so `Enable()` called `KrnSti()` (unmasking IRQs in IRQ handler) and `KrnSchedule()` (SVC from IRQ handler, corrupting ELR_EL1/SPSR_EL1). Fix: added `AROS_NO_ATOMIC_OPERATIONS` dual-path to exec_platform.h (matching arm-native pattern), implemented `KrnIsSuper()` via TLS `SupervisorCount` incremented/decremented in `InterruptHandler()`.
-- **Modules loaded**: dos, poseidon, graphics, layers, intuition, keymap, partition, utility, oop, aros, expansion, timer, input, gameport, keyboard, console, shell, shellcommands, filesystem handlers (con/ram/fat/sfs/afs), USB stack (hub/hid/bootkeyboard/bootmouse/massstorage), sdcard, mbox, gfx/mouse/keyboard HIDDs, and more
-- **TODO**: Debug what happens after COLDSTART — DOS should be trying to boot from SD card. Need SD card image with FAT filesystem for QEMU testing.
+- **Status**: IN PROGRESS — all COLDSTART modules init, context switching + timer working, reaching dosboot
+- **Commits**: `889c3d9ef8` (BSP ROM), `510888149c`..`c8b26dad77` (interrupt fix, context switch, TLS sync)
+- **What works**: PKG format BSP ROM loading (29 modules), timer interrupts at 50Hz, SVC-based cooperative context switching, full COLDSTART init sequence (expansion→exec→utility→aros→task→oop→hiddclass→mbox→timer→mouse/keyboard HIDDs→gameport→keyboard→partition→keymap→input→sdcard→dos→dosboot), EL1h mode, TLS/SysBase ThisTask sync
+- **Key fixes applied**:
+  - exec_platform.h: AROS_NO_ATOMIC_OPERATIONS support (prevents Disable/Enable in IRQ handler)
+  - KrnIsSuper(): TLS SupervisorCount tracks exception context (also incremented in SVC handler)
+  - SVC handler: full register save (x0-x7 + x19-x28 + ELR/SPSR + fp/lr = 176-byte frame)
+  - EL1h mode: kernel runs in EL1h consistently (SPSel=1), matching SVC handler stack usage
+  - TLS/SysBase ThisTask sync: dual-write in SET_THIS_TASK, TLS sync in switch_dispatch
+  - exec_platform.h copied to arch/aarch64-native/exec/ for exec module build
+  - SD card driver: ULONG→IPTR for 64-bit pointers, dynamic peripheral base
+- **Current failure**: input.device software failure (0xB5040000 = can't open library), then NULL pointer data abort at FAR=0xffffffffffffffd8. Likely caused by trimmed BSP ROM (graphics/intuition/layers/console/poseidon removed).
+- **Next steps**: Restore full BSP ROM, clean up debug output, debug remaining crashes
 - **Objective**: Full AROS Workbench on Pi 4.
 - **Work**:
   - SD card driver for EMMC2 (`0xFE340000`, SDHCI-compatible)

@@ -66,14 +66,6 @@ static void timer_IRQHandler(void *param)
 
     timer_tick_count++;
 
-    /* Debug: print every 50 ticks (once per second) */
-    if (timer_tick_count <= 5 || (timer_tick_count % 50) == 0)
-    {
-        uart_puts("[Timer] tick=");
-        uart_puthex(timer_tick_count);
-        uart_puts("\n");
-    }
-
     /* Signal the Exec VBlankServer */
     if (SysBase)
         core_Cause(INTB_VERTB, 1L << INTB_VERTB);

@@ -3,7 +3,6 @@
 
     Desc: exec.library resident and initialization.
 */
-#define DEBUG 1
 
 #define DEBUG 0
 
@@ -124,6 +123,12 @@ AROS_UFH3S(struct ExecBase *, GM_UNIQUENAME(init),
 
     bug("[Exec] COLDSTART init starting\n");
 
+#if defined(__AROSEXEC_SMP__)
+    DINIT("AROS SMP 'exec.library' Initialization");
+#else
+    DINIT("AROS 'exec.library' Initialization");
+#endif
+
     /*
      * Call platform-specific pre-init code (if any). Return values are not checked.
      * Note that Boot Task is still incomplete here, and there's no multitasking yet.
@@ -193,17 +198,6 @@ AROS_UFH3S(struct ExecBase *, GM_UNIQUENAME(init),
     /* Set the bootstrapping task incase errors occur... */
     DINIT("Preparing the Bootstrap task @ 0x%p", t);
     SET_THIS_TASK(t);
-    {
-        extern void uart_puts(const char *);
-        extern void uart_puthex(uint64_t);
-        uart_puts("[Exec] SET_THIS_TASK(");
-        uart_puthex((uint64_t)t);
-        uart_puts(") -> GET=");
-        uart_puthex((uint64_t)GET_THIS_TASK);
-        uart_puts(" SysBase->ThisTask=");
-        uart_puthex((uint64_t)SysBase->ThisTask);
-        uart_puts("\n");
-    }
     DINIT("ThisTask is now 0x%p", GET_THIS_TASK);
 
     /* Create the first ETask structure and attach CPU context */
@@ -270,16 +264,13 @@ AROS_UFH3S(struct ExecBase *, GM_UNIQUENAME(init),
     TDNESTCOUNT_SET(t->tc_TDNestCnt);
 
     DINIT("Permitting multitasking...\n");
-    bug("[Exec] Permitting multitasking...\n");
 
     /* We now start up the interrupts */
     Permit();
     DINIT("Enabling Exec Interrupts...\n");
-    bug("[Exec] Enabling interrupts...\n");
     Enable();
 
     DINIT("Multitasking enabled\n");
-    bug("[Exec] Multitasking enabled\n");
 
     D(debugmem());
 
