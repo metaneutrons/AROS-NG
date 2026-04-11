@@ -1,0 +1,16 @@
+
+include $(SRCDIR)/config/aros.cfg
+
+USER_INCLUDES := -I$(SRCDIR)/$(CURDIR) -I$(SRCDIR)/rom/devs/sdcard
+
+BCM2711FILES = \
+    sdcard_bcm2708init \
+    sdcard_bcm2708bus \
+    sdcard_bcm2708time
+
+%build_archspecific \
+  mainmmake=kernel-sdcard maindir=rom/devs/sdcard \
+  arch=raspi-aarch64 modname=sdcard \
+  files="$(BCM2711FILES)"
+
+%common

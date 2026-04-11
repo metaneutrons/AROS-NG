@@ -27,6 +27,23 @@ static unsigned long *mem_upper;
 static void *pkg_image;
 static uint64_t pkg_size;
 
+/*
+ * Aligned buffer for ELF module processing.
+ * Without MMU, AArch64 memory is Device-nGnRnE which enforces alignment.
+ * PKG modules may start at non-8-byte-aligned offsets, so we copy each
+ * module here before parsing/loading.
+ */
+static uint8_t __attribute__((aligned(64))) elf_aligned_buf[512 * 1024];
+
+void boot_exception_handler(uint64_t esr, uint64_t elr, uint64_t far)
+{
+    kprintf("\n[BOOT] *** EXCEPTION ***\n");
+    kprintf("[BOOT] ESR_EL1: 0x%016lx (EC=0x%lx)\n", esr, (esr >> 26) & 0x3F);
+    kprintf("[BOOT] ELR_EL1: 0x%016lx (fault PC)\n", elr);
+    kprintf("[BOOT] FAR_EL1: 0x%016lx (fault addr)\n", far);
+    while(1) asm volatile("wfe");
+}
+
 static void query_memory(void)
 {
     of_node_t *mem = dt_find_node("/memory@0");
@@ -202,29 +219,45 @@ void boot(void *dtb_ptr)
     boottag->ti_Data = (IPTR)&__bootstrap_end;
     boottag++;
 
-    /* Find initrd (core.elf or package) */
+    /* Find BSP ROM in initrd (if provided via config.txt / QEMU -initrd) */
+    void *bsp_image = NULL;
+    uint64_t bsp_size = 0;
     of_node_t *chosen = dt_find_node("/chosen");
     if (chosen)
     {
         of_property_t *p = dt_find_property(chosen, "linux,initrd-start");
         if (p)
-            pkg_image = (void *)(uintptr_t)AROS_BE2LONG(*(uint32_t *)p->op_value);
-        else
-            pkg_image = (void *)0;
+        {
+            if (p->op_length == 8)
+                bsp_image = (void *)(uintptr_t)AROS_BE2LONG(((uint32_t *)p->op_value)[1]);
+            else
+                bsp_image = (void *)(uintptr_t)AROS_BE2LONG(*(uint32_t *)p->op_value);
+            kprintf("[BOOT] initrd-start: %p (len=%d)\n", bsp_image, p->op_length);
+        }
 
         p = dt_find_property(chosen, "linux,initrd-end");
-        if (p)
-            pkg_size = AROS_BE2LONG(*(uint32_t *)p->op_value) - (uintptr_t)pkg_image;
-        else
-            pkg_size = 0;
+        if (p && bsp_image)
+        {
+            uintptr_t end;
+            if (p->op_length == 8)
+                end = (uintptr_t)AROS_BE2LONG(((uint32_t *)p->op_value)[1]);
+            else
+                end = (uintptr_t)AROS_BE2LONG(*(uint32_t *)p->op_value);
+            bsp_size = end - (uintptr_t)bsp_image;
+        }
+    }
+    else
+        kprintf("[BOOT] WARNING: /chosen not found in DTB\n");
+
+    if (bsp_image && bsp_size > 8)
+    {
+        kprintf("[BOOT] BSP ROM: %p-%p (%lu bytes)\n",
+                bsp_image, (void *)((uintptr_t)bsp_image + bsp_size - 1), (unsigned long)bsp_size);
     }
 
-    /* If no initrd, use embedded core.elf */
-    if (!pkg_image)
-    {
-        pkg_image = &_binary_core_bin_start;
-        pkg_size = (uintptr_t)&_binary_core_bin_end - (uintptr_t)&_binary_core_bin_start;
-    }
+    /* Core kernel is always the embedded ELF */
+    pkg_image = &_binary_core_bin_start;
+    pkg_size = (uintptr_t)&_binary_core_bin_end - (uintptr_t)&_binary_core_bin_start;
 
     kprintf("[BOOT] Kernel image: %p-%p (%lu bytes)\n",
             pkg_image, (void *)((uintptr_t)pkg_image + pkg_size - 1), (unsigned long)pkg_size);
@@ -236,10 +269,61 @@ void boot(void *dtb_ptr)
         uintptr_t kernel_phys = *mem_upper;
         uint64_t size_ro, size_rw;
 
-        /* Calculate kernel size */
+        /* Calculate kernel size — handle both single ELF and PKG format */
         getElfSize(pkg_image, &size_rw, &size_ro);
         total_size_ro = (size_ro + 4095) & ~4095;
         total_size_rw = (size_rw + 4095) & ~4095;
+
+        /* Check if BSP ROM contains additional modules */
+        if (bsp_image && bsp_size > 8)
+        {
+            uint8_t *base = (uint8_t *)bsp_image;
+
+            if (base[0] == 0x7f && base[1] == 'E' && base[2] == 'L' && base[3] == 'F')
+            {
+                kprintf("[BOOT] BSP image is ELF\n");
+                getElfSize(base, &size_rw, &size_ro);
+                total_size_ro += (size_ro + 4095) & ~4095;
+                total_size_rw += (size_rw + 4095) & ~4095;
+            }
+            else if (base[0] == 'P' && base[1] == 'K' && base[2] == 'G' && base[3] == 0x01)
+            {
+                uint8_t *file = base + 4;
+                uint32_t total_length = AROS_BE2LONG(*(uint32_t *)file);
+                const uint8_t *file_end = base + total_length;
+                uint32_t len, cnt = 0;
+
+                kprintf("[BOOT] BSP package: %luKB\n", (unsigned long)(total_length >> 10));
+
+                file = base + 8;
+                while (file < file_end)
+                {
+                    const char *name = remove_path((const char *)(file + 4));
+                    len = AROS_BE2LONG(*(uint32_t *)file);
+                    if (len == 0 || len > 1024) { kprintf("[BOOT] BAD name_len=%lu\n", (unsigned long)len); break; }
+                    file += len + 5;
+                    if (file >= file_end) break;
+                    len = AROS_BE2LONG(*(uint32_t *)file);
+                    file += 4;
+                    if (len == 0 || file + len > file_end) { kprintf("[BOOT] BAD elf_len=%lu\n", (unsigned long)len); break; }
+                    kprintf("[BOOT]   %s (%lu)\n", name, (unsigned long)len);
+                    {
+                        void *elf = file;
+                        if (((uintptr_t)file & 7) && len <= sizeof(elf_aligned_buf))
+                        {
+                            memcpy(elf_aligned_buf, file, len);
+                            elf = elf_aligned_buf;
+                        }
+                        getElfSize(elf, &size_rw, &size_ro);
+                    }
+                    total_size_ro += (size_ro + 4095) & ~4095;
+                    total_size_rw += (size_rw + 4095) & ~4095;
+                    file += len;
+                    cnt++;
+                }
+                kprintf("[BOOT] BSP contains %lu modules\n", (unsigned long)cnt);
+            }
+        }
 
         /* Reserve space for flattened device tree */
         total_size_ro += (dt_total_size() + 31) & ~31;
@@ -305,6 +389,46 @@ void boot(void *dtb_ptr)
             else
             {
                 entry = (void (*)(struct TagItem *))elf_entry;
+            }
+        }
+
+        /* Load BSP package modules */
+        if (bsp_image && bsp_size > 8)
+        {
+            uint8_t *base = (uint8_t *)bsp_image;
+
+            if (base[0] == 0x7f && base[1] == 'E' && base[2] == 'L' && base[3] == 'F')
+            {
+                kprintf("[BOOT] Loading BSP ELF module\n");
+                loadElf(base);
+            }
+            else if (base[0] == 'P' && base[1] == 'K' && base[2] == 'G' && base[3] == 0x01)
+            {
+                uint8_t *file = base + 4;
+                uint32_t total_length = AROS_BE2LONG(*(uint32_t *)file);
+                const uint8_t *file_end = base + total_length;
+                uint32_t len, cnt = 0;
+
+                kprintf("[BOOT] Loading BSP package:");
+                file = base + 8;
+                while (file < file_end)
+                {
+                    const char *filename = remove_path((const char *)(file + 4));
+                    len = AROS_BE2LONG(*(uint32_t *)file);
+                    if (cnt % 4 == 0)
+                        kprintf("\n[BOOT]    %s", filename);
+                    else
+                        kprintf(", %s", filename);
+                    file += len + 5;
+                    len = AROS_BE2LONG(*(uint32_t *)file);
+                    file += 4;
+                    loadElf(((uintptr_t)file & 7) && len <= sizeof(elf_aligned_buf)
+                           ? (memcpy(elf_aligned_buf, file, len), elf_aligned_buf)
+                           : file);
+                    file += len;
+                    cnt++;
+                }
+                kprintf("\n[BOOT] Loaded %lu modules\n", (unsigned long)cnt);
             }
         }
 

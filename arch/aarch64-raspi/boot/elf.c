@@ -66,17 +66,21 @@ int getElfSize(void *elf_file, uint64_t *size_rw, uint64_t *size_ro)
         
         for (unsigned i = 0; i < int_shnum; i++)
         {
+            /* Guard against bad addralign */
+            uint64_t align = sh[i].addralign;
+            if (align == 0) align = 1;
+
             if (sh[i].flags & SHF_ALLOC)
             {
-                uint64_t size = (sh[i].size + sh[i].addralign - 1) & ~(sh[i].addralign - 1);
+                uint64_t size = (sh[i].size + align - 1) & ~(align - 1);
                 if (sh[i].flags & SHF_WRITE)
                 {
-                    s_rw = (s_rw + sh[i].addralign - 1) & ~(sh[i].addralign - 1);
+                    s_rw = (s_rw + align - 1) & ~(align - 1);
                     s_rw += size;
                 }
                 else
                 {
-                    s_ro = (s_ro + sh[i].addralign - 1) & ~(sh[i].addralign - 1);
+                    s_ro = (s_ro + align - 1) & ~(align - 1);
                     s_ro += size;
                 }
             }

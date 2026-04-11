@@ -7,7 +7,9 @@
 #ifndef __KERNEL_AARCH64_H
 #define __KERNEL_AARCH64_H
 
+#include <inttypes.h>
 #include <asm/cpu.h>
+#include <aros/cpu.h>
 
 struct AARCH64_Implementation
 {

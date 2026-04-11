@@ -676,6 +676,84 @@ static int relocate
 
             case R_ARM_NONE:
                 break;
+            #elif defined(__aarch64__)
+
+            case R_AARCH64_ABS64:
+                *(UQUAD *)p = rel->addend + s;
+                break;
+
+            case R_AARCH64_ABS32:
+                *(ULONG *)p = (ULONG)(rel->addend + s);
+                break;
+
+            case R_AARCH64_PREL32:
+                *(LONG *)p = (LONG)(rel->addend + s - (IPTR)p);
+                break;
+
+            case R_AARCH64_CALL26:
+            case R_AARCH64_JUMP26:
+            {
+                LONG offset = (LONG)(rel->addend + s - (IPTR)p);
+                offset >>= 2;
+                *(ULONG *)p = (*(ULONG *)p & 0xFC000000) | (offset & 0x03FFFFFF);
+                break;
+            }
+
+            case R_AARCH64_ADR_PREL_PG_HI21:
+            {
+                QUAD offset = (QUAD)((rel->addend + s) & ~0xFFF) - ((IPTR)p & ~0xFFF);
+                LONG imm = (LONG)(offset >> 12);
+                ULONG immlo = (imm & 3) << 29;
+                ULONG immhi = ((imm >> 2) & 0x7FFFF) << 5;
+                *(ULONG *)p = (*(ULONG *)p & 0x9F00001F) | immlo | immhi;
+                break;
+            }
+
+            case R_AARCH64_ADD_ABS_LO12_NC:
+            case R_AARCH64_LDST8_ABS_LO12_NC:
+            {
+                ULONG imm12 = (ULONG)((rel->addend + s) & 0xFFF);
+                *(ULONG *)p = (*(ULONG *)p & 0xFFC003FF) | (imm12 << 10);
+                break;
+            }
+
+            case R_AARCH64_LDST16_ABS_LO12_NC:
+            {
+                ULONG imm12 = (ULONG)(((rel->addend + s) & 0xFFF) >> 1);
+                *(ULONG *)p = (*(ULONG *)p & 0xFFC003FF) | (imm12 << 10);
+                break;
+            }
+
+            case R_AARCH64_LDST32_ABS_LO12_NC:
+            {
+                ULONG imm12 = (ULONG)(((rel->addend + s) & 0xFFF) >> 2);
+                *(ULONG *)p = (*(ULONG *)p & 0xFFC003FF) | (imm12 << 10);
+                break;
+            }
+
+            case R_AARCH64_LDST64_ABS_LO12_NC:
+            {
+                ULONG imm12 = (ULONG)(((rel->addend + s) & 0xFFF) >> 3);
+                *(ULONG *)p = (*(ULONG *)p & 0xFFC003FF) | (imm12 << 10);
+                break;
+            }
+
+            case R_AARCH64_LDST128_ABS_LO12_NC:
+            {
+                ULONG imm12 = (ULONG)(((rel->addend + s) & 0xFFF) >> 4);
+                *(ULONG *)p = (*(ULONG *)p & 0xFFC003FF) | (imm12 << 10);
+                break;
+            }
+
+            case R_AARCH64_ADR_GOT_PAGE:
+            case R_AARCH64_LD64_GOT_LO12_NC:
+                /* GOT relocations — handled same as non-GOT for static linking */
+                bug("[ELF Loader] GOT relocation type %d not supported in static context\n", ELF_R_TYPE(rel->info));
+                break;
+
+            case R_AARCH64_NONE:
+                break;
+
             #elif defined(__riscv)
 
             #else

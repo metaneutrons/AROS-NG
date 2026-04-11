@@ -7,6 +7,7 @@
 #ifndef KERNEL_CPU_AARCH64_H
 #define KERNEL_CPU_AARCH64_H
 
+#include <inttypes.h>
 #include <aros/aarch64/cpucontext.h>
 #include "kernel_aarch64.h"
 

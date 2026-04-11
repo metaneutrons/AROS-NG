@@ -372,6 +372,23 @@ struct attrs_subsection
 #endif
 #if defined(__aarch64__)
 #define AROS_ELF_MACHINE        EM_AARCH64
+
+/* AArch64 relocations */
+#define R_AARCH64_NONE                  0
+#define R_AARCH64_ABS64                 257
+#define R_AARCH64_ABS32                 258
+#define R_AARCH64_PREL32                261
+#define R_AARCH64_ADR_PREL_PG_HI21     275
+#define R_AARCH64_ADD_ABS_LO12_NC      277
+#define R_AARCH64_LDST8_ABS_LO12_NC    278
+#define R_AARCH64_JUMP26                282
+#define R_AARCH64_CALL26                283
+#define R_AARCH64_LDST16_ABS_LO12_NC   284
+#define R_AARCH64_LDST32_ABS_LO12_NC   285
+#define R_AARCH64_LDST64_ABS_LO12_NC   286
+#define R_AARCH64_LDST128_ABS_LO12_NC  299
+#define R_AARCH64_ADR_GOT_PAGE         311
+#define R_AARCH64_LD64_GOT_LO12_NC     312
 #define AROS_ELF_REL            SHT_RELA
 #define relo                    rela
 #elif defined(__arm__)

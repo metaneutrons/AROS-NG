@@ -3,7 +3,7 @@ include $(SRCDIR)/config/aros.cfg
 TARGETDIR       := $(GENDIR)/$(CURDIR)
 FILES           := boot mmu support serialdebug elf devicetree
 ASMFILES        := startup64
-USER_CFLAGS     := -Wall -ffreestanding $(CFLAGS_NO_BUILTIN)
+USER_CFLAGS     := -Wall -ffreestanding $(CFLAGS_NO_BUILTIN) -mno-strict-align
 USER_CPPFLAGS   := -DTARGET_SECTION_COMMENT=\"$(AROS_SECTION_COMMENT)\"
 USER_INCLUDES   := -isystem $(SRCDIR)/$(CURDIR)/include -I$(SRCDIR)/rom/openfirmware
 USER_AFLAGS     := -I$(GENINCDIR)
@@ -53,5 +53,68 @@ $(TARGETDIR)/%.d : %.c
 
 DEPS := $(foreach f, $(FILES), $(TARGETDIR)/$(f).d)
 -include $(DEPS)
+
+# --- BSP ROM Package ---
+
+AARCH64_BSP := aros-$(AROS_TARGET_CPU)-bsp.rom
+
+PKG_LIBS      := aros partition utility oop graphics layers intuition keymap dos poseidon
+PKG_LIBS_ARCH := expansion
+PKG_RSRC      := misc bootloader dosboot lddemon usbromstartup FileSystem shell shellcommands mbox
+PKG_RSRC_ARCH := processor
+PKG_DEVS      := input gameport keyboard console sdcard USBHardware/usb2otg
+PKG_DEVS_ARCH := timer
+PKG_HANDLERS  := con ram fat sfs afs
+PKG_HIDDS     := gfx mouse keyboard hiddclass
+PKG_CLASSES   := USB/hid USB/hub USB/bootmouse USB/bootkeyboard USB/massstorage
+
+#MM kernel-package-raspi-aarch64 : \
+#MM kernel-dos \
+#MM kernel-bootloader \
+#MM kernel-dosboot \
+#MM kernel-oop \
+#MM kernel-utility \
+#MM kernel-expansion \
+#MM kernel-graphics \
+#MM kernel-intuition \
+#MM kernel-partition \
+#MM kernel-layers \
+#MM kernel-timer \
+#MM kernel-lddemon \
+#MM kernel-hidd \
+#MM kernel-aros \
+#MM kernel-misc \
+#MM kernel-keymap \
+#MM kernel-input \
+#MM kernel-gameport \
+#MM kernel-keyboard \
+#MM kernel-console \
+#MM kernel-shell \
+#MM kernel-shellcommands \
+#MM kernel-filesystem \
+#MM kernel-fs-con \
+#MM kernel-fs-fat \
+#MM kernel-fs-sfs \
+#MM kernel-fs-afs \
+#MM kernel-fs-ram \
+#MM kernel-processor \
+#MM kernel-mbox-bcm2711 \
+#MM kernel-sdcard \
+#MM kernel-hidd-gfx \
+#MM kernel-hidd-kbd \
+#MM kernel-hidd-mouse \
+#MM kernel-usb-poseidon \
+#MM kernel-usb-nopci \
+#MM kernel-usb-usb2otg-aarch64 \
+#MM kernel-usb-romstrap-raspi \
+#MM kernel-econsole
+
+%make_package mmake=kernel-package-raspi-aarch64 file=$(AROSDIR)/$(AARCH64_BSP) \
+    libs=$(PKG_LIBS) arch_libs=$(PKG_LIBS_ARCH) res=$(PKG_RSRC) \
+    arch_res=$(PKG_RSRC_ARCH) devs=$(PKG_DEVS) arch_devs=$(PKG_DEVS_ARCH) \
+    handlers=$(PKG_HANDLERS) hidds=$(PKG_HIDDS) classes=$(PKG_CLASSES)
+
+$(AROSDIR)/config.txt: $(AROSDIR)/$(AARCH64_BSP)
+	@printf "kernel=aros-$(AROS_TARGET_CPU)-raspi.img\ninitramfs $(AARCH64_BSP) 0x00800000" > $@
 
 %common

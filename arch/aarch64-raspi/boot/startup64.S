@@ -113,6 +113,11 @@ bss_done:
     ldr     x0, =0x00800000
     mov     sp, x0              /* SP_EL0 = main stack */
 
+    /* Install exception vector table */
+    adr     x0, boot_vectors
+    msr     vbar_el1, x0
+    isb
+
     /* Restore DTB pointer as first argument to boot() */
     mov     x0, x20
 
@@ -122,6 +127,61 @@ bss_done:
     /* Should not return — hang if it does */
 hang:
     wfe
+    b       hang
+
+/*
+ * Minimal exception vector table for bootstrap debugging.
+ * Each entry is 128 bytes (0x80). We only handle synchronous exceptions
+ * from EL1 using SP_EL1 (the most common case during bootstrap).
+ */
+    .balign 2048
+boot_vectors:
+    /* Current EL with SP_EL0 */
+    b       boot_sync_handler   /* Synchronous */
+    .balign 128
+    b       hang                /* IRQ */
+    .balign 128
+    b       hang                /* FIQ */
+    .balign 128
+    b       hang                /* SError */
+    .balign 128
+
+    /* Current EL with SP_ELx */
+    b       boot_sync_handler   /* Synchronous */
+    .balign 128
+    b       hang                /* IRQ */
+    .balign 128
+    b       hang                /* FIQ */
+    .balign 128
+    b       hang                /* SError */
+    .balign 128
+
+    /* Lower EL using AArch64 */
+    b       hang
+    .balign 128
+    b       hang
+    .balign 128
+    b       hang
+    .balign 128
+    b       hang
+    .balign 128
+
+    /* Lower EL using AArch32 */
+    b       hang
+    .balign 128
+    b       hang
+    .balign 128
+    b       hang
+    .balign 128
+    b       hang
+    .balign 128
+
+boot_sync_handler:
+    /* Print exception info via C helper */
+    mrs     x0, esr_el1
+    mrs     x1, elr_el1
+    mrs     x2, far_el1
+    bl      boot_exception_handler
     b       hang
 
     .section .aros.startup
