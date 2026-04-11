@@ -3,6 +3,7 @@
 
     Desc: exec.library resident and initialization.
 */
+#define DEBUG 1
 
 #define DEBUG 0
 
@@ -121,11 +122,7 @@ AROS_UFH3S(struct ExecBase *, GM_UNIQUENAME(init),
     if (!origSysBase)
         return PrepareExecBase(mh, tagList);
 
-#if defined(__AROSEXEC_SMP__)
-    DINIT("AROS SMP 'exec.library' Initialization");
-#else
-    DINIT("AROS 'exec.library' Initialization");
-#endif
+    bug("[Exec] COLDSTART init starting\n");
 
     /*
      * Call platform-specific pre-init code (if any). Return values are not checked.
@@ -262,13 +259,16 @@ AROS_UFH3S(struct ExecBase *, GM_UNIQUENAME(init),
     TDNESTCOUNT_SET(t->tc_TDNestCnt);
 
     DINIT("Permitting multitasking...\n");
+    bug("[Exec] Permitting multitasking...\n");
 
     /* We now start up the interrupts */
     Permit();
     DINIT("Enabling Exec Interrupts...\n");
+    bug("[Exec] Enabling interrupts...\n");
     Enable();
 
     DINIT("Multitasking enabled\n");
+    bug("[Exec] Multitasking enabled\n");
 
     D(debugmem());
 

@@ -58,15 +58,15 @@ DEPS := $(foreach f, $(FILES), $(TARGETDIR)/$(f).d)
 
 AARCH64_BSP := aros-$(AROS_TARGET_CPU)-bsp.rom
 
-PKG_LIBS      := aros partition utility oop graphics layers intuition keymap dos poseidon
+PKG_LIBS      := aros partition utility oop keymap dos
 PKG_LIBS_ARCH := expansion
-PKG_RSRC      := misc bootloader dosboot lddemon usbromstartup FileSystem shell shellcommands mbox
+PKG_RSRC      := misc bootloader dosboot lddemon FileSystem shell shellcommands mbox
 PKG_RSRC_ARCH := processor
-PKG_DEVS      := input gameport keyboard console sdcard USBHardware/usb2otg
+PKG_DEVS      := input gameport keyboard sdcard
 PKG_DEVS_ARCH := timer
 PKG_HANDLERS  := con ram fat sfs afs
-PKG_HIDDS     := gfx mouse keyboard hiddclass
-PKG_CLASSES   := USB/hid USB/hub USB/bootmouse USB/bootkeyboard USB/massstorage
+PKG_HIDDS     := hiddclass mouse keyboard
+PKG_CLASSES   :=
 
 #MM kernel-package-raspi-aarch64 : \
 #MM kernel-dos \
