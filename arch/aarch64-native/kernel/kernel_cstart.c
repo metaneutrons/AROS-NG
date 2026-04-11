@@ -26,6 +26,7 @@
 #include "kernel_intern.h"
 #include "kernel_debug.h"
 #include "kernel_romtags.h"
+#include "gic400.h"
 
 #undef KernelBase
 #include "tls.h"
@@ -204,6 +205,22 @@ void __attribute__((noinline)) kernel_cstart(struct TagItem *msg)
     D(bug("[Kernel] SysBase @ 0x%p, KernelBase @ 0x%p\n",
           SysBase, __tls->KernelBase));
 
+    /* --- GIC-400 and timer initialization --- */
+
+    #define BCM2711_GICD_BASE   0xFF841000UL
+    #define BCM2711_GICC_BASE   0xFF842000UL
+
+    uart_puts("[Kernel] Initializing GIC-400...\n");
+    gic400_Init(BCM2711_GICD_BASE, BCM2711_GICC_BASE);
+
+    /* Timer init — must be after GIC, before InitCode */
+    extern void timer_Init(unsigned long gicd_base);
+    timer_Init(BCM2711_GICD_BASE);
+
+    /* Enable IRQs at CPU level */
+    __asm__ volatile("msr daifclr, #2");  /* Clear IRQ mask bit */
+    uart_puts("[Kernel] IRQs enabled\n");
+
     /* --- Run resident modules --- */
 
     uart_puts("[Kernel] InitCode(RTF_SINGLETASK)...\n");
@@ -219,8 +236,16 @@ void __attribute__((noinline)) kernel_cstart(struct TagItem *msg)
     uart_puts("[Kernel] exec.library is alive! SysBase @ ");
     uart_puthex((uint64_t)SysBase);
     uart_puts("\n");
-    uart_puts("[Kernel] No COLDSTART residents -- system idle.\n");
 
+    /* Verify timer is ticking — wait for first 50 ticks (1 second) */
+    extern uint64_t timer_GetTickCount(void);
+    while (timer_GetTickCount() < 50)
+        __asm__ volatile("wfe");
+    uart_puts("[Kernel] Timer OK: ");
+    uart_puthex(timer_GetTickCount());
+    uart_puts(" ticks\n");
+
+    uart_puts("[Kernel] System idle (no COLDSTART residents yet).\n");
     for (;;) __asm__ volatile("wfe");
 }
 
@@ -303,5 +328,5 @@ void ExceptionHandler(uint64_t exception, void *frame)
 
 void InterruptHandler(void)
 {
-    /* TODO: GIC-400 dispatch (Task 7) */
+    gic400_HandleIRQ(gic400_GetGICCBase());
 }

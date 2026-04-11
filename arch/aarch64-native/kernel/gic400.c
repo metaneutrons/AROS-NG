@@ -11,6 +11,8 @@
 #include <stdint.h>
 #include "gic400.h"
 
+struct KernelBase;
+
 /* MMIO helpers */
 static inline void wr32(unsigned long addr, uint32_t val)
 {
@@ -26,9 +28,16 @@ static inline uint32_t rd32(unsigned long addr)
 static irq_handler_t irq_handlers[IRQ_LINES];
 static void         *irq_params[IRQ_LINES];
 
+/* Stored base addresses for use by ictl_ wrappers */
+static unsigned long gicd_base_stored;
+static unsigned long gicc_base_stored;
+
 void gic400_Init(unsigned long gicd_base, unsigned long gicc_base)
 {
     unsigned int n;
+
+    gicd_base_stored = gicd_base;
+    gicc_base_stored = gicc_base;
 
     /* Clear handler table */
     for (n = 0; n < IRQ_LINES; n++)
@@ -113,4 +122,23 @@ void gic400_HandleIRQ(unsigned long gicc_base)
         wr32(gicc_base + GICC_EOIR, iar);
     }
     /* else: spurious interrupt (ID >= 1020), ignore */
+}
+
+/* Return stored GICC base for InterruptHandler */
+unsigned long gic400_GetGICCBase(void)
+{
+    return gicc_base_stored;
+}
+
+/* AROS kernel interrupt controller interface */
+void ictl_enable_irq(unsigned int irq, struct KernelBase *KernelBase)
+{
+    (void)KernelBase;
+    gic400_EnableIRQ(gicd_base_stored, irq);
+}
+
+void ictl_disable_irq(unsigned int irq, struct KernelBase *KernelBase)
+{
+    (void)KernelBase;
+    gic400_DisableIRQ(gicd_base_stored, irq);
 }

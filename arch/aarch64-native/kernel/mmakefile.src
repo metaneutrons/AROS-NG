@@ -24,6 +24,8 @@ CFILES := \
     kernel_startup \
     platform_init \
     platform_bcm2711 \
+    gic400 \
+    timer \
     tags
 
 AFILES := intvecs

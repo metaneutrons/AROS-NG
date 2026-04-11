@@ -66,5 +66,6 @@ void gic400_EnableIRQ(unsigned long gicd_base, unsigned int irq);
 void gic400_DisableIRQ(unsigned long gicd_base, unsigned int irq);
 void gic400_ConnectIRQ(unsigned int irq, irq_handler_t handler, void *param);
 void gic400_HandleIRQ(unsigned long gicc_base);
+unsigned long gic400_GetGICCBase(void);
 
 #endif /* GIC400_H */
