@@ -65,7 +65,7 @@ PKG_RSRC_ARCH := processor
 PKG_DEVS      := input gameport keyboard console sdcard USBHardware/usb2otg
 PKG_DEVS_ARCH := timer
 PKG_HANDLERS  := con ram fat sfs afs
-PKG_HIDDS     := gfx mouse keyboard hiddclass vc4gfx
+PKG_HIDDS     := gfx inputclass mouse keyboard hiddclass vc4gfx
 PKG_CLASSES   := USB/hid USB/hub USB/bootmouse USB/bootkeyboard USB/massstorage
 
 #MM kernel-package-raspi-aarch64 : \
@@ -101,6 +101,7 @@ PKG_CLASSES   := USB/hid USB/hub USB/bootmouse USB/bootkeyboard USB/massstorage
 #MM kernel-mbox-bcm2711 \
 #MM kernel-sdcard \
 #MM kernel-hidd-gfx \
+#MM kernel-hidd-input \
 #MM hidd-vc4gfx-bcm2711 \
 #MM kernel-hidd-kbd \
 #MM kernel-hidd-mouse \
