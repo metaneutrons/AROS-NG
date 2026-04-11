@@ -25,7 +25,7 @@
 
     /*
      * Exception stub macro — saves diagnostic registers and calls
-     * C handler. Used for synchronous exceptions and SError.
+     * C handler. Used for synchronous exceptions (non-SVC) and SError.
      *
      * Entry state:  Exception taken, SP = sp_el1
      * Registers saved: ESR_EL1, SPSR_EL1, LR, ELR_EL1, SP_EL0, SP, FAR_EL1
@@ -91,8 +91,120 @@ VectorTable:
  * Exception stubs
  */
     stub    UnexpectedStub,     0
-    stub    SynchronousStub,    1
     stub    SErrorStub,         3
+
+/*
+ * Synchronous exception stub — handles SVC for task switching.
+ *
+ * For SC_SWITCH/SC_SCHEDULE: cooperative context switch.
+ * The SVC is called from C code (KrnSwitch), so only callee-saved
+ * registers need to be preserved across the switch. The C compiler
+ * has already saved caller-saved registers on the stack.
+ *
+ * Context switch strategy:
+ *   1. Save callee-saved regs + SP to current task's ExceptionContext
+ *   2. Call core_Switch() + core_Dispatch() to pick next task
+ *   3. Restore callee-saved regs + SP from new task's ExceptionContext
+ *   4. eret back to new task
+ */
+    .globl SynchronousStub
+SynchronousStub:
+    /* Check if this is an SVC (ESR_EL1.EC == 0x15) */
+    mrs     x0, esr_el1
+    lsr     x1, x0, #26
+    cmp     x1, #0x15
+    b.ne    .Lsync_not_svc
+
+    /* Extract syscall number */
+    and     x0, x0, #0xFFFF
+
+    /* For SC_SWITCH (2) and SC_SCHEDULE (3): do context switch */
+    cmp     x0, #2                 /* SC_SWITCH */
+    b.eq    .Ldo_switch
+    cmp     x0, #3                 /* SC_SCHEDULE */
+    b.eq    .Ldo_schedule
+
+    /* Other syscalls: save minimal state and call C handler */
+    stp     x29, x30, [sp, #-16]!
+    bl      HandleSyscall
+    ldp     x29, x30, [sp], #16
+    eret
+
+.Ldo_schedule:
+    /* Save minimal state to check if reschedule is needed */
+    stp     x29, x30, [sp, #-16]!
+    stp     x19, x20, [sp, #-16]!
+    bl      core_Schedule           /* returns BOOL in x0 */
+    cbz     x0, .Lno_reschedule
+    ldp     x19, x20, [sp], #16
+    ldp     x29, x30, [sp], #16
+    b       .Ldo_switch
+
+.Lno_reschedule:
+    ldp     x19, x20, [sp], #16
+    ldp     x29, x30, [sp], #16
+    eret
+
+.Ldo_switch:
+    /*
+     * Save current task's context.
+     * We save: x19-x28 (callee-saved), x29 (fp), x30 (lr),
+     *          SP (current), ELR_EL1 (return PC), SPSR_EL1
+     * These are saved on the current stack, then we store SP
+     * into the task's ExceptionContext.
+     */
+    stp     x29, x30, [sp, #-16]!
+    mrs     x29, elr_el1
+    mrs     x30, spsr_el1
+    stp     x29, x30, [sp, #-16]!
+    stp     x27, x28, [sp, #-16]!
+    stp     x25, x26, [sp, #-16]!
+    stp     x23, x24, [sp, #-16]!
+    stp     x21, x22, [sp, #-16]!
+    stp     x19, x20, [sp, #-16]!
+
+    /* Save SP into current task's context */
+    bl      switch_save_sp          /* pass SP in x0 */
+
+    /* Pick next task */
+    bl      switch_dispatch         /* returns new task SP in x0 */
+
+    /* Restore new task's SP */
+    mov     sp, x0
+
+    /* Restore registers */
+    ldp     x19, x20, [sp], #16
+    ldp     x21, x22, [sp], #16
+    ldp     x23, x24, [sp], #16
+    ldp     x25, x26, [sp], #16
+    ldp     x27, x28, [sp], #16
+    /* Restore ELR and SPSR */
+    ldp     x29, x30, [sp], #16
+    msr     elr_el1, x29
+    msr     spsr_el1, x30
+    ldp     x29, x30, [sp], #16
+
+    eret
+
+    /* --- Non-SVC synchronous exception --- */
+.Lsync_not_svc:
+    mrs     x0, esr_el1
+    mrs     x1, spsr_el1
+    mov     x2, x30
+    mrs     x3, elr_el1
+    mrs     x4, sp_el0
+    mov     x5, sp
+    mrs     x6, far_el1
+
+    str     x6, [sp, #-16]!
+    stp     x4, x5, [sp, #-16]!
+    stp     x2, x3, [sp, #-16]!
+    stp     x0, x1, [sp, #-16]!
+
+    mov     x0, #1
+    mov     x1, sp
+    bl      ExceptionHandler
+    b       .
 
 /*
  * IRQ stub — saves all GPRs, calls InterruptHandler, restores and returns.
@@ -108,6 +220,15 @@ IRQStub:
     mrs     x29, elr_el1
     mrs     x30, spsr_el1
     stp     x29, x30, [sp, #-16]!
+
+    /* Debug: check SPSR_EL1 mode bits */
+    and     x29, x30, #0xF
+    cmp     x29, #5                 /* EL1h? */
+    b.eq    1f
+    cmp     x29, #4                 /* EL1t? */
+    b.eq    1f
+    /* Not EL1 — something is wrong, but continue anyway */
+1:
 
     /* Save x0-x28 */
     stp     x27, x28, [sp, #-16]!
@@ -148,6 +269,10 @@ IRQStub:
     /* Restore ELR and SPSR */
     ldp     x29, x30, [sp], #16
     msr     elr_el1, x29
+    /* Force EL1h mode on return to prevent accidental EL0 drop */
+    bic     x30, x30, #0xF
+    mov     x29, #0x5
+    orr     x30, x30, x29
     msr     spsr_el1, x30
 
     ldp     x29, x30, [sp], #16
