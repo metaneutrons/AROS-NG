@@ -74,7 +74,10 @@ arch/
 ## Phase 2 — Interrupts, Display, Input (Pi 4 Workbench)
 
 ### Task 7: GIC-400 interrupt controller and ARM Generic Timer
-- **Status**: NOT STARTED
+- **Status**: DONE — GIC-400 + CNTP timer firing at 50Hz, core_Cause(INTB_VERTB) working
+- **Commit**: `cdd3609827`
+- **What works**: GIC-400 init (GICD 0xFF841000, GICC 0xFF842000), 256 IRQ lines, timer PPI 14 at 50Hz, IRQ dispatch via intvecs.S → gic400_HandleIRQ, VBlank signal to exec
+- **New files**: kernel_arch.h (IRQ_COUNT), kernel_cpu.h (regs_t, GetCPUNumber), exec_platform.h (TLS macros via TPIDR_EL1)
 - **Objective**: Working interrupts and 50Hz timer tick on Pi 4.
 - **Work**:
   - `arch/aarch64-native/soc/broadcom/2711/gic400.c` — GIC-400 driver (from Circle `interruptgic.cpp`, GPLv3). GICD `0xFF841000`, GICC `0xFF842000`.
