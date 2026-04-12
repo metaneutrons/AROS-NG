@@ -133,12 +133,16 @@ arch/
   - sdcard.device IOBase: QEMU connects -sd to Arasan SDHCI at 0xFE300000, not EMMC2 at 0xFE340000
   - sdcard.device WaitCmd: added polling fallback for when GIC IRQ doesn't fire
   - sdcard.device card-detect: heuristic for broken-cd (BCM2711 EMMC2 never sets CARD_PRESENT bit)
-- **Next steps**: Create bootable SD image with AROS filesystem, debug DOS boot sequence
+  - MakeDosNode: IPTR[]/ULONG mismatch — CopyMem copied 8-byte IPTR values into 4-byte DosEnvec fields, corrupting block_size (11MB instead of 512). Fixed with field-by-field copy.
+- **Commits**: `fbb132d3b4` (sdcard fixes), `855754db21` (MakeDosNode fix)
+- **Milestone**: Workbench screen opens with title "[Kernel] AROS AArch64 on Raspberry Pi 4". FAT partition detected (SDCARD0P0, DosType 0x46415402). Screen blank — Startup-Sequence not yet executing.
+- **Next steps**: Debug why Workbench screen is blank — fat handler startup, Startup-Sequence execution
 - **Objective**: Full AROS Workbench on Pi 4.
 - **Work**:
-  - ~~SD card driver for EMMC2 (`0xFE340000`, SDHCI-compatible)~~ DONE (using Arasan at 0xFE300000 for QEMU)
-  - Create bootable SD image with MBR + FAT/SFS partition + AROS files
-  - Boot DOS, mount SD as DH0:, load Workbench startup-sequence
+  - ~~SD card driver for EMMC2~~ DONE (using Arasan at 0xFE300000 for QEMU)
+  - ~~Create bootable SD image with MBR + FAT partition + AROS files~~ DONE
+  - ~~MakeDosNode IPTR/ULONG fix~~ DONE
+  - Debug fat-handler boot sector read and Startup-Sequence execution
   - Verify Intuition, graphics, layers, gadtools
 - **Demo**: AROS Workbench desktop, interactive with USB keyboard/mouse
 - **Depends on**: Tasks 8, 9
