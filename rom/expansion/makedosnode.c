@@ -118,7 +118,16 @@
 
     /* This is the environment structure */
     de_pp = (struct DosEnvec *)((IPTR *)parmPacket + 4);
-    desize = sizeof(IPTR) * (de_pp->de_TableSize + 1);
+    /*
+     * de_TableSize is the first field. On AArch64, pp[] elements are IPTR
+     * (8 bytes) but DosEnvec fields are ULONG (4 bytes). Read the value
+     * from the IPTR array directly.
+     */
+    {
+        IPTR *pp = (IPTR *)parmPacket + 4;
+        ULONG tableSize = (ULONG)pp[0]; /* de_TableSize */
+        desize = sizeof(ULONG) * (tableSize + 1);
+    }
 
     /* Get the length of the strings we'll be packing */
     strLen1 = strlen((STRPTR)((IPTR *)parmPacket)[0]);
@@ -153,7 +162,19 @@
     s2 = s1 + sz1;
 
     /* Now that we have the pointers, fill it all */
-    CopyMem(de_pp, de, desize);
+    /*
+     * pp[] is an IPTR array (8 bytes per element on AArch64) but DosEnvec
+     * fields are ULONG (4 bytes). Copy field-by-field to handle the size
+     * mismatch.
+     */
+    {
+        IPTR *pp = (IPTR *)parmPacket + 4;
+        ULONG *dest = (ULONG *)de;
+        ULONG tableSize = (ULONG)pp[0];
+        ULONG j;
+        for (j = 0; j <= tableSize; j++)
+            dest[j] = (ULONG)pp[j];
+    }
         
     bs1 = MKBADDR(s1);
     bs2 = MKBADDR(s2);
