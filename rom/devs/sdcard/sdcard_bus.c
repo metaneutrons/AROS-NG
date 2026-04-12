@@ -387,10 +387,23 @@ BOOL FNAME_SDCBUS(RegisterUnit)(struct sdcard_Bus *bus)
                             {
                                 case 0:
                                 {
+                                    ULONG read_bl_len = FNAME_SDCBUS(Rsp136Unpack)(sdcRsp136, 80, 4);
+                                    ULONG c_size = FNAME_SDCBUS(Rsp136Unpack)(sdcRsp136, 62, 12);
+                                    ULONG c_size_mult = FNAME_SDCBUS(Rsp136Unpack)(sdcRsp136, 47, 3);
+                                    ULONG capacity_blocks;
+
                                     D(bug("[SDSC Card]\n"));
-                                    pp[DE_SIZEBLOCK + 4] = (1 << FNAME_SDCBUS(Rsp136Unpack)(sdcRsp136, 80, 4)) >> 2;
-                                    pp[DE_SECSPERBLOCK + 4] = pp[DE_SIZEBLOCK + 4] >> 7;
-                                    pp[DE_HIGHCYL + 4] = ((1 + FNAME_SDCBUS(Rsp136Unpack)(sdcRsp136, 62, 12)) << (FNAME_SDCBUS(Rsp136Unpack)(sdcRsp136, 47, 3) + 2));
+
+                                    /*
+                                     * SDSC: capacity = (C_SIZE+1) * 2^(C_SIZE_MULT+2) * 2^READ_BL_LEN bytes
+                                     * We always use 512-byte sectors (SET_BLOCKLEN forces this).
+                                     * DE_SIZEBLOCK is in longwords (4 bytes), so 512/4 = 128.
+                                     */
+                                    pp[DE_SIZEBLOCK + 4] = 128;  /* 512 bytes / 4 = 128 longwords */
+                                    pp[DE_SECSPERBLOCK + 4] = 1;
+                                    /* Total 512-byte sectors */
+                                    capacity_blocks = ((1 + c_size) << (c_size_mult + 2)) * (1 << read_bl_len) / 512;
+                                    pp[DE_HIGHCYL + 4] = capacity_blocks;
                                     break;
                                 }
                                 case 1:

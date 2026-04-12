@@ -116,9 +116,9 @@ arch/
 - **Depends on**: Task 7
 
 ### Task 10: SD card, DOS, and Workbench boot
-- **Status**: IN PROGRESS — sdcard.device detects card, reads sectors; next: bootable image + DOS mount
+- **Status**: IN PROGRESS — RDB+FFS partition mounts, afs-handler reads volume; crash in AddTail after mountBootNode
 - **Commits**: `889c3d9ef8` (BSP ROM), `510888149c`..`c8b26dad77` (interrupt fix, context switch, TLS sync), `0a43bea304` (inputclass fix), `527ed55d94` (pointerclass fix), `34b6d87da1` (MEMF_CHIP fix)
-- **What works**: Full COLDSTART init sequence (45 modules), timer interrupts at 50Hz, SVC-based context switching, vc4gfx display driver registered, cgxbootpic boot logo rendered, dosboot "Waiting for bootable media" screen displayed. sdcard.device fully initializes on QEMU raspi4b — card detected as "QEMU! SD2.0 128MB", reads sectors via CMD17, partition library scans MBR.
+- **What works**: Full COLDSTART init sequence (45 modules), timer interrupts at 50Hz, SVC-based context switching, vc4gfx display driver registered, cgxbootpic boot logo rendered, dosboot "Waiting for bootable media" screen displayed. sdcard.device fully initializes on QEMU raspi4b — card detected as "QEMU! SD2.0 128MB", reads sectors via CMD17. RDB partition table detected, DH0 partition found (DosType DOS\3 = FFS-I). afs-handler starts, opens device, reads FFS volume. mountBootNode succeeds.
 - **Key fixes applied**:
   - exec_platform.h: AROS_NO_ATOMIC_OPERATIONS support
   - KrnIsSuper(): TLS SupervisorCount tracks exception context
@@ -133,17 +133,19 @@ arch/
   - sdcard.device IOBase: QEMU connects -sd to Arasan SDHCI at 0xFE300000, not EMMC2 at 0xFE340000
   - sdcard.device WaitCmd: added polling fallback for when GIC IRQ doesn't fire
   - sdcard.device card-detect: heuristic for broken-cd (BCM2711 EMMC2 never sets CARD_PRESENT bit)
-  - MakeDosNode: IPTR[]/ULONG mismatch — CopyMem copied 8-byte IPTR values into 4-byte DosEnvec fields, corrupting block_size (11MB instead of 512). Fixed with field-by-field copy.
-- **Commits**: `fbb132d3b4` (sdcard fixes), `855754db21` (MakeDosNode fix)
-- **Milestone**: Workbench screen opens with title "[Kernel] AROS AArch64 on Raspberry Pi 4". FAT partition detected (SDCARD0P0, DosType 0x46415402). Screen blank — Startup-Sequence not yet executing.
-- **Next steps**: Debug why Workbench screen is blank — fat handler startup, Startup-Sequence execution
+  - sdcard.device SDSC geometry: CSD v1 block_size was raw READ_BL_LEN (128 bytes) instead of 512; fixed to always use 512-byte sectors
+  - MakeDosNode heap corruption: DosEnvec was in same AllocVec block as DeviceNode; CreateNewProcTags corrupted it via adjacent heap allocations. Fixed by allocating DosEnvec separately.
+  - SD image: switched from MBR+FAT to RDB+FFS (DOS\3). AROS uses RDB natively; MBR type 0x76 wasn't mapped. RDB stores DosType/DosEnvec directly in partition entries.
+- **SD test image**: `/tmp/aros_sd_rdb.img` — 128MB RDB, DH0 partition (DOS\3/FFS-I), populated with S/Startup-Sequence, C/, L/, Libs/, Devs/, Classes/ via rdbtool+xdftool
+- **Current crash**: `AddTail()` at `ELR=0x3ba08a70`, `FAR=0xFFFFFFFFFFFFFFFF`. Happens immediately after mountBootNode returns. A BPTR value of -1 (likely `dn_GlobalVec = (BPTR)-1`, the standard "use global vector" sentinel) is being dereferenced as a list pointer. On AArch64 with AROS_FAST_BPTR, `(BPTR)-1` = `0xFFFFFFFFFFFFFFFF` = literal pointer, causing translation fault.
+- **Next steps**: Find the AddTail call site that dereferences BPTR -1, fix the 64-bit BPTR sentinel handling
 - **Objective**: Full AROS Workbench on Pi 4.
 - **Work**:
   - ~~SD card driver for EMMC2~~ DONE (using Arasan at 0xFE300000 for QEMU)
-  - ~~Create bootable SD image with MBR + FAT partition + AROS files~~ DONE
-  - ~~MakeDosNode IPTR/ULONG fix~~ DONE
-  - Debug fat-handler boot sector read and Startup-Sequence execution
-  - Verify Intuition, graphics, layers, gadtools
+  - ~~Create bootable SD image~~ DONE (RDB+FFS via rdbtool+xdftool)
+  - ~~MakeDosNode heap corruption fix~~ DONE (separate DosEnvec allocation)
+  - Fix AddTail BPTR -1 crash in DOS boot path
+  - Verify Startup-Sequence execution, Intuition, graphics, layers
 - **Demo**: AROS Workbench desktop, interactive with USB keyboard/mouse
 - **Depends on**: Tasks 8, 9
 

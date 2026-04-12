@@ -118,16 +118,7 @@
 
     /* This is the environment structure */
     de_pp = (struct DosEnvec *)((IPTR *)parmPacket + 4);
-    /*
-     * de_TableSize is the first field. On AArch64, pp[] elements are IPTR
-     * (8 bytes) but DosEnvec fields are ULONG (4 bytes). Read the value
-     * from the IPTR array directly.
-     */
-    {
-        IPTR *pp = (IPTR *)parmPacket + 4;
-        ULONG tableSize = (ULONG)pp[0]; /* de_TableSize */
-        desize = sizeof(ULONG) * (tableSize + 1);
-    }
+    desize = sizeof(IPTR) * (de_pp->de_TableSize + 1);
 
     /* Get the length of the strings we'll be packing */
     strLen1 = strlen((STRPTR)((IPTR *)parmPacket)[0]);
@@ -146,36 +137,30 @@
     sz2 = AROS_BSTR_MEMSIZE4LEN(strLen2 + 1);
 
     /* Allocate it all as one big chunk. Helps with disposal later. */
-    dn = AllocVec(sizeof(*dn)+sizeof(*fssm)+desize+sz1+sz2, MEMF_CLEAR | MEMF_PUBLIC);
+    dn = AllocVec(sizeof(*dn)+sizeof(*fssm)+sz1+sz2, MEMF_CLEAR | MEMF_PUBLIC);
     if (dn == NULL)
     {
         return NULL;
     }
 
+    /* Allocate DosEnvec separately to avoid heap corruption issues */
+    de = AllocVec(desize, MEMF_CLEAR | MEMF_PUBLIC);
+    if (de == NULL)
+    {
+        FreeVec(dn);
+        return NULL;
+    }
+
     /* fssm is the (IPTR aligned) memory after the DeviceNode */
     fssm = (struct FileSysStartupMsg *)(&dn[1]);
-    /* de is the (IPTR aligned) memory after the fssm */
-    de = (struct DosEnvec *)(&fssm[1]);
-    /* s1 is the memory after the de */
-    s1 = ((APTR)de) + desize;
+    /* s1 is the memory after the fssm */
+    s1 = ((APTR)&fssm[1]);
     /* And s2 is then memory after that */
     s2 = s1 + sz1;
 
     /* Now that we have the pointers, fill it all */
-    /*
-     * pp[] is an IPTR array (8 bytes per element on AArch64) but DosEnvec
-     * fields are ULONG (4 bytes). Copy field-by-field to handle the size
-     * mismatch.
-     */
-    {
-        IPTR *pp = (IPTR *)parmPacket + 4;
-        ULONG *dest = (ULONG *)de;
-        ULONG tableSize = (ULONG)pp[0];
-        ULONG j;
-        for (j = 0; j <= tableSize; j++)
-            dest[j] = (ULONG)pp[j];
-    }
-        
+    CopyMem(de_pp, de, desize);
+
     bs1 = MKBADDR(s1);
     bs2 = MKBADDR(s2);
     
@@ -204,7 +189,7 @@
     dn->dn_Type = DLT_DEVICE;
     dn->dn_Name = bs1;
     dn->dn_Priority = 10;
-    dn->dn_StackSize = 4000;
+    dn->dn_StackSize = AROS_STACKSIZE;
 
 #if __WORDSIZE > 32
     /*
