@@ -116,9 +116,9 @@ arch/
 - **Depends on**: Task 7
 
 ### Task 10: SD card, DOS, and Workbench boot
-- **Status**: IN PROGRESS — graphical boot screen renders, dosboot waiting for bootable media
+- **Status**: IN PROGRESS — sdcard.device detects card, reads sectors; next: bootable image + DOS mount
 - **Commits**: `889c3d9ef8` (BSP ROM), `510888149c`..`c8b26dad77` (interrupt fix, context switch, TLS sync), `0a43bea304` (inputclass fix), `527ed55d94` (pointerclass fix), `34b6d87da1` (MEMF_CHIP fix)
-- **What works**: Full COLDSTART init sequence (45 modules), timer interrupts at 50Hz, SVC-based context switching, vc4gfx display driver registered, cgxbootpic boot logo rendered, dosboot "Waiting for bootable media" screen displayed. System runs stable (no crashes, 60+ second uptime).
+- **What works**: Full COLDSTART init sequence (45 modules), timer interrupts at 50Hz, SVC-based context switching, vc4gfx display driver registered, cgxbootpic boot logo rendered, dosboot "Waiting for bootable media" screen displayed. sdcard.device fully initializes on QEMU raspi4b — card detected as "QEMU! SD2.0 128MB", reads sectors via CMD17, partition library scans MBR.
 - **Key fixes applied**:
   - exec_platform.h: AROS_NO_ATOMIC_OPERATIONS support
   - KrnIsSuper(): TLS SupervisorCount tracks exception context
@@ -128,11 +128,16 @@ arch/
   - inputclass.hidd added to BSP ROM (keyboard/mouse HIDD dependency)
   - PointerClass OM_NEW: return NULL on failure instead of class pointer
   - MEMF_CHIP: patched AllocMem to strip MEMF_CHIP (no chip memory on AArch64)
-- **Next steps**: SD card EMMC2 driver (SDHCI at 0xFE340000), mount filesystem, boot to Workbench
+  - sdcard.device IRQ: changed from legacy BCM2708 #62 to GIC SPI 126 (IRQ 158)
+  - GIC-400: added krnRunIRQHandlers() bridge so KrnAddIRQHandler() works
+  - sdcard.device IOBase: QEMU connects -sd to Arasan SDHCI at 0xFE300000, not EMMC2 at 0xFE340000
+  - sdcard.device WaitCmd: added polling fallback for when GIC IRQ doesn't fire
+  - sdcard.device card-detect: heuristic for broken-cd (BCM2711 EMMC2 never sets CARD_PRESENT bit)
+- **Next steps**: Create bootable SD image with AROS filesystem, debug DOS boot sequence
 - **Objective**: Full AROS Workbench on Pi 4.
 - **Work**:
-  - SD card driver for EMMC2 (`0xFE340000`, SDHCI-compatible)
-  - FAT filesystem handler (arch-independent, should work)
+  - ~~SD card driver for EMMC2 (`0xFE340000`, SDHCI-compatible)~~ DONE (using Arasan at 0xFE300000 for QEMU)
+  - Create bootable SD image with MBR + FAT/SFS partition + AROS files
   - Boot DOS, mount SD as DH0:, load Workbench startup-sequence
   - Verify Intuition, graphics, layers, gadtools
 - **Demo**: AROS Workbench desktop, interactive with USB keyboard/mouse

@@ -2,7 +2,7 @@
     Copyright (C) 2013, The AROS Development Team. All rights reserved.
 */
 
-#define DEBUG 0
+#define DEBUG 1
 #include <aros/debug.h>
 
 #include <exec/types.h>

@@ -2,7 +2,7 @@
     Copyright (C) 2013-2020, The AROS Development Team. All rights reserved.
 */
 
-#define DEBUG 0
+#define DEBUG 1
 #include <aros/debug.h>
 
 #include <aros/bootloader.h>
@@ -896,7 +896,33 @@ ULONG FNAME_SDCBUS(WaitCmd)(ULONG mask, ULONG timeout, struct sdcard_Bus *bus)
 
     if (bus->sdcb_Task == FindTask(NULL))
     {
-        Wait(1L << bus->sdcb_CommandSig);
+        /*
+         * Wait for IRQ signal, but with a polling fallback.
+         * Some controllers (e.g. QEMU EMMC2) may not deliver
+         * the GIC interrupt reliably. Poll INT_STATUS as backup.
+         */
+        ULONG waitLoops = 0;
+        while (waitLoops < 5000)
+        {
+            ULONG sigs = SetSignal(0, 0);
+            if (sigs & (1L << bus->sdcb_CommandSig))
+            {
+                SetSignal(0, 1L << bus->sdcb_CommandSig);
+                break;
+            }
+            /* Check if SDHCI has a pending interrupt we missed */
+            {
+                ULONG intSt = bus->sdcb_IOReadLong(SDHCI_INT_STATUS, bus);
+                if (intSt & (SDHCI_INT_RESPONSE | SDHCI_INT_ERROR))
+                {
+                    /* Manually invoke the IRQ handler */
+                    FNAME_SDCBUS(BusIRQ)(bus, NULL);
+                    break;
+                }
+            }
+            sdcard_Udelay(100);
+            waitLoops++;
+        }
     }
     else
     {
@@ -1274,10 +1300,21 @@ void FNAME_SDCBUS(BusTask)(struct sdcard_Bus *bus)
     }
 
     /* Fix #33: Detect card already present at boot (not just hotplug) */
-    if (bus->sdcb_IOReadLong(SDHCI_PRESENT_STATE, bus) & SDHCI_PS_CARD_PRESENT)
     {
-        DINIT(bug("[SDBus%02u] %s: Card already present at startup\n", bus->sdcb_BusNum, __PRETTY_FUNCTION__));
-        FNAME_SDCBUS(RegisterUnit)(bus);
+        ULONG ps = bus->sdcb_IOReadLong(SDHCI_PRESENT_STATE, bus);
+        /*
+         * BCM2711 EMMC2 has broken card-detect (DT: broken-cd).
+         * Bit 16 (CARD_PRESENT) is never set. Check CMD/DAT line
+         * levels instead — if lines are high, a card is present.
+         */
+        BOOL cardPresent = (ps & SDHCI_PS_CARD_PRESENT) ||
+                           ((ps & (1 << 17)) && (ps & (0xF << 20)));
+        D(bug("[SDBus%02u] PRESENT_STATE=0x%08lx cardPresent=%d\n", bus->sdcb_BusNum, ps, cardPresent));
+        if (cardPresent)
+        {
+            D(bug("[SDBus%02u] %s: Card detected at startup\n", bus->sdcb_BusNum, __PRETTY_FUNCTION__));
+            FNAME_SDCBUS(RegisterUnit)(bus);
+        }
     }
 
     if (!startupScanDone)

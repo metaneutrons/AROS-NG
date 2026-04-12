@@ -2,7 +2,7 @@
     Copyright (C) 2013-2019, The AROS Development Team. All rights reserved.
 */
 
-#define DEBUG 0
+#define DEBUG 1
 #include <aros/debug.h>
 
 #include <proto/exec.h>
@@ -97,8 +97,19 @@ static int FNAME_BCMSDC(BCM2708Init)(struct SDCardBase *SDCardBase)
     if ((__BCM2708Bus = AllocPooled(SDCardBase->sdcard_MemPool, sizeof(struct sdcard_Bus))) != NULL)
     {
         __BCM2708Bus->sdcb_DeviceBase = SDCardBase;
-        __BCM2708Bus->sdcb_IOBase = (APTR)(ARM_PERIIOBASE + 0x340000);
-        __BCM2708Bus->sdcb_BusIRQ = IRQ_VC_ARASANSDIO;
+        /*
+         * QEMU raspi4b connects the -sd image to the Arasan SDHCI at
+         * 0xFE300000 (mmcnr@7e300000), not the EMMC2 at 0xFE340000.
+         * On real hardware, the SD card is on EMMC2 (0x340000 offset).
+         * Use 0x300000 for QEMU compatibility; real HW will need 0x340000.
+         *
+         * TODO: detect which controller has a card present and use that.
+         */
+        __BCM2708Bus->sdcb_IOBase = (APTR)(ARM_PERIIOBASE + 0x300000);
+        /*
+         * BCM2711 Arasan SDHCI: GIC SPI 126 = GIC IRQ 158 (32 + 126).
+         */
+        __BCM2708Bus->sdcb_BusIRQ = 32 + 126;
 
         __BCM2708Bus->sdcb_ClockMax = AROS_LE2LONG(MBoxMessage[6]);
         __BCM2708Bus->sdcb_ClockMin = BCM2708SDCLOCK_MIN;

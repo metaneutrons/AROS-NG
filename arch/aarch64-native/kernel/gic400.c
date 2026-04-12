@@ -11,7 +11,10 @@
 #include <stdint.h>
 #include "gic400.h"
 
+/* Forward declarations for AROS kernel interrupt dispatch */
 struct KernelBase;
+extern struct KernelBase *getKernelBase(void);
+extern void krnRunIRQHandlers(struct KernelBase *, uint8_t irq);
 
 /* MMIO helpers */
 static inline void wr32(unsigned long addr, uint32_t val)
@@ -115,13 +118,21 @@ void gic400_HandleIRQ(unsigned long gicc_base)
 
     if (irq < IRQ_LINES)
     {
+        /* Dispatch via GIC-local handler table (timer, etc.) */
         if (irq_handlers[irq])
             irq_handlers[irq](irq_params[irq]);
+
+        /* Also dispatch via AROS kernel interrupt lists (KrnAddIRQHandler) */
+        if (irq < 240)
+            krnRunIRQHandlers(getKernelBase(), irq);
 
         /* End of interrupt */
         wr32(gicc_base + GICC_EOIR, iar);
     }
-    /* else: spurious interrupt (ID >= 1020), ignore */
+    else if (irq >= 1020)
+    {
+        /* Spurious interrupt — do NOT write EOIR */
+    }
 }
 
 /* Return stored GICC base for InterruptHandler */
