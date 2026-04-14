@@ -174,6 +174,8 @@ arch/
   - ~~SC_DISPATCH for RemTask~~ DONE (SVC handler dispatches without saving context)
   - ~~TDNestCnt/IDNestCnt sync~~ DONE (save on switch, restore on dispatch)
   - Find and fix heap corruption that breaks AFS handler (workarounds in place, root cause TBD — see analysis above)
+  - ~~GOT relocation handling in ELF loaders~~ DONE (`06733d204b`) — synthesize GOT entries for R_AARCH64_ADR_GOT_PAGE/LD64_GOT_LO12_NC in both bootstrap and runtime loaders; fix getElfSize() to account for GOT slot space
+  - Fix crash at VideoCoreGfx::CreateObject during dosboot_BootDos (FAR=0x79401ec44b000458, consistent across runs — likely corrupted OOP vtable/method pointer, not heap corruption since red zone size doesn't affect it)
   - Verify Startup-Sequence execution, Intuition, graphics, layers
 - **Demo**: AROS Workbench desktop, interactive with USB keyboard/mouse
 - **Depends on**: Tasks 8, 9
