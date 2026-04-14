@@ -356,6 +356,7 @@ void uart_puthex(uint64_t val)
 void ExceptionHandler(uint64_t exception, void *frame)
 {
     uint64_t esr, elr, far, spsr;
+    uint64_t *f = (uint64_t *)frame;
     __asm__ volatile("mrs %0, esr_el1" : "=r"(esr));
     __asm__ volatile("mrs %0, elr_el1" : "=r"(elr));
     __asm__ volatile("mrs %0, far_el1" : "=r"(far));
@@ -378,6 +379,26 @@ void ExceptionHandler(uint64_t exception, void *frame)
     uart_puts("  FAR_EL1: ");
     uart_puthex(far);
     uart_puts("\n");
+    /* frame: [0]=ESR, [1]=SPSR, [2]=LR, [3]=ELR, [4]=SP_EL0, [5]=SP_orig, [6]=FAR */
+    uart_puts("  LR: ");
+    uart_puthex(f[2]);
+    uart_puts("\n");
+    uart_puts("  SP_orig: ");
+    uart_puthex(f[5]);
+    uart_puts("\n");
+    /* Walk the frame pointer chain for a backtrace */
+    {
+        uint64_t *fp;
+        int i;
+        __asm__ volatile("mov %0, x29" : "=r"(fp));
+        uart_puts("  Backtrace:");
+        for (i = 0; i < 10 && fp && ((uint64_t)fp & 7) == 0 && (uint64_t)fp > 0x10000 && (uint64_t)fp < 0x3c000000; i++) {
+            uart_puts(" ");
+            uart_puthex(fp[1]); /* return address */
+            fp = (uint64_t *)fp[0]; /* previous frame */
+        }
+        uart_puts("\n");
+    }
     for (;;) __asm__ volatile("wfe");
 }
 

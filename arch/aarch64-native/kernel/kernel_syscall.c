@@ -6,6 +6,7 @@
 
 #include <exec/execbase.h>
 #include <exec/alerts.h>
+#include <hardware/intbits.h>
 #include <aros/aarch64/cpucontext.h>
 #include <proto/exec.h>
 
@@ -13,6 +14,7 @@
 #include <kernel_scheduler.h>
 #include <kernel_syscall.h>
 #include "kernel_intern.h"
+#include <kernel_intr.h>
 
 #define AROS_NO_ATOMIC_OPERATIONS
 #include "exec_platform.h"
@@ -39,6 +41,9 @@ void switch_save_sp(uint64_t sp_val)
             struct ExceptionContext *ctx = task->tc_UnionETask.tc_ETask->et_RegFrame;
             ctx->sp = sp_val;
         }
+
+        /* Save TDNestCnt to task before switching */
+        task->tc_TDNestCnt = TDNESTCOUNT_GET;
 
         core_Switch();
     }
@@ -67,6 +72,10 @@ uint64_t switch_dispatch(void)
     /* Sync TLS ThisTask with SysBase->ThisTask (set by core_Dispatch) */
     TLS_SET(ThisTask, task);
 
+    /* Restore task's nesting counts to TLS */
+    TDNESTCOUNT_SET(task->tc_TDNestCnt);
+    IDNESTCOUNT_SET(task->tc_IDNestCnt);
+
     /* Leave supervisor context — eret will return to task */
     {
         tls_t *__tls;
@@ -84,4 +93,70 @@ uint64_t switch_dispatch(void)
 void HandleSyscall(uint64_t syscall_num)
 {
     (void)syscall_num;
+}
+
+/*
+ * switch_dispatch_only — called from SC_DISPATCH (RemTask path).
+ * Dispatches next task WITHOUT saving current task context.
+ */
+uint64_t switch_dispatch_only(void)
+{
+    struct Task *task;
+
+    tls_t *__tls;
+    __asm__ volatile("mrs %0, tpidr_el1" : "=r"(__tls));
+    __tls->SupervisorCount++;
+
+    while (!(task = core_Dispatch()))
+    {
+        __tls->SupervisorCount--;
+        __asm__ volatile("msr daifclr, #2" ::: "memory");
+        __asm__ volatile("wfi");
+        __asm__ volatile("msr daifset, #2" ::: "memory");
+        __tls->SupervisorCount++;
+    }
+
+    TLS_SET(ThisTask, task);
+    TDNESTCOUNT_SET(task->tc_TDNestCnt);
+    IDNESTCOUNT_SET(task->tc_IDNestCnt);
+
+    __tls->SupervisorCount--;
+
+    return (uint64_t)task->tc_SPReg;
+}
+
+/*
+ * irq_RescheduleCheck — called from IRQStub after InterruptHandler.
+ * Returns 1 if a task switch is needed, 0 otherwise.
+ * Must be called with IRQs masked (we're still in the IRQ handler).
+ */
+int irq_RescheduleCheck(void)
+{
+    /* Process pending soft interrupts */
+    if (SysBase->SysFlags & SFF_SoftInt)
+        core_Cause(INTB_SOFTINT, 1L << INTB_SOFTINT);
+
+    /*
+     * Only attempt preemptive switch if we interrupted a running task,
+     * not kernel code (idle loop, switch path, etc).
+     */
+    {
+        struct Task *t = SysBase->ThisTask;
+        if (!t || t->tc_State != TS_RUN)
+            return 0;
+    }
+
+    /* If task switching is enabled, check if a switch is needed */
+    if (TDNESTCOUNT_GET < 0)
+    {
+        if (FLAG_SCHEDSWITCH_ISSET || 
+            (!IsListEmpty(&SysBase->TaskReady) && 
+             ((struct Task *)SysBase->TaskReady.lh_Head)->tc_Node.ln_Pri > 
+             SysBase->ThisTask->tc_Node.ln_Pri))
+        {
+            if (core_Schedule())
+                return 1;
+        }
+    }
+    return 0;
 }

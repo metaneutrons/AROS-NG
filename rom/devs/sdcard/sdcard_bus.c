@@ -783,7 +783,8 @@ ULONG FNAME_SDCBUS(FinishData)(struct TagItem *DataTags, struct sdcard_Bus *bus)
 {
     DTRANS(UWORD        sdCommand = (UWORD)GetTagData(SDCARD_TAG_CMD, 0, DataTags));
     ULONG               sdcStateMask, sdCommandMask,
-                        sdData, sdDataMode, sdDataLen, sdcReg = 0;
+                        sdDataMode, sdDataLen, sdcReg = 0;
+    IPTR                sdData;
     struct TagItem      *sdDataLenTag = NULL;
     ULONG               timeout = 1000;
     ULONG               retVal = 0;

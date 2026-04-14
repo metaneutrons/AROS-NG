@@ -40,6 +40,9 @@ ULONG i;
                 );
         if (head != NULL)
         {
+                D(bug("[afs] initCache: %ld buffers, head=%p (entry=%ld bytes)\n",
+                    (long)numBuffers, head,
+                    (long)(sizeof(struct BlockCache)+BLOCK_SIZE(volume))));
                 cache = head;
                 for (i=0; i<(numBuffers-1); i++)
                 {

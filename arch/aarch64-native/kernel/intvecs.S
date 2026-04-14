@@ -123,6 +123,8 @@ SynchronousStub:
     b.eq    .Ldo_switch
     cmp     x0, #3                 /* SC_SCHEDULE */
     b.eq    .Ldo_schedule
+    cmp     x0, #1                 /* SC_DISPATCH */
+    b.eq    .Ldo_dispatch
 
     /* Other syscalls: save minimal state and call C handler */
     stp     x29, x30, [sp, #-16]!
@@ -195,6 +197,31 @@ SynchronousStub:
 
     eret
 
+.Ldo_dispatch:
+    /*
+     * SC_DISPATCH: dispatch next task WITHOUT saving current context.
+     * Used by RemTask(NULL) — the current task is being destroyed,
+     * so there's nothing to save.
+     */
+    bl      switch_dispatch_only    /* returns new task SP in x0 */
+    mov     sp, x0
+
+    /* Restore SVC frame */
+    ldp     x0,  x1,  [sp], #16
+    ldp     x2,  x3,  [sp], #16
+    ldp     x4,  x5,  [sp], #16
+    ldp     x6,  x7,  [sp], #16
+    ldp     x19, x20, [sp], #16
+    ldp     x21, x22, [sp], #16
+    ldp     x23, x24, [sp], #16
+    ldp     x25, x26, [sp], #16
+    ldp     x27, x28, [sp], #16
+    ldp     x29, x30, [sp], #16
+    msr     elr_el1, x29
+    msr     spsr_el1, x30
+    ldp     x29, x30, [sp], #16
+    eret
+
     /* --- Non-SVC synchronous exception --- */
 .Lsync_not_svc:
     mrs     x0, esr_el1
@@ -230,15 +257,6 @@ IRQStub:
     mrs     x30, spsr_el1
     stp     x29, x30, [sp, #-16]!
 
-    /* Debug: check SPSR_EL1 mode bits */
-    and     x29, x30, #0xF
-    cmp     x29, #5                 /* EL1h? */
-    b.eq    1f
-    cmp     x29, #4                 /* EL1t? */
-    b.eq    1f
-    /* Not EL1 — something is wrong, but continue anyway */
-1:
-
     /* Save x0-x28 */
     stp     x27, x28, [sp, #-16]!
     stp     x25, x26, [sp, #-16]!
@@ -258,7 +276,14 @@ IRQStub:
 
     bl      InterruptHandler
 
-    /* Restore x0-x28 */
+    /*
+     * Check if preemptive task switch is needed.
+     * irq_RescheduleCheck() returns 1 if core_Schedule() says switch.
+     */
+    bl      irq_RescheduleCheck
+    cbnz    x0, .Lirq_switch
+
+    /* No switch needed — restore all registers and return */
     ldr     x0,       [sp], #16
     ldp     x1,  x2,  [sp], #16
     ldp     x3,  x4,  [sp], #16
@@ -274,14 +299,120 @@ IRQStub:
     ldp     x23, x24, [sp], #16
     ldp     x25, x26, [sp], #16
     ldp     x27, x28, [sp], #16
-
-    /* Restore ELR and SPSR */
     ldp     x29, x30, [sp], #16
     msr     elr_el1, x29
     msr     spsr_el1, x30
-
     ldp     x29, x30, [sp], #16
+    eret
 
+.Lirq_switch:
+    /*
+     * Preemptive task switch from IRQ.
+     * The full register set is already saved on the IRQ stack.
+     * We need to save SP into the current task and dispatch the next one.
+     *
+     * Stack layout (growing up from SP):
+     *   [SP+0]   x0
+     *   [SP+16]  x1, x2
+     *   ...
+     *   [SP+240] ELR_EL1, SPSR_EL1
+     *   [SP+256] x29, x30
+     *
+     * We reuse switch_save_sp / switch_dispatch which expect the
+     * same frame layout as the SVC path. However, the IRQ frame
+     * has ALL registers (x0-x28 + ELR + SPSR + x29 + x30 = 272 bytes)
+     * while the SVC frame only has a subset.
+     *
+     * For simplicity, we save the current SP into the task and
+     * let switch_dispatch return the new task's SP. The new task
+     * was saved by either SVC (cooperative) or a previous IRQ
+     * (preemptive), so its frame format matches whichever path
+     * saved it.
+     *
+     * IMPORTANT: We must use the SVC frame format for the save
+     * so that the SVC restore path can restore it. Convert the
+     * IRQ frame to SVC frame format.
+     */
+
+    /*
+     * Actually, the simplest correct approach: pop the IRQ frame,
+     * then push an SVC-compatible frame, then do the switch.
+     *
+     * IRQ frame (on stack now): x0, x1-x2, ..., x27-x28, ELR, SPSR, x29, x30
+     * SVC frame: x0-x1, x2-x3, x4-x5, x6-x7, x19-x20, x21-x22, x23-x24,
+     *            x25-x26, x27-x28, ELR, SPSR, x29, x30
+     *
+     * Let's just restore all regs from IRQ frame into registers,
+     * then push the SVC frame format.
+     */
+
+    /* Restore all regs from IRQ frame into CPU registers */
+    ldr     x0,       [sp], #16
+    ldp     x1,  x2,  [sp], #16
+    ldp     x3,  x4,  [sp], #16
+    ldp     x5,  x6,  [sp], #16
+    ldp     x7,  x8,  [sp], #16
+    ldp     x9,  x10, [sp], #16
+    ldp     x11, x12, [sp], #16
+    ldp     x13, x14, [sp], #16
+    ldp     x15, x16, [sp], #16
+    ldp     x17, x18, [sp], #16
+    ldp     x19, x20, [sp], #16
+    ldp     x21, x22, [sp], #16
+    ldp     x23, x24, [sp], #16
+    ldp     x25, x26, [sp], #16
+    ldp     x27, x28, [sp], #16
+    /* ELR and SPSR are still on stack, plus x29/x30 */
+    /* Don't pop them yet — we need them for the SVC frame */
+
+    /* Now push SVC-compatible frame (same as .Ldo_switch) */
+    /* Stack currently has: [SP] = ELR, SPSR, [SP+16] = x29, x30 */
+    /* We need: x0-x1, x2-x3, x4-x5, x6-x7, x19-x28, ELR, SPSR, x29, x30 */
+
+    /* Pop the remaining IRQ frame (ELR/SPSR and x29/x30) */
+    ldp     x29, x30, [sp], #16    /* x29=ELR, x30=SPSR (temp) */
+    /* Save ELR/SPSR to scratch */
+    /* x29 = saved ELR, x30 = saved SPSR — but we also need real x29/x30 */
+    /* This is getting tangled. Let me use a different approach. */
+
+    /* Stash ELR and SPSR in x8/x9 (caller-saved, we already restored them) */
+    mov     x8, x29                 /* x8 = ELR_EL1 */
+    mov     x9, x30                 /* x9 = SPSR_EL1 */
+    ldp     x29, x30, [sp], #16    /* restore real x29, x30 */
+
+    /* Now all registers are restored. Push SVC frame. */
+    stp     x29, x30, [sp, #-16]!
+    stp     x8,  x9,  [sp, #-16]!  /* ELR, SPSR */
+    stp     x27, x28, [sp, #-16]!
+    stp     x25, x26, [sp, #-16]!
+    stp     x23, x24, [sp, #-16]!
+    stp     x21, x22, [sp, #-16]!
+    stp     x19, x20, [sp, #-16]!
+    stp     x6,  x7,  [sp, #-16]!
+    stp     x4,  x5,  [sp, #-16]!
+    stp     x2,  x3,  [sp, #-16]!
+    stp     x0,  x1,  [sp, #-16]!
+
+    /* Now do the same switch as .Ldo_switch */
+    mov     x0, sp
+    bl      switch_save_sp
+    bl      switch_dispatch
+    mov     sp, x0
+
+    /* Restore SVC frame (same as .Ldo_switch) */
+    ldp     x0,  x1,  [sp], #16
+    ldp     x2,  x3,  [sp], #16
+    ldp     x4,  x5,  [sp], #16
+    ldp     x6,  x7,  [sp], #16
+    ldp     x19, x20, [sp], #16
+    ldp     x21, x22, [sp], #16
+    ldp     x23, x24, [sp], #16
+    ldp     x25, x26, [sp], #16
+    ldp     x27, x28, [sp], #16
+    ldp     x29, x30, [sp], #16
+    msr     elr_el1, x29
+    msr     spsr_el1, x30
+    ldp     x29, x30, [sp], #16
     eret
 
 /*

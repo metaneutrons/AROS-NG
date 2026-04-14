@@ -116,9 +116,9 @@ arch/
 - **Depends on**: Task 7
 
 ### Task 10: SD card, DOS, and Workbench boot
-- **Status**: IN PROGRESS — RDB+FFS partition mounts, afs-handler reads volume; crash in AddTail after mountBootNode
+- **Status**: IN PROGRESS — Workbench Screen displayed, CliInit succeeds, but AFS handler returns error 205 on directory lookups (heap corruption)
 - **Commits**: `889c3d9ef8` (BSP ROM), `510888149c`..`c8b26dad77` (interrupt fix, context switch, TLS sync), `0a43bea304` (inputclass fix), `527ed55d94` (pointerclass fix), `34b6d87da1` (MEMF_CHIP fix)
-- **What works**: Full COLDSTART init sequence (45 modules), timer interrupts at 50Hz, SVC-based context switching, vc4gfx display driver registered, cgxbootpic boot logo rendered, dosboot "Waiting for bootable media" screen displayed. sdcard.device fully initializes on QEMU raspi4b — card detected as "QEMU! SD2.0 128MB", reads sectors via CMD17. RDB partition table detected, DH0 partition found (DosType DOS\3 = FFS-I). afs-handler starts, opens device, reads FFS volume. mountBootNode succeeds.
+- **What works**: Full COLDSTART init sequence (45 modules), timer interrupts at 50Hz, SVC-based context switching + preemptive IRQ-based switching, vc4gfx display driver registered, cgxbootpic boot logo rendered, dosboot "Waiting for bootable media" screen displayed. sdcard.device fully initializes on QEMU raspi4b — card detected as "QEMU! SD2.0 128MB", reads sectors via CMD17. RDB partition table detected, DH0 partition found (DosType DOS\3 = FFS-I). afs-handler starts, opens device, reads FFS volume. mountBootNode succeeds. `Lock("DH0:")` succeeds. `CliInit` returns DOSTRUE. `RemTask(NULL)` via `SC_DISPATCH` works. Workbench Screen opens with Intuition system requesters.
 - **Key fixes applied**:
   - exec_platform.h: AROS_NO_ATOMIC_OPERATIONS support
   - KrnIsSuper(): TLS SupervisorCount tracks exception context
@@ -135,16 +135,45 @@ arch/
   - sdcard.device card-detect: heuristic for broken-cd (BCM2711 EMMC2 never sets CARD_PRESENT bit)
   - sdcard.device SDSC geometry: CSD v1 block_size was raw READ_BL_LEN (128 bytes) instead of 512; fixed to always use 512-byte sectors
   - MakeDosNode heap corruption: DosEnvec was in same AllocVec block as DeviceNode; CreateNewProcTags corrupted it via adjacent heap allocations. Fixed by allocating DosEnvec separately.
+  - TLSF heap corruption: unidentified overflow corrupts adjacent block headers, causing DosList `dol_Name` corruption and `FindDosEntry` failures. Workaround: 24-byte red zone in `tlsf_malloc()` (`rom/kernel/tlsf.c`) + padding in `MakeDosEntry()` (`rom/dos/makedosentry.c`). Root cause TBD — exhaustive analysis ruled out AFS buffer indexing, hash computation, and string handling.
   - SD image: switched from MBR+FAT to RDB+FFS (DOS\3). AROS uses RDB natively; MBR type 0x76 wasn't mapped. RDB stores DosType/DosEnvec directly in partition entries.
+  - **Preemptive scheduling**: IRQStub now calls `irq_RescheduleCheck()` after `InterruptHandler`. If `FLAG_SCHEDSWITCH_ISSET` or a higher-priority task is ready, converts IRQ frame to SVC frame and does full context switch via `switch_save_sp`/`switch_dispatch`. Guard: only preempts if `ThisTask->tc_State == TS_RUN` (prevents preempting kernel idle loop).
+  - **TDNestCnt/IDNestCnt sync**: `switch_dispatch` now restores `TDNESTCOUNT_SET(task->tc_TDNestCnt)` and `IDNESTCOUNT_SET(task->tc_IDNestCnt)` when dispatching a new task. Without this, TLS TDNestCnt stayed at 0 (from MEMF_CLEAR'd bootstrap task) and task switching appeared permanently disabled.
+  - **TDNestCnt save on preempt**: `switch_save_sp` now saves `task->tc_TDNestCnt = TDNESTCOUNT_GET` before `core_Switch()`, so preempted tasks preserve their nesting state.
+  - **SC_DISPATCH handler**: Added `.Ldo_dispatch` to SVC handler for `SC_DISPATCH` (syscall 1). Dispatches next task WITHOUT saving current context — used by `RemTask(NULL)` → `KrnDispatch()`. Without this, `RemTask` returned to caller, causing `dos_init` to return from `InitResident` and fail the boot.
 - **SD test image**: `/tmp/aros_sd_rdb.img` — 128MB RDB, DH0 partition (DOS\3/FFS-I), populated with S/Startup-Sequence, C/, L/, Libs/, Devs/, Classes/ via rdbtool+xdftool
-- **Current crash**: `AddTail()` at `ELR=0x3ba08a70`, `FAR=0xFFFFFFFFFFFFFFFF`. Happens immediately after mountBootNode returns. A BPTR value of -1 (likely `dn_GlobalVec = (BPTR)-1`, the standard "use global vector" sentinel) is being dereferenced as a list pointer. On AArch64 with AROS_FAST_BPTR, `(BPTR)-1` = `0xFFFFFFFFFFFFFFFF` = literal pointer, causing translation fault.
-- **Next steps**: Find the AddTail call site that dereferences BPTR -1, fix the 64-bit BPTR sentinel handling
+- **Current issue**: AFS handler returns error 205 (`ERROR_OBJECT_NOT_FOUND`) for `Lock("SYS:C")` and all other directory lookups after the initial `Lock("DH0:")` succeeds. Even `Lock("SYS:")` fails in `AddBootAssign` despite working moments earlier. Root cause: heap corruption corrupts the DosList `dol_Name` field, causing `FindDosEntry` to fail name comparisons. The TLSF block header between the AfsHandle and DosList allocations gets corrupted.
+- **Heap corruption analysis**:
+  - Memory layout: AfsHandle at 0x2bac70 (56 bytes in 96-byte TLSF block) → TLSF header at 0x2bacd0 → AllocVec header at 0x2bace0 → DosList at 0x2bacf0 → dol_Name at 0x2bad38
+  - The TLSF block header `length` field at 0x2bacd8 gets corrupted, which cascades to corrupt the DosList's `dol_Name` pointer
+  - Watchpoint analysis showed the corrupted value at 0x2bad38 sometimes equals `&volume->ah` (the root AfsHandle pointer), suggesting a pointer-sized (8-byte) write landing at the wrong location
+  - Exhaustive code review of AFS block buffer indexing (BLK_* macros), hash computation, string handling, `allocHandle`, `addHandle`, `findBlock`, `getHeaderBlock` — all correct, no direct overflow found
+  - `bug()` calls use `va_list` → `__vcformat` → serial output only, no heap writes
+  - Block cache at 0x2bb4f0-0x2bf4b0 is well above the DosList, no overlap
+  - Most likely cause: either a TLSF split/merge operation triggered by prior subtle metadata corruption, or an unidentified 32/64-bit pointer size mismatch in a code path not yet traced
+  - Workarounds applied: 24-byte TLSF red zone, +128 byte DosList padding, +64 byte name string padding — these absorb the overflow but don't fix the root cause
+  - Also fixed: `findBlock` `buffer[32]` had no bounds check on path component copy (potential stack overflow for names > 31 chars)
+- **Workarounds in place** (all marked with FIXME):
+  - `rom/kernel/tlsf.c`: 24-byte red zone added to every allocation in `tlsf_malloc()`, `MEMF_CLEAR` only clears `orig_size`
+  - `rom/dos/makedosentry.c`: DosList allocated with +128 bytes padding, name string with +64 bytes padding
+- **Previous issues (all fixed)**:
+  - TLSF heap corruption during AFS bitmap ops (workaround: 16-byte red zone)
+  - Preemptive scheduling not working (IRQStub didn't call scheduler)
+  - TDNestCnt stuck at 0 (not synced on task dispatch)
+  - SC_DISPATCH not handled (RemTask returned to caller)
+  - `Lock("SYS:")` hang (task on ready list but never scheduled)
+- **Next steps**: Find and fix the heap corruption that breaks AFS handler. The 16-byte red zone is not enough — either increase it or find the actual overflow source. Likely a struct size mismatch (32-bit vs 64-bit pointer) in AFS or DOS code.
 - **Objective**: Full AROS Workbench on Pi 4.
 - **Work**:
   - ~~SD card driver for EMMC2~~ DONE (using Arasan at 0xFE300000 for QEMU)
   - ~~Create bootable SD image~~ DONE (RDB+FFS via rdbtool+xdftool)
   - ~~MakeDosNode heap corruption fix~~ DONE (separate DosEnvec allocation)
-  - Fix AddTail BPTR -1 crash in DOS boot path
+  - ~~TLSF heap corruption workaround~~ DONE (24-byte red zone in `tlsf_malloc`, DosList padding in `MakeDosEntry`)
+  - ~~IsBootable / CliInit boot path~~ DONE (boots past IsBootable, assigns SYS:)
+  - ~~Preemptive task scheduling~~ DONE (IRQStub → `irq_RescheduleCheck` → context switch)
+  - ~~SC_DISPATCH for RemTask~~ DONE (SVC handler dispatches without saving context)
+  - ~~TDNestCnt/IDNestCnt sync~~ DONE (save on switch, restore on dispatch)
+  - Find and fix heap corruption that breaks AFS handler (workarounds in place, root cause TBD — see analysis above)
   - Verify Startup-Sequence execution, Intuition, graphics, layers
 - **Demo**: AROS Workbench desktop, interactive with USB keyboard/mouse
 - **Depends on**: Tasks 8, 9
@@ -186,3 +215,112 @@ arch/
 - **Reference**: Circle `multicore.cpp`, `startup64.S` `_start_secondary`
 - **Demo**: SysExplorer shows 4 cores, tasks on different cores
 - **Depends on**: Task 7
+
+## Debugging Playbook
+
+### QEMU + GDB connection issues
+
+QEMU's GDB stub only supports **one connection at a time**. If GDB disconnects without `detach`, the stub enters `CLOSE_WAIT` and refuses new connections — QEMU must be restarted. Always use `detach` before `quit`.
+
+GDB `-batch` mode treats `continue` as **non-blocking** — subsequent `-ex` commands fire immediately while the target is still running. Use `expect` to drive GDB interactively:
+
+```bash
+cat > /tmp/gdb.exp << 'EXPECT'
+set timeout 180
+spawn /opt/homebrew/bin/gdb -quiet -nx
+expect "(gdb)"; send "set architecture aarch64\r"
+expect "(gdb)"; send "target remote :5432\r"
+expect "(gdb)"; send "watch *(long long *)0xADDRESS\r"
+expect "(gdb)"; send "c\r"
+expect {
+    -re "Hardware watchpoint" {
+        expect "(gdb)"; send "info reg\r"
+        expect "(gdb)"; send "detach\r"
+        expect "(gdb)"; send "quit\r"
+        expect eof
+    }
+    timeout { send "\003"; expect "(gdb)"; send "detach\r"; expect "(gdb)"; send "quit\r"; expect eof }
+}
+EXPECT
+expect /tmp/gdb.exp 2>&1
+```
+
+### Heap corruption debugging strategy
+
+**Problem**: TLSF heap corruption where a buffer overflow from one allocation corrupts an adjacent block's header. Symptoms: `length` field in a free block header contains a pointer value instead of a small size.
+
+**What doesn't work well**:
+- **Fixed-address watchpoints via GDB**: Every code change shifts heap layout, invalidating the watched address. GDB connection fragility compounds this.
+- **Fixed-address polling guards**: Same address-shifting problem. Adding debug code changes the binary, which changes allocation patterns.
+
+**What works — Red Zone / Mungwall approach**:
+
+Add 16 bytes to every TLSF allocation and write a canary pattern after the user's requested size. Check the canary on `free()`. This is address-independent and survives code changes.
+
+In `tlsf_malloc()`:
+```c
+IPTR orig_size = size;
+size = ROUNDUP(size + 16);  // Add red zone
+// ... normal allocation ...
+// Before return:
+UBYTE *p = (UBYTE *)&b->mem[0];
+IPTR rz = ROUNDUP(orig_size);
+*(IPTR *)(p + rz) = orig_size;           // Store original size
+*(ULONG *)(p + rz + 8) = 0xDEADBEEF;    // Canary pattern
+```
+
+In `tlsf_freevec()`:
+```c
+// After fb = MEM_TO_BHDR(ptr):
+// Scan for stored size + check canary
+```
+
+**Gotchas**:
+1. `MEMF_CLEAR` handling: TLSF's `bzero` must clear only `orig_size` bytes, not the full `size` (which includes the red zone). Otherwise the canary gets zeroed.
+2. The compiler may optimize `bzero(ptr, N)` for small N to clear more bytes than requested (alignment optimization). This causes false positives for allocations < 16 bytes. Filter by `stored_size > 64`.
+3. If the overflow lands entirely within the red zone, the corruption is **prevented** but the canary check only fires when the block is **freed**. If the block is never freed (e.g., a FileHandle that lives for the session), the check never runs. Solution: also check canaries on every Nth `malloc`, or instrument the specific `FreeDosObject` path.
+4. Storing the original size in the red zone itself is fragile — the overflow may corrupt both the size and the canary. Better: store `orig_size` at a fixed offset from the block header (e.g., in unused `free_node` fields — but beware, `free_node` overlaps `mem[]` in the union, so writing to it corrupts user data). Safest: store at `ROUNDUP(orig_size)` offset and scan for it on free.
+
+**Recommended workflow for heap corruption**:
+1. First, reproduce with TLSF tracing (SPLIT/INSERT/REMOVE/MALLOC/FREE with address-range filter) to identify the corrupted block and its neighbors.
+2. Add the red zone to confirm the overflow size and prove it's a buffer overflow (not a use-after-free or double-free).
+3. If the red zone prevents the crash, the overflow is absorbed — use static analysis to find the writer (grep for struct field accesses past the allocation size).
+4. If you need the exact writer, use QEMU's `-d guest_errors` or a TCG plugin to trace stores to the canary address, avoiding GDB entirely.
+
+**Canary-based elimination technique**:
+When you suspect a specific struct (e.g., FileHandle) is overflowing, add extra bytes + a canary to its `AllocDosObject`/`AllocMem` call and check the canary in the corresponding `Free` path. If the canary is intact on free, that struct is NOT the overflow source — the corruption comes from a different adjacent allocation. This eliminates suspects quickly without needing the exact writer address.
+
+**TLSF integrity check false positives**:
+When adding `GET_NEXT_BHDR` sanity checks in `tlsf_malloc`, beware that legitimate TLSF blocks can be very large. The initial free block spans nearly all of RAM (~955MB on a 1GB system). A threshold like `> 0x10000000` (256MB) will false-positive on these. Either use `(IPTR)nxt + size > mhe->mhe_MemHeader.mh_Upper` as the check, or track the last allocation in a specific address range and only check that block's neighbor.
+
+Also note: `THIS_FREE = 1` and `THIS_BUSY = 0` in AROS TLSF — the opposite of what you might expect. A length field ending in `1` means FREE, not BUSY.
+
+### Task scheduling hang diagnosis
+
+**Symptom**: A task is on the ready list (`TS_READY`) but never gets CPU time. The system appears hung — no crash, no exception, just no progress.
+
+**Diagnosis approach**:
+1. Add traces to `PutMsg` and `Signal()` to confirm the reply message is sent and the signal is delivered.
+2. In `Signal()`, log `task->tc_State`, `signalSet`, `tc_SigRecvd`, `tc_SigWait`, and the match (`tc_SigRecvd & tc_SigWait`). If `tc_State == TS_READY` and `tc_SigWait == 0`, the task was already woken up but never scheduled.
+3. Check if the timer IRQ handler calls `core_ExitInterrupt()` — this is what triggers the scheduler to check for ready tasks and perform context switches.
+4. On AROS, cooperative multitasking happens via `Wait()`/`Signal()`. Preemptive multitasking requires the timer IRQ to call into the scheduler. If the IRQ handler only does `core_Cause(INTB_VERTB)` but doesn't call `core_ExitInterrupt()`, tasks of equal priority will never preempt each other.
+
+**Key insight**: The AFS handler processes a packet, replies via `PutMsg` (which signals the caller), then loops back to `WaitPort`. If the caller has equal priority, it needs preemptive scheduling to run — the AFS handler won't voluntarily yield until it calls `WaitPort` → `Wait()`, but by then it has already consumed the timer tick. The caller's signal was delivered but the scheduler never ran to switch to it.
+
+### Common AArch64 porting bugs
+
+| Pattern | Symptom | Root cause |
+|---------|---------|------------|
+| Struct size mismatch | Heap overflow 8-24 bytes | Pointers grew from 4→8 bytes; allocation uses hardcoded size or wrong sizeof |
+| BPTR sentinel -1 | Translation fault at 0xFFFFFFFFFFFFFFFF | `AROS_FAST_BPTR` makes `(BPTR)-1` a literal pointer; code must check before dereferencing |
+| MEMF_CHIP | AllocMem returns NULL | No chip memory on AArch64; patch AllocMem to strip MEMF_CHIP |
+| Stack in .bss | Crash after clear_bss | Stack variable in .bss gets zeroed; use `section(".data")` |
+| 32-bit register ops | Upper 32 bits of x-reg zeroed | ARM32 code using `w` registers or `ULONG` for pointer-sized values |
+| Unaligned access | Data abort | AArch64 requires 16-byte stack alignment; `stp`/`ldp` require natural alignment |
+| BSTR as task name | Task name shows `\x01` or garbage | Handler name set from BSTR (length-prefixed) instead of C string; `AROS_FAST_BSTR` expects C strings |
+| No preemptive scheduling | System hangs, tasks in TS_READY never run | Timer IRQ doesn't call `core_ExitInterrupt()`; equal-priority tasks can't preempt each other |
+| Adjacent-block heap corruption | Crash in unrelated code (NULL deref, wild jump) | Small overflow (8-16 bytes) from one allocation corrupts the TLSF header of the next block; manifests far from the actual bug |
+| Jump to low address (0x0-0xF) | `ELR_EL1: 0x8`, EC=0x0 | Corrupted function pointer or jump table entry; often caused by heap corruption overwriting a `struct Library` vector |
+| Missing SC_DISPATCH handler | `RemTask(NULL)` returns to caller | SVC handler only handled SC_SWITCH/SC_SCHEDULE but not SC_DISPATCH (1); `KrnDispatch()` SVC fell through to no-op `HandleSyscall` |
+| TDNestCnt not synced on dispatch | Task switching appears permanently disabled (TDNest=0) | `switch_dispatch` must call `TDNESTCOUNT_SET(task->tc_TDNestCnt)` when dispatching; without it, TLS keeps the bootstrap task's initial value (0 from MEMF_CLEAR) |
+| IRQ preempt during idle loop | Tasks stuck on ready list, never dispatched | IRQ fires during `wfi` in idle loop; preemptive switch saves idle loop context as task context, corrupting the previous task's SP. Guard: check `ThisTask->tc_State == TS_RUN` before preempting |
