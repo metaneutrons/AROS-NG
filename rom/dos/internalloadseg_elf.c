@@ -322,6 +322,32 @@ static int relocate
 
     ULONG numrel = shrel->size / shrel->entsize;
     ULONG i;
+#if defined(__aarch64__)
+    /*
+     * AArch64 GOT synthesis: the compiler emits GOT-indirect accesses for
+     * weak/extern symbols (R_AARCH64_ADR_GOT_PAGE + R_AARCH64_LD64_GOT_LO12_NC).
+     * Since relocatable ELFs have no .got section, we synthesize one here.
+     * Count GOT entries needed, allocate a buffer, and fill it during relocation.
+     */
+    IPTR *got_entries = NULL;
+    ULONG got_count = 0;
+    ULONG got_alloc = 0;
+    {
+        struct relo *scan = (struct relo *)shrel->addr;
+        for (i = 0; i < numrel; i++, scan++)
+            if (ELF_R_TYPE(scan->info) == R_AARCH64_ADR_GOT_PAGE)
+                got_alloc++;
+    }
+    if (got_alloc > 0)
+    {
+        got_entries = AllocVec(got_alloc * sizeof(IPTR), MEMF_PUBLIC | MEMF_CLEAR);
+        if (!got_entries)
+        {
+            SetIoErr(ERROR_NO_FREE_STORE);
+            return 0;
+        }
+    }
+#endif
 #if defined(__i386__) || defined(__x86_64__)
     IPTR got_base = 0;
 
@@ -746,10 +772,36 @@ static int relocate
             }
 
             case R_AARCH64_ADR_GOT_PAGE:
-            case R_AARCH64_LD64_GOT_LO12_NC:
-                /* GOT relocations — handled same as non-GOT for static linking */
-                bug("[ELF Loader] GOT relocation type %d not supported in static context\n", ELF_R_TYPE(rel->info));
+            {
+                /*
+                 * GOT-indirect page relocation: adrp Xd, :got:sym
+                 * Allocate a GOT slot, store the symbol address in it,
+                 * and patch the adrp to point to the GOT slot's page.
+                 */
+                IPTR *got_slot = &got_entries[got_count++];
+                *got_slot = rel->addend + s;
+                IPTR got_addr = (IPTR)got_slot;
+                QUAD offset = (QUAD)(got_addr & ~0xFFF) - ((IPTR)p & ~0xFFF);
+                LONG imm = (LONG)(offset >> 12);
+                ULONG immlo = (imm & 3) << 29;
+                ULONG immhi = ((imm >> 2) & 0x7FFFF) << 5;
+                *(ULONG *)p = (*(ULONG *)p & 0x9F00001F) | immlo | immhi;
                 break;
+            }
+
+            case R_AARCH64_LD64_GOT_LO12_NC:
+            {
+                /*
+                 * GOT-indirect low12 relocation: ldr Xd, [Xn, :got_lo12:sym]
+                 * The preceding ADR_GOT_PAGE already created the GOT slot.
+                 * Patch the ldr offset to point to the GOT slot within its page.
+                 * got_count-1 because ADR_GOT_PAGE already incremented it.
+                 */
+                IPTR got_addr = (IPTR)&got_entries[got_count - 1];
+                ULONG imm12 = (ULONG)((got_addr & 0xFFF) >> 3);
+                *(ULONG *)p = (*(ULONG *)p & 0xFFC003FF) | (imm12 << 10);
+                break;
+            }
 
             case R_AARCH64_NONE:
                 break;

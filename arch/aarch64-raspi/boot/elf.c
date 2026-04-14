@@ -87,7 +87,35 @@ int getElfSize(void *elf_file, uint64_t *size_rw, uint64_t *size_ro)
         }
     }
     if (size_ro) *size_ro = s_ro;
-    if (size_rw) *size_rw = s_rw;
+    if (size_rw)
+    {
+        /*
+         * Account for GOT slots that will be allocated during relocation.
+         * Each R_AARCH64_ADR_GOT_PAGE relocation needs an 8-byte GOT entry.
+         */
+        uint64_t got_size = 0;
+        if (!checkHeader(eh))
+        {
+            struct sheader *sh = (struct sheader *)((uintptr_t)elf_file + eh->shoff);
+            for (unsigned i = 0; i < int_shnum; i++)
+            {
+                if (sh[i].type == SHT_RELA)
+                {
+                    struct relo *rel = (struct relo *)((uintptr_t)elf_file + sh[i].offset);
+                    unsigned nrel = sh[i].size / sh[i].entsize;
+                    for (unsigned j = 0; j < nrel; j++)
+                    {
+                        uint32_t rt = ELF64_R_TYPE(rel[j].info);
+                        if (rt == R_AARCH64_ADR_GOT_PAGE || rt == R_AARCH64_LD64_GOT_LO12_NC)
+                            got_size += 8;
+                    }
+                }
+            }
+            /* Align GOT area */
+            got_size = (got_size + 15) & ~15;
+        }
+        *size_rw = s_rw + got_size;
+    }
     return 1;
 }
 static uintptr_t ptr_ro;
