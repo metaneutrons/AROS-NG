@@ -29,8 +29,10 @@
         (dest)->tv_micro -= 1000000;     \
     }
 
+typedef int cpumode_t;
 #define goSuper() 0
 #define goUser()
+#define goBack(mode) ((void)(mode))
 
 /* SVC call for system calls */
 #undef krnSysCall
