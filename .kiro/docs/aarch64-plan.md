@@ -218,6 +218,29 @@ arch/
 - **Demo**: SysExplorer shows 4 cores, tasks on different cores
 - **Depends on**: Task 7
 
+## Development Environment
+
+### Primary build machine: cachy (CachyOS Linux x86_64)
+- **Path**: `fabian@cachy:/home/fabian/AROS-AArch64/`
+  - `AROS/` — source tree (synced from macOS `~/Source/AROS`)
+  - `build/` — build directory
+- **Configure**: `../AROS/configure --target=raspi-aarch64 --enable-debug=all --with-kernel-toolchain-prefix=aarch64-linux-gnu- --with-gcc-version=15.2.0`
+- **Crosstools**: GCC 15.2.0 (`aarch64-aros-gcc`), binutils 2.32 — built automatically by AROS build system
+- **Kernel toolchain**: `aarch64-linux-gnu-gcc` 15.1.0 (system package, used for bootstrap code)
+- **QEMU**: `qemu-system-aarch64` 10.2.2 — supports GDB hardware watchpoints (key advantage over macOS)
+- **CPU**: 12 cores, full build ~15 min after crosstools
+- **Why cachy**: Linux QEMU provides proper GDB hardware watchpoints via `-gdb tcp::1234`. On macOS, QEMU's GDB stub had connection reliability issues and watchpoints timed out.
+
+### macOS (secondary, source of truth for git)
+- **Path**: `~/Source/AROS` (git repo), `~/Source/AROS-build-aarch64` (build dir)
+- **Note**: macOS build was configured WITHOUT `--enable-debug=all` (uses `-O2`). The cachy build uses `-O0` which exposed additional issues.
+
+### Build fixes for debug builds (`--enable-debug=all` / `-O0`)
+- **libpng NEON**: `OPTIMIZATION_CFLAGS := -O2` in `workbench/libs/png/mmakefile.src` — NEON intrinsics require constant lane indices, only resolved at `-O1+`
+- **zlib NEON/CRC**: Same fix in `workbench/libs/z/mmakefile.src`
+- **core.elf libgcc**: Added `-lgcc` to core.elf link in `arch/aarch64-native/kernel/mmakefile.src` — AArch64 `long double` is 128-bit; at `-O0` GCC emits quad-float helper calls (`__lttf2`, `__multf3`, etc.)
+- **cpumode_t**: Added `typedef int cpumode_t` and `#define goBack(mode)` to `arch/aarch64-native/kernel/kernel_cpu.h` — required by `rom/kernel/createcontext.c`
+
 ## Debugging Playbook
 
 ### QEMU + GDB connection issues
