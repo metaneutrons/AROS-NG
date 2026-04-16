@@ -116,7 +116,7 @@ arch/
 - **Depends on**: Task 7
 
 ### Task 10: SD card, DOS, and Workbench boot
-- **Status**: IN PROGRESS — Workbench Screen displayed, CliInit succeeds, but AFS handler returns error 205 on directory lookups (heap corruption)
+- **Status**: DONE — Full boot to shell prompt. Workbench screen, Startup-Sequence executed, CLI at `1>`. Only `SYS:Locale` missing (not in SD image).
 - **Commits**: `889c3d9ef8` (BSP ROM), `510888149c`..`c8b26dad77` (interrupt fix, context switch, TLS sync), `0a43bea304` (inputclass fix), `527ed55d94` (pointerclass fix), `34b6d87da1` (MEMF_CHIP fix)
 - **What works**: Full COLDSTART init sequence (45 modules), timer interrupts at 50Hz, SVC-based context switching + preemptive IRQ-based switching, vc4gfx display driver registered, cgxbootpic boot logo rendered, dosboot "Waiting for bootable media" screen displayed. sdcard.device fully initializes on QEMU raspi4b — card detected as "QEMU! SD2.0 128MB", reads sectors via CMD17. RDB partition table detected, DH0 partition found (DosType DOS\3 = FFS-I). afs-handler starts, opens device, reads FFS volume. mountBootNode succeeds. `Lock("DH0:")` succeeds. `CliInit` returns DOSTRUE. `RemTask(NULL)` via `SC_DISPATCH` works. Workbench Screen opens with Intuition system requesters.
 - **Key fixes applied**:
