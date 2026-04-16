@@ -56,19 +56,13 @@
     STRPTR s2;
     struct DosList *dl;
 
-    /*
-     * FIXME: AArch64 heap corruption workaround.
-     * Add 128-byte padding to DosList and 64-byte padding to name string
-     * to absorb unidentified buffer overflows from adjacent heap blocks.
-     * Remove once the actual overflow source is found and fixed.
-     */
-    dl = (struct DosList *)AllocVec(sizeof(struct DosList) + 128,
+    dl = (struct DosList *)AllocVec(sizeof(struct DosList),
                                     MEMF_PUBLIC | MEMF_CLEAR);
 
     if (dl != NULL)
     {
 #ifdef AROS_FAST_BPTR
-        s2 = (STRPTR)AllocVec(len+1+64, MEMF_PUBLIC | MEMF_CLEAR);
+        s2 = (STRPTR)AllocVec(len+1, MEMF_PUBLIC | MEMF_CLEAR);
         dl->dol_Name = MKBADDR(s2);
 #else
         /* Binary compatibility for BCPL string.

@@ -347,16 +347,6 @@ void * tlsf_malloc(struct MemHeaderExt *mhe, IPTR size, ULONG *flags)
     int fl, sl;
     bhdr_t *b = NULL;
 
-    /*
-     * FIXME: AArch64 heap corruption workaround.
-     * Unidentified buffer overflows (likely 32/64-bit pointer size mismatches
-     * in AFS or DOS code) corrupt adjacent TLSF block headers. Adding a
-     * 24-byte red zone absorbs these overflows. Find and fix the actual
-     * overflow sources, then remove this workaround.
-     */
-    IPTR orig_size = size;
-    size = size + 24;
-
     size = ROUNDUP(size);
 
     if (unlikely(!size)) return NULL;
@@ -468,7 +458,7 @@ void * tlsf_malloc(struct MemHeaderExt *mhe, IPTR size, ULONG *flags)
         ReleaseSemaphore((struct SignalSemaphore *)mhe->mhe_MemHeader.mh_Node.ln_Name);
 
     if (flags && (*flags & MEMF_CLEAR))
-        bzero(&b->mem[0], orig_size);
+        bzero(&b->mem[0], size);
 
     /* And return memory */
     return &b->mem[0];
