@@ -37,7 +37,8 @@ CFILES := \
     schedule \
     dispatch \
     kernel_syscall \
-    tags
+    tags \
+    cpu_init
 
 AFILES := intvecs
 
