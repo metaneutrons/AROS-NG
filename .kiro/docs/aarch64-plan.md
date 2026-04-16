@@ -142,43 +142,38 @@ arch/
   - **TDNestCnt save on preempt**: `switch_save_sp` now saves `task->tc_TDNestCnt = TDNESTCOUNT_GET` before `core_Switch()`, so preempted tasks preserve their nesting state.
   - **SC_DISPATCH handler**: Added `.Ldo_dispatch` to SVC handler for `SC_DISPATCH` (syscall 1). Dispatches next task WITHOUT saving current context — used by `RemTask(NULL)` → `KrnDispatch()`. Without this, `RemTask` returned to caller, causing `dos_init` to return from `InitResident` and fail the boot.
 - **SD test image**: `/tmp/aros_sd_rdb.img` — 128MB RDB, DH0 partition (DOS\3/FFS-I), populated with S/Startup-Sequence, C/, L/, Libs/, Devs/, Classes/ via rdbtool+xdftool
-- **Current issue**: AFS handler returns error 205 (`ERROR_OBJECT_NOT_FOUND`) for `Lock("SYS:C")` and all other directory lookups after the initial `Lock("DH0:")` succeeds. Even `Lock("SYS:")` fails in `AddBootAssign` despite working moments earlier. Root cause: heap corruption corrupts the DosList `dol_Name` field, causing `FindDosEntry` to fail name comparisons. The TLSF block header between the AfsHandle and DosList allocations gets corrupted.
-- **Heap corruption analysis**:
-  - Memory layout: AfsHandle at 0x2bac70 (56 bytes in 96-byte TLSF block) → TLSF header at 0x2bacd0 → AllocVec header at 0x2bace0 → DosList at 0x2bacf0 → dol_Name at 0x2bad38
-  - The TLSF block header `length` field at 0x2bacd8 gets corrupted, which cascades to corrupt the DosList's `dol_Name` pointer
-  - Watchpoint analysis showed the corrupted value at 0x2bad38 sometimes equals `&volume->ah` (the root AfsHandle pointer), suggesting a pointer-sized (8-byte) write landing at the wrong location
-  - Exhaustive code review of AFS block buffer indexing (BLK_* macros), hash computation, string handling, `allocHandle`, `addHandle`, `findBlock`, `getHeaderBlock` — all correct, no direct overflow found
-  - `bug()` calls use `va_list` → `__vcformat` → serial output only, no heap writes
-  - Block cache at 0x2bb4f0-0x2bf4b0 is well above the DosList, no overlap
-  - Most likely cause: either a TLSF split/merge operation triggered by prior subtle metadata corruption, or an unidentified 32/64-bit pointer size mismatch in a code path not yet traced
-  - Workarounds applied: 24-byte TLSF red zone, +128 byte DosList padding, +64 byte name string padding — these absorb the overflow but don't fix the root cause
-  - Also fixed: `findBlock` `buffer[32]` had no bounds check on path component copy (potential stack overflow for names > 31 chars)
-- **Workarounds in place** (all marked with FIXME):
-  - `rom/kernel/tlsf.c`: 24-byte red zone added to every allocation in `tlsf_malloc()`, `MEMF_CLEAR` only clears `orig_size`
-  - `rom/dos/makedosentry.c`: DosList allocated with +128 bytes padding, name string with +64 bytes padding
 - **Previous issues (all fixed)**:
   - TLSF heap corruption during AFS bitmap ops (workaround: 16-byte red zone)
   - Preemptive scheduling not working (IRQStub didn't call scheduler)
   - TDNestCnt stuck at 0 (not synced on task dispatch)
   - SC_DISPATCH not handled (RemTask returned to caller)
   - `Lock("SYS:")` hang (task on ready list but never scheduled)
-- **Next steps**: Find and fix the heap corruption that breaks AFS handler. The 16-byte red zone is not enough — either increase it or find the actual overflow source. Likely a struct size mismatch (32-bit vs 64-bit pointer) in AFS or DOS code.
 - **Objective**: Full AROS Workbench on Pi 4.
 - **Work**:
   - ~~SD card driver for EMMC2~~ DONE (using Arasan at 0xFE300000 for QEMU)
   - ~~Create bootable SD image~~ DONE (RDB+FFS via rdbtool+xdftool)
-  - ~~MakeDosNode heap corruption fix~~ DONE (separate DosEnvec allocation)
-  - ~~TLSF heap corruption workaround~~ DONE (24-byte red zone in `tlsf_malloc`, DosList padding in `MakeDosEntry`)
+  - ~~Heap corruption root cause~~ DONE — `kb_ContextSize` was 8 instead of 288 (commit `d2e4672710`)
   - ~~IsBootable / CliInit boot path~~ DONE (boots past IsBootable, assigns SYS:)
   - ~~Preemptive task scheduling~~ DONE (IRQStub → `irq_RescheduleCheck` → context switch)
   - ~~SC_DISPATCH for RemTask~~ DONE (SVC handler dispatches without saving context)
   - ~~TDNestCnt/IDNestCnt sync~~ DONE (save on switch, restore on dispatch)
   - ~~Find and fix heap corruption that breaks AFS handler~~ DONE — ROOT CAUSE: `rom/kernel/cpu_init.c` (generic) set `kb_ContextSize = sizeof(struct AROSCPUContext)` using the generic stub definition (8 bytes, just `IPTR pc`) instead of the aarch64 `ExceptionContext` (288 bytes). `KrnCreateContext()` allocated 8 bytes, `PrepareContext()` wrote 288 bytes, overflowing into adjacent TLSF block headers. Fix: arch-specific `cpu_init.c` in `arch/aarch64-native/kernel/` that includes the correct `kernel_cpu.h`. Commit `d2e4672710`. Found via GDB hardware watchpoint on Linux QEMU (cachy).
   - ~~GOT relocation handling in ELF loaders~~ DONE (`06733d204b`) — synthesize GOT entries for R_AARCH64_ADR_GOT_PAGE/LD64_GOT_LO12_NC in both bootstrap and runtime loaders; fix getElfSize() to account for GOT slot space
-  - Fix crash at VideoCoreGfx::CreateObject during dosboot_BootDos (FAR=0x79401ec44b000458, consistent across runs — likely corrupted OOP vtable/method pointer, not heap corruption since red zone size doesn't affect it)
   - Verify Startup-Sequence execution, Intuition, graphics, layers
 - **Demo**: AROS Workbench desktop, interactive with USB keyboard/mouse
 - **Depends on**: Tasks 8, 9
+
+### Code Audit (2026-04-16)
+- **Status**: DONE — All findings fixed in commits `3648db9495` and `4fec742b24`
+- **Findings fixed**:
+  - CRITICAL: makedosnode.c memory leak (DosEnvec separate allocation reverted)
+  - CRITICAL: exec_platform.h duplicated (exec/ now includes kernel/ copy)
+  - CRITICAL: stackswap.S FindTask LVO was wrong (-196 instead of -392)
+  - MODERATE: Debug instrumentation removed from 13 shared files
+  - MODERATE: BCM2711_GICD/GICC_BASE SSOT (removed redefinition in kernel_cstart.c)
+  - MODERATE: dispatch_idle() extracted from duplicated idle loops (DRY)
+  - MINOR: DEBUG 0 in all arch-specific files, whitespace cleanup, improved comments
+- **Build environment**: Fully self-contained on cachy (git repo + crosstools + build)
 
 ## Phase 3 — Raspberry Pi 5
 
