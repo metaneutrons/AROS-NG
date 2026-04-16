@@ -173,7 +173,7 @@ arch/
   - ~~Preemptive task scheduling~~ DONE (IRQStub → `irq_RescheduleCheck` → context switch)
   - ~~SC_DISPATCH for RemTask~~ DONE (SVC handler dispatches without saving context)
   - ~~TDNestCnt/IDNestCnt sync~~ DONE (save on switch, restore on dispatch)
-  - Find and fix heap corruption that breaks AFS handler (workarounds in place, root cause TBD — see analysis above)
+  - ~~Find and fix heap corruption that breaks AFS handler~~ DONE — ROOT CAUSE: `rom/kernel/cpu_init.c` (generic) set `kb_ContextSize = sizeof(struct AROSCPUContext)` using the generic stub definition (8 bytes, just `IPTR pc`) instead of the aarch64 `ExceptionContext` (288 bytes). `KrnCreateContext()` allocated 8 bytes, `PrepareContext()` wrote 288 bytes, overflowing into adjacent TLSF block headers. Fix: arch-specific `cpu_init.c` in `arch/aarch64-native/kernel/` that includes the correct `kernel_cpu.h`. Commit `d2e4672710`. Found via GDB hardware watchpoint on Linux QEMU (cachy).
   - ~~GOT relocation handling in ELF loaders~~ DONE (`06733d204b`) — synthesize GOT entries for R_AARCH64_ADR_GOT_PAGE/LD64_GOT_LO12_NC in both bootstrap and runtime loaders; fix getElfSize() to account for GOT slot space
   - Fix crash at VideoCoreGfx::CreateObject during dosboot_BootDos (FAR=0x79401ec44b000458, consistent across runs — likely corrupted OOP vtable/method pointer, not heap corruption since red zone size doesn't affect it)
   - Verify Startup-Sequence execution, Intuition, graphics, layers
