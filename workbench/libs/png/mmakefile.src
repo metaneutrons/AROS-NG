@@ -45,6 +45,7 @@ endif
 
 ## Add for ARM at a later date ...
 ifneq (,$(findstring aarch64,$(AROS_TARGET_CPU)))
+OPTIMIZATION_CFLAGS := -O2
 USER_CPPFLAGS += -DPNG_ARM_NEON
 FILES += \
 	arm/arm_init \
