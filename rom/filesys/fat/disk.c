@@ -212,10 +212,6 @@ LONG AccessDisk(BOOL do_write, ULONG num, ULONG nblocks, ULONG block_size,
         glob->diskioreq->iotd_Req.io_Command =
             do_write ? glob->writecmd : glob->readcmd;
 
-        bug("[fat] AccessDisk: num=%lu nblocks=%lu bs=%lu off=%08lx%08lx cmd=%d io=%p\n",
-            num, nblocks, block_size, (ULONG)(off >> 32), (ULONG)(off & 0xFFFFFFFF),
-            glob->diskioreq->iotd_Req.io_Command, glob->diskioreq);
-
         err = DoIO((struct IORequest *)glob->diskioreq);
 
         if (err != 0)

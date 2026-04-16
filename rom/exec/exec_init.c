@@ -121,8 +121,6 @@ AROS_UFH3S(struct ExecBase *, GM_UNIQUENAME(init),
     if (!origSysBase)
         return PrepareExecBase(mh, tagList);
 
-    bug("[Exec] COLDSTART init starting\n");
-
 #if defined(__AROSEXEC_SMP__)
     DINIT("AROS SMP 'exec.library' Initialization");
 #else

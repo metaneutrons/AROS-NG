@@ -36,7 +36,7 @@ AROS_SLIB_ENTRY(StackSwap,Exec,122):
 
     /* FindTask(NULL) — get current task */
     mov     x0, #0
-    ldr     x16, [x1, #-196]       /* FindTask LVO offset = -196 on AArch64 (LVO 49 * 8 = -392? TBD) */
+    ldr     x16, [x1, FindTask]
     blr     x16
     mov     x2, x0                 /* x2 = current task */
 

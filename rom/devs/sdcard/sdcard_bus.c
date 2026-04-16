@@ -2,7 +2,7 @@
     Copyright (C) 2013-2020, The AROS Development Team. All rights reserved.
 */
 
-#define DEBUG 1
+#define DEBUG 0
 #include <aros/debug.h>
 
 #include <aros/bootloader.h>
@@ -387,23 +387,10 @@ BOOL FNAME_SDCBUS(RegisterUnit)(struct sdcard_Bus *bus)
                             {
                                 case 0:
                                 {
-                                    ULONG read_bl_len = FNAME_SDCBUS(Rsp136Unpack)(sdcRsp136, 80, 4);
-                                    ULONG c_size = FNAME_SDCBUS(Rsp136Unpack)(sdcRsp136, 62, 12);
-                                    ULONG c_size_mult = FNAME_SDCBUS(Rsp136Unpack)(sdcRsp136, 47, 3);
-                                    ULONG capacity_blocks;
-
                                     D(bug("[SDSC Card]\n"));
-
-                                    /*
-                                     * SDSC: capacity = (C_SIZE+1) * 2^(C_SIZE_MULT+2) * 2^READ_BL_LEN bytes
-                                     * We always use 512-byte sectors (SET_BLOCKLEN forces this).
-                                     * DE_SIZEBLOCK is in longwords (4 bytes), so 512/4 = 128.
-                                     */
-                                    pp[DE_SIZEBLOCK + 4] = 128;  /* 512 bytes / 4 = 128 longwords */
-                                    pp[DE_SECSPERBLOCK + 4] = 1;
-                                    /* Total 512-byte sectors */
-                                    capacity_blocks = ((1 + c_size) << (c_size_mult + 2)) * (1 << read_bl_len) / 512;
-                                    pp[DE_HIGHCYL + 4] = capacity_blocks;
+                                    pp[DE_SIZEBLOCK + 4] = (1 << FNAME_SDCBUS(Rsp136Unpack)(sdcRsp136, 80, 4)) >> 2;
+                                    pp[DE_SECSPERBLOCK + 4] = pp[DE_SIZEBLOCK + 4] >> 7;
+                                    pp[DE_HIGHCYL + 4] = ((1 + FNAME_SDCBUS(Rsp136Unpack)(sdcRsp136, 62, 12)) << (FNAME_SDCBUS(Rsp136Unpack)(sdcRsp136, 47, 3) + 2));
                                     break;
                                 }
                                 case 1:
@@ -783,8 +770,7 @@ ULONG FNAME_SDCBUS(FinishData)(struct TagItem *DataTags, struct sdcard_Bus *bus)
 {
     DTRANS(UWORD        sdCommand = (UWORD)GetTagData(SDCARD_TAG_CMD, 0, DataTags));
     ULONG               sdcStateMask, sdCommandMask,
-                        sdDataMode, sdDataLen, sdcReg = 0;
-    IPTR                sdData;
+                        sdData, sdDataMode, sdDataLen, sdcReg = 0;
     struct TagItem      *sdDataLenTag = NULL;
     ULONG               timeout = 1000;
     ULONG               retVal = 0;
@@ -910,33 +896,7 @@ ULONG FNAME_SDCBUS(WaitCmd)(ULONG mask, ULONG timeout, struct sdcard_Bus *bus)
 
     if (bus->sdcb_Task == FindTask(NULL))
     {
-        /*
-         * Wait for IRQ signal, but with a polling fallback.
-         * Some controllers (e.g. QEMU EMMC2) may not deliver
-         * the GIC interrupt reliably. Poll INT_STATUS as backup.
-         */
-        ULONG waitLoops = 0;
-        while (waitLoops < 5000)
-        {
-            ULONG sigs = SetSignal(0, 0);
-            if (sigs & (1L << bus->sdcb_CommandSig))
-            {
-                SetSignal(0, 1L << bus->sdcb_CommandSig);
-                break;
-            }
-            /* Check if SDHCI has a pending interrupt we missed */
-            {
-                ULONG intSt = bus->sdcb_IOReadLong(SDHCI_INT_STATUS, bus);
-                if (intSt & (SDHCI_INT_RESPONSE | SDHCI_INT_ERROR))
-                {
-                    /* Manually invoke the IRQ handler */
-                    FNAME_SDCBUS(BusIRQ)(bus, NULL);
-                    break;
-                }
-            }
-            sdcard_Udelay(100);
-            waitLoops++;
-        }
+        Wait(1L << bus->sdcb_CommandSig);
     }
     else
     {
@@ -1314,21 +1274,10 @@ void FNAME_SDCBUS(BusTask)(struct sdcard_Bus *bus)
     }
 
     /* Fix #33: Detect card already present at boot (not just hotplug) */
+    if (bus->sdcb_IOReadLong(SDHCI_PRESENT_STATE, bus) & SDHCI_PS_CARD_PRESENT)
     {
-        ULONG ps = bus->sdcb_IOReadLong(SDHCI_PRESENT_STATE, bus);
-        /*
-         * BCM2711 EMMC2 has broken card-detect (DT: broken-cd).
-         * Bit 16 (CARD_PRESENT) is never set. Check CMD/DAT line
-         * levels instead — if lines are high, a card is present.
-         */
-        BOOL cardPresent = (ps & SDHCI_PS_CARD_PRESENT) ||
-                           ((ps & (1 << 17)) && (ps & (0xF << 20)));
-        D(bug("[SDBus%02u] PRESENT_STATE=0x%08lx cardPresent=%d\n", bus->sdcb_BusNum, ps, cardPresent));
-        if (cardPresent)
-        {
-            D(bug("[SDBus%02u] %s: Card detected at startup\n", bus->sdcb_BusNum, __PRETTY_FUNCTION__));
-            FNAME_SDCBUS(RegisterUnit)(bus);
-        }
+        DINIT(bug("[SDBus%02u] %s: Card already present at startup\n", bus->sdcb_BusNum, __PRETTY_FUNCTION__));
+        FNAME_SDCBUS(RegisterUnit)(bus);
     }
 
     if (!startupScanDone)

@@ -244,9 +244,7 @@ void __attribute__((noinline)) kernel_cstart(struct TagItem *msg)
 
     /* --- GIC-400 and timer initialization --- */
 
-    #define BCM2711_GICD_BASE   0xFF841000UL
-    #define BCM2711_GICC_BASE   0xFF842000UL
-
+    /* BCM2711_GICD_BASE / BCM2711_GICC_BASE from kernel_aarch64.h */
     uart_puts("[Kernel] Initializing GIC-400...\n");
     gic400_Init(BCM2711_GICD_BASE, BCM2711_GICC_BASE);
 

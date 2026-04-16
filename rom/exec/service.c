@@ -32,6 +32,7 @@ void ServiceTask(struct ExecBase *SysBase)
     do
     { /* forever */
 
+
         while ((task = (struct Task *)GetMsg(PrivExecBase(SysBase)->ServicePort)))
         {
             DREMTASK("ServiceTask: Request for Task 0x%p, State %08X\n", task, task->tc_State);

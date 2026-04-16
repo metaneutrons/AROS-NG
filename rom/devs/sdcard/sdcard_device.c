@@ -50,9 +50,7 @@ static void cmd_Read32(struct IORequest *io, LIBBASETYPEPTR LIBBASE)
     ULONG count = IOStdReq(io)->io_Length;
     ULONG mask;
 
-    bug("[SDCard%02ld] cmd_Read32: io=%p unit=%p off=%08lx len=%08lx data=%p actual=%08lx cmd=%d\n",
-        unit->sdcu_UnitNum, io, unit, block, count,
-        IOStdReq(io)->io_Data, IOStdReq(io)->io_Actual, IOStdReq(io)->io_Command);
+    D(bug("[SDCard%02ld] %s(%08x, %08x)\n", unit->sdcu_UnitNum, __PRETTY_FUNCTION__, block, count));
 
     if (!(unit->sdcu_Bus->sdcb_BusFlags & AF_Bus_MediaPresent))
     {
@@ -69,18 +67,7 @@ static void cmd_Read32(struct IORequest *io, LIBBASETYPEPTR LIBBASE)
     */
     if ((block & mask) | (count & mask))
     {
-        /* Dump raw struct bytes for debugging */
-        {
-            UBYTE *raw = (UBYTE *)io;
-            bug("[SDCard%02ld] cmd_Read32: io @ %p, raw dump from io_Command offset:\n", unit->sdcu_UnitNum, io);
-            /* io_Command is at offset after io_Unit (ptr) */
-            int i;
-            UBYTE *start = (UBYTE *)&IOStdReq(io)->io_Command;
-            for (i = 0; i < 40; i++)
-                bug("%02x ", start[i]);
-            bug("\n");
-        }
-        bug("[SDCard%02ld] %s: NOT ALIGNED block=%08lx count=%08lx mask=%08lx\n", unit->sdcu_UnitNum, __PRETTY_FUNCTION__, block, count, mask);
+        bug("[SDCard%02ld] %s: offset or length not sector-aligned.\n", unit->sdcu_UnitNum, __PRETTY_FUNCTION__);
         cmd_Invalid(io, LIBBASE);
     }
     else

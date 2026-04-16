@@ -496,11 +496,6 @@ UQUAD offset;
 
         if (start + count <= volume->countblocks)
         {
-                /* Safety check: reject obviously invalid buffer addresses */
-                if ((IPTR)mem < 0x10000) {
-                        bug("[afs] readwriteDisk: INVALID buffer %p for block %ld!\n", mem, (long)start);
-                        return -1;
-                }
                 ioh->ioreq->iotd_Req.io_Command = cmd;
                 ioh->ioreq->iotd_Req.io_Length = count*BLOCK_SIZE(volume);
                 ioh->ioreq->iotd_Req.io_Data = mem;

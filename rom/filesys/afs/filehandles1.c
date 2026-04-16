@@ -162,8 +162,7 @@ UBYTE buffer[32];
 
         if ((dirah->volume->dostype != ID_DOS_DISK) && (dirah->volume->dostype != ID_DOS_muFS_DISK))
         {
-                bug("[afs] findBlock: BAD dostype 0x%08lx (vol=%p)\n",
-                    (unsigned long)dirah->volume->dostype, dirah->volume);
+                D(bug("[afs] Unknown dostype 0x%08x\n", dirah->volume->dostype));
                 *error = ERROR_NOT_A_DOS_DISK;
                 return 0;
         }
@@ -180,7 +179,6 @@ UBYTE buffer[32];
         }
         if (calcChkSum(dirah->volume->SizeBlock, blockbuffer->buffer) != 0)
         {
-                bug("[afs] findBlock: CHECKSUM FAIL on block %ld\n", (long)*block);
                 /*
                  * not working with blockbuffer any more.
                  * otherwise we would need to preserve it (BCF_USED or one more time getBlock)

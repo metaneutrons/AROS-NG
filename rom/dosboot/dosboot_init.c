@@ -7,7 +7,6 @@
 #include <string.h>
 #include <stdlib.h>
 
-#define DEBUG 1
 #include <aros/debug.h>
 #include <exec/alerts.h>
 #include <aros/asmcall.h>

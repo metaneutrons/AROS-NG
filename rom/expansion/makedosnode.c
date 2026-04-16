@@ -137,24 +137,18 @@
     sz2 = AROS_BSTR_MEMSIZE4LEN(strLen2 + 1);
 
     /* Allocate it all as one big chunk. Helps with disposal later. */
-    dn = AllocVec(sizeof(*dn)+sizeof(*fssm)+sz1+sz2, MEMF_CLEAR | MEMF_PUBLIC);
+    dn = AllocVec(sizeof(*dn)+sizeof(*fssm)+desize+sz1+sz2, MEMF_CLEAR | MEMF_PUBLIC);
     if (dn == NULL)
     {
         return NULL;
     }
 
-    /* Allocate DosEnvec separately to avoid heap corruption issues */
-    de = AllocVec(desize, MEMF_CLEAR | MEMF_PUBLIC);
-    if (de == NULL)
-    {
-        FreeVec(dn);
-        return NULL;
-    }
-
     /* fssm is the (IPTR aligned) memory after the DeviceNode */
     fssm = (struct FileSysStartupMsg *)(&dn[1]);
-    /* s1 is the memory after the fssm */
-    s1 = ((APTR)&fssm[1]);
+    /* de is the (IPTR aligned) memory after the fssm */
+    de = (struct DosEnvec *)(&fssm[1]);
+    /* s1 is the memory after the de */
+    s1 = ((APTR)de) + desize;
     /* And s2 is then memory after that */
     s2 = s1 + sz1;
 

@@ -20,6 +20,28 @@
 #include "exec_platform.h"
 
 /*
+ * dispatch_idle — common dispatch loop with idle wait.
+ * Calls core_Dispatch() repeatedly; if no task is ready, enables
+ * IRQs and executes WFI until one becomes available.
+ */
+static inline struct Task *dispatch_idle(void)
+{
+    struct Task *task;
+    tls_t *__tls;
+    __asm__ volatile("mrs %0, tpidr_el1" : "=r"(__tls));
+
+    while (!(task = core_Dispatch()))
+    {
+        __tls->SupervisorCount--;
+        __asm__ volatile("msr daifclr, #2" ::: "memory");
+        __asm__ volatile("wfi");
+        __asm__ volatile("msr daifset, #2" ::: "memory");
+        __tls->SupervisorCount++;
+    }
+    return task;
+}
+
+/*
  * switch_save_sp — called from asm after saving regs on stack.
  * The asm stub passes the current SP (with saved regs) in x0.
  */
@@ -55,19 +77,7 @@ void switch_save_sp(uint64_t sp_val)
  */
 uint64_t switch_dispatch(void)
 {
-    struct Task *task;
-
-    while (!(task = core_Dispatch()))
-    {
-        /* No ready tasks — enable interrupts and idle */
-        tls_t *__tls;
-        __asm__ volatile("mrs %0, tpidr_el1" : "=r"(__tls));
-        __tls->SupervisorCount--;
-        __asm__ volatile("msr daifclr, #2" ::: "memory"); /* unmask IRQ */
-        __asm__ volatile("wfi");
-        __asm__ volatile("msr daifset, #2" ::: "memory"); /* mask IRQ */
-        __tls->SupervisorCount++;
-    }
+    struct Task *task = dispatch_idle();
 
     /* Sync TLS ThisTask with SysBase->ThisTask (set by core_Dispatch) */
     TLS_SET(ThisTask, task);
@@ -103,24 +113,23 @@ uint64_t switch_dispatch_only(void)
 {
     struct Task *task;
 
-    tls_t *__tls;
-    __asm__ volatile("mrs %0, tpidr_el1" : "=r"(__tls));
-    __tls->SupervisorCount++;
-
-    while (!(task = core_Dispatch()))
     {
-        __tls->SupervisorCount--;
-        __asm__ volatile("msr daifclr, #2" ::: "memory");
-        __asm__ volatile("wfi");
-        __asm__ volatile("msr daifset, #2" ::: "memory");
+        tls_t *__tls;
+        __asm__ volatile("mrs %0, tpidr_el1" : "=r"(__tls));
         __tls->SupervisorCount++;
     }
+
+    task = dispatch_idle();
 
     TLS_SET(ThisTask, task);
     TDNESTCOUNT_SET(task->tc_TDNestCnt);
     IDNESTCOUNT_SET(task->tc_IDNestCnt);
 
-    __tls->SupervisorCount--;
+    {
+        tls_t *__tls;
+        __asm__ volatile("mrs %0, tpidr_el1" : "=r"(__tls));
+        __tls->SupervisorCount--;
+    }
 
     return (uint64_t)task->tc_SPReg;
 }

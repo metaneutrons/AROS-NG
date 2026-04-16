@@ -52,7 +52,7 @@ struct KernelBase *getKernelBase(void);
 #undef D
 #endif
 
-#define DEBUG 1
+#define DEBUG 0
 
 #if DEBUG
 #define D(x) x
