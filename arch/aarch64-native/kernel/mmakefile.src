@@ -60,7 +60,7 @@ $(OSGENDIR)/boot/core.elf: $(KOBJSDIR)/kernel_resource.o $(KOBJSDIR)/exec_librar
 	@$(TARGET_LD) -Map $(OSGENDIR)/boot/core.map \
 	    -T $(SRCDIR)/$(CURDIR)/ldscript.lds \
 	    -o $@ $^ \
-	    -L$(AROS_LIB) -larossupport -lautoinit -llibinit -lstdc.static
+	    -L$(AROS_LIB) -larossupport -lautoinit -llibinit -lstdc.static -L$(CROSSTOOLSDIR)/lib/gcc/aarch64-aros/$(TARGET_GCC_VER) -lgcc
 
 KERNEL_CFLAGS := -ffreestanding $(CFLAGS_NO_BUILTIN) \
     -I$(SRCDIR)/$(CURDIR) \
