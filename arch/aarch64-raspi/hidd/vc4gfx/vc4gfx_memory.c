@@ -2,7 +2,7 @@
     Copyright (C) 2013-2017, The AROS Development Team. All rights reserved.
 */
 
-#define DEBUG 1
+#define DEBUG 0
 #include <aros/debug.h>
 
 #define __OOP_NOATTRBASES__

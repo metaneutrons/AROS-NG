@@ -6,7 +6,7 @@
           This file provides the kernel_cstart function that the kobj links against.
 */
 
-#define DEBUG 1
+#define DEBUG 0
 
 #include <aros/kernel.h>
 #include <aros/symbolsets.h>
