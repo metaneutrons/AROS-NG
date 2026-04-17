@@ -243,6 +243,7 @@ WORD FNAME_ROOTHUB(cmdControlXFer)(struct IOUsbHWReq *ioreq,
                                 DeleteIORequest((struct IORequest *)req);
                                 DeleteMsgPort(port);
 
+                                otg_Unit->hu_HubPortChanged = TRUE;
                                 cmdgood = TRUE;
                             }
                             break;
