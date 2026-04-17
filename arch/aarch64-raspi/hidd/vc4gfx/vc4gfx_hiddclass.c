@@ -136,6 +136,7 @@ OOP_Object *MNAME_ROOT(New)(OOP_Class *cl, OOP_Object *o, struct pRoot_New *msg)
     struct TagItem gfxmsg_tags[] =
     {
         { aHidd_Gfx_ModeTags    , (IPTR)NULL   },
+        { aHidd_Gfx_FrameBufferType, vHidd_FrameBuffer_Mirrored },
         { aHidd_Name            , (IPTR)"vc4gfx.hidd"     },
         { aHidd_HardwareName    , (IPTR)"VideoCore4 Display Adaptor"   },
         { aHidd_ProducerName    , (IPTR)"Broadcom Corporation"  },
