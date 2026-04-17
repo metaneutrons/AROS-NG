@@ -111,7 +111,8 @@ arch/
   - **Channel completion**: Added `(intr & 0x03) == 0x03` (TRANSFERCOMPLETE+ACK) as valid completion alongside `(intr & 0x21) == 0x21` (TRANSFERCOMPLETE+CHHLTD).
   - **Nested IRQ prevention**: `KrnSti()` now checks `SupervisorCount > 0` and skips IRQ unmask when inside exception handler. `irq_RescheduleCheck()` bumps `SupervisorCount` around `core_Cause(INTB_SOFTINT)` so SoftIntDispatch runs with IRQs masked.
 - **What works**: Root hub enumerates fully. QEMU virtual hub found (8 ports). Ports 1+2 show keyboard/mouse connected. Hub class binds and starts port enumeration.
-- **What's pending**: DWC2 channel transfers to downstream devices (through QEMU hub) don't complete — `hu_FinishedXfers` list not being drained. The hub class starts `nConfigurePort` for the QEMU hub's ports but the USB control transfers to the actual devices stall.
+- **Port reset fix (commit `b9d57c7cbd`)**: After `SET_PORT_FEATURE(PORT_RESET)` on the root hub, `hu_HubPortChanged` was not set to TRUE. The hub class waited forever for the port status change notification via its interrupt endpoint. One-line fix: set `hu_HubPortChanged = TRUE` after port reset completes. With this, full USB enumeration works through the QEMU virtual hub to keyboard + mouse.
+- **What works**: Full USB stack operational. Root hub → QEMU virtual hub (8 ports) → keyboard (dev 3) + mouse (dev 4). Boot HID classes (bootkeyboard.class, bootmouse.class) bind successfully. System boots fully with USB devices attached.
 - **Note**: QEMU raspi4b does NOT emulate xHCI (PCIe not implemented). It emulates the DWC2 OTG controller at 0xFE980000, which is what usb2otg drives. Real Pi 4 uses xHCI via PCIe for USB 3.0 ports — xHCI driver needed later for real hardware.
 - **Objective**: User input working.
 - **Work**:
