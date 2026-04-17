@@ -255,6 +255,7 @@ struct Unit * FNAME_DEV(OpenUnit)(struct IOUsbHWReq *ioreq,
                     req->tr_time.tv_secs = 0;
                     req->tr_time.tv_micro = 20000;
                     DoIO((struct IORequest *)req);
+                    USB2OTGBase->hd_Unit->hu_HubPortChanged = TRUE;
                 }
 
                 CloseDevice((struct IORequest *)req);
@@ -535,9 +536,6 @@ WORD FNAME_DEV(cmdControlXFer)(struct IOUsbHWReq *ioreq,
     D(bug("[USB2OTG] UHCMD_CONTROLXFER: DevAddr #%ld\n",
                 ioreq->iouh_DevAddr));
 
-    (bug("[USB2OTG] ControlTransfer to dev %02x: %02x %02x %04x %04x %04x\n", ioreq->iouh_DevAddr,
-            ioreq->iouh_SetupData.bmRequestType, ioreq->iouh_SetupData.bRequest, AROS_LE2WORD(ioreq->iouh_SetupData.wValue),
-            AROS_LE2WORD(ioreq->iouh_SetupData.wLength), AROS_LE2WORD(ioreq->iouh_SetupData.wIndex)));
 
     ioreq->iouh_Req.io_Flags &= ~IOF_QUICK;
     ioreq->iouh_Actual = 0;
@@ -545,7 +543,7 @@ WORD FNAME_DEV(cmdControlXFer)(struct IOUsbHWReq *ioreq,
     Disable();
     AddTail(&otg_Unit->hu_CtrlXFerQueue, (struct Node *) ioreq);
     Enable();
-    //FNAME_DEV(Cause)(USB2OTGBase, &otg_Unit->hu_PendingInt);
+    FNAME_DEV(Cause)(USB2OTGBase, &otg_Unit->hu_PendingInt);
 
     D(bug("[USB2OTG] UHCMD_CONTROLXFER: handled ioreq @ 0x%p\n", ioreq));
 
@@ -577,7 +575,7 @@ WORD FNAME_DEV(cmdBulkXFer)(struct IOUsbHWReq *ioreq,
     Disable();
     AddTail(&otg_Unit->hu_BulkXFerQueue, (struct Node *) ioreq);
     Enable();
-    //FNAME_DEV(Cause)(USB2OTGBase, &otg_Unit->hu_PendingInt);
+    FNAME_DEV(Cause)(USB2OTGBase, &otg_Unit->hu_PendingInt);
 
     D(bug("[USB2OTG] UHCMD_BULKXFER: handled ioreq @ 0x%p\n", ioreq));
 
@@ -619,7 +617,7 @@ if (ioreq->iouh_DevAddr == 4) {
     Disable();
     AddTail(&otg_Unit->hu_IntXFerQueue, (struct Node *) ioreq);
     Enable();
-    //FNAME_DEV(Cause)(USB2OTGBase, &otg_Unit->hu_PendingInt);
+    FNAME_DEV(Cause)(USB2OTGBase, &otg_Unit->hu_PendingInt);
 
     D(bug("[USB2OTG] UHCMD_INTXFER: handled ioreq @ 0x%p added=%d, next=%d\n", ioreq, last_handled, next_to_handle));
 
@@ -650,7 +648,7 @@ WORD FNAME_DEV(cmdIsoXFer)(struct IOUsbHWReq *ioreq,
     Disable();
     AddTail(&otg_Unit->hu_IsoXFerQueue, (struct Node *) ioreq);
     Enable();
-    //FNAME_DEV(Cause)(USB2OTGBase, &otg_Unit->hu_PendingInt);
+    FNAME_DEV(Cause)(USB2OTGBase, &otg_Unit->hu_PendingInt);
 
     D(bug("[USB2OTG] UHCMD_ISOXFER: handled ioreq @ 0x%p\n", ioreq));
     return(RC_DONTREPLY);

@@ -141,9 +141,19 @@ uint64_t switch_dispatch_only(void)
  */
 int irq_RescheduleCheck(void)
 {
-    /* Process pending soft interrupts */
+    /*
+     * Process pending soft interrupts with IRQs still masked.
+     * We bump SupervisorCount so that KrnSti() inside SoftIntDispatch
+     * becomes a no-op, preventing nested IRQs on SP_EL1.
+     */
     if (SysBase->SysFlags & SFF_SoftInt)
+    {
+        tls_t *__tls;
+        __asm__ volatile("mrs %0, tpidr_el1" : "=r"(__tls));
+        __tls->SupervisorCount++;
         core_Cause(INTB_SOFTINT, 1L << INTB_SOFTINT);
+        __tls->SupervisorCount--;
+    }
 
     /*
      * Only attempt preemptive switch if we interrupted a running task,

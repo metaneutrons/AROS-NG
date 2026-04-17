@@ -36,7 +36,8 @@ AROS_SLIB_ENTRY(StackSwap,Exec,122):
 
     /* FindTask(NULL) — get current task */
     mov     x0, #0
-    ldr     x16, [x1, FindTask]
+    mov     x16, FindTask
+    ldr     x16, [x1, x16]
     blr     x16
     mov     x2, x0                 /* x2 = current task */
 
@@ -47,7 +48,8 @@ AROS_SLIB_ENTRY(StackSwap,Exec,122):
     stp     x0, x1, [sp]
     stp     x2, x19, [sp, #16]
     mov     x0, x1
-    ldr     x16, [x1, Disable]
+    mov     x16, Disable
+    ldr     x16, [x1, x16]
     blr     x16
     ldp     x0, x1, [sp]
     ldp     x2, x19, [sp, #16]
@@ -75,7 +77,8 @@ AROS_SLIB_ENTRY(StackSwap,Exec,122):
     /* Enable() */
     stp     x0, x1, [sp, #-16]!
     mov     x0, x1
-    ldr     x16, [x1, Enable]
+    mov     x16, Enable
+    ldr     x16, [x1, x16]
     blr     x16
     ldp     x0, x1, [sp], #16
 

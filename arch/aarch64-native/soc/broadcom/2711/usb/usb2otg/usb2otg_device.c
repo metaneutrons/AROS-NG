@@ -215,12 +215,16 @@ static int FNAME_DEV(Init)(LIBBASETYPEPTR USB2OTGBase)
                                     D(bug("[USB2OTG] %s: Unit Mode %d\n",
                                                 __PRETTY_FUNCTION__, USB2OTGBase->hd_Unit->hu_OperatingMode));
 #endif
-                                    USB2OTGBase->hd_Unit->hu_GlobalIRQHandle = KrnAddIRQHandler(IRQ_VC_USB, FNAME_DEV(GlobalIRQHandler), USB2OTGBase->hd_Unit, SysBase);
+                                    /*
+                                     * BCM2711 DWC2 USB: GIC SPI 73 = GIC IRQ 105 (32 + 73).
+                                     * The legacy IRQ_VC_USB (9) is for BCM2708 only.
+                                     */
+                                    USB2OTGBase->hd_Unit->hu_GlobalIRQHandle = KrnAddIRQHandler(32 + 73, FNAME_DEV(GlobalIRQHandler), USB2OTGBase->hd_Unit, SysBase);
 
                                     USB2OTGBase->hd_Unit->hu_USB2OTGBase = USB2OTGBase;
 
-                                    D(bug("[USB2OTG] %s: Installed Global IRQ Handler [handle @ 0x%p] for IRQ #%ld\n",
-                                                __PRETTY_FUNCTION__, USB2OTGBase->hd_Unit->hu_GlobalIRQHandle, IRQ_HOSTPORT));
+                                    D(bug("[USB2OTG] %s: Installed Global IRQ Handler [handle @ 0x%p] for IRQ #%d\n",
+                                                __PRETTY_FUNCTION__, USB2OTGBase->hd_Unit->hu_GlobalIRQHandle, 32 + 73));
 
                                     otg_RegVal = rd32le(USB2OTG_USB);
                                     otg_RegVal &= ~(USB2OTG_USB_ULPIDRIVEEXTERNALVBUS|USB2OTG_USB_TSDLINEPULSEENABLE);

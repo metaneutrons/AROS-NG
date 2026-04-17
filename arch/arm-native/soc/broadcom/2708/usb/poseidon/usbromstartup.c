@@ -36,7 +36,7 @@ const struct Resident usbHook =
     RTF_COLDSTART,
     41,
     NT_TASK,
-    35,
+    28,
     name,
     &version[5],
     (APTR)usbromstartup_init
@@ -66,11 +66,9 @@ AROS_UFH3(static IPTR, usbromstartup_init,
         D(bug("[USBROMStartup] Adding classes...\n"));
 
         psdAddClass("hub.class", 0);
-        if(!(psdAddClass("hid.class", 0)))
-        {
-            psdAddClass("bootmouse.class", 0);
-            psdAddClass("bootkeyboard.class", 0);
-        }
+        /* Use boot classes instead of hid.class for now (hid.class crashes on AArch64) */
+        psdAddClass("bootkeyboard.class", 0);
+        psdAddClass("bootmouse.class", 0);
         msdclass = psdAddClass("massstorage.class", 0);
 
         D(bug("[USBROMStartup] Added chipset drivers...\n"));
@@ -80,7 +78,7 @@ AROS_UFH3(static IPTR, usbromstartup_init,
         {
             D(bug("[USBROMStartup] Added usb2otg.device unit %u\n", 0));
 
-            psdEnumerateHardware(phw);
+            { APTR rd = psdEnumerateHardware(phw); D(bug("[USBROMStartup] psdEnumerateHardware returned %p\n", rd)); }
         }
 
         D(bug("[USBROMStartup] Scanning classes...\n"));
@@ -90,7 +88,8 @@ AROS_UFH3(static IPTR, usbromstartup_init,
         if(msdclass)
         {
             D(bug("[USBROMStartup] waiting for hubs..\n"));
-            psdDelayMS(1000); // wait for hubs to settle
+            psdDelayMS(2000); /* wait for hubs to settle */
+            psdClassScan(); /* re-scan after hub enumeration */
             D(bug("[USBROMStartup] checking for massstorage devices..\n"));
             psdGetAttrs(PGA_USBCLASS, msdclass, UCA_UseCount, &usecount, TAG_END);
             D(bug("[USBROMStartup] %d masstorage devices found\n", usecount));

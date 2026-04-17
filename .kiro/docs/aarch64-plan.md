@@ -99,13 +99,20 @@ arch/
 - **Depends on**: Task 7
 
 ### Task 9: USB HID — keyboard and mouse via DWC2 (usb2otg)
-- **Status**: DONE (build) — all modules compile, runtime testing needs Task 10 (DOS/filesystem)
-- **Commit**: `c25455e026`
+- **Status**: IN PROGRESS — root hub + QEMU virtual hub enumerate, downstream device enumeration pending
+- **Commits**: `c25455e026` (build), pending commit with runtime fixes
 - **What was done**: Ported usb2otg DWC2 driver from ARM32 (fixed ARM32 asm nops, 64-bit cast). Created asm/cpu.h for AArch64 (dsb/dmb/isb). Created mbox.resource for BCM2711. Added `__aarch64__` guard to compiler/include/asm/cpu.h dispatcher.
 - **What builds**: usb2otg.device, mbox.resource, poseidon.library, hub/hid/bootkeyboard/bootmouse classes, usbromstartup.resource
-- **What's needed for runtime**: KrnGetSystemAttr(KATTR_PeripheralBase) returning 0xFE000000, DWC2 IRQ (GIC SPI 73 = IRQ 105) wired, modules loaded from BSP ROM or filesystem
+- **Runtime fixes (2026-04-17)**:
+  - **IRQ number**: Changed from legacy BCM2708 `IRQ_VC_USB` (9) to GIC SPI 73 = IRQ 105 (`32 + 73`). IRQ handler now fires.
+  - **Cause() re-enabled**: The `FNAME_DEV(Cause)` calls in cmdControlXFer/cmdBulkXFer/cmdIntXFer/cmdIsoXFer were commented out — re-enabled so `hu_PendingInt` soft interrupt fires to process queued transfers.
+  - **hu_HubPortChanged**: Set TRUE after core init port reset so hub class sees initial device connection.
+  - **usbromstartup.c**: `psdClassScan()` after 2-second delay was commented out by `\\n` in a `//` comment causing line continuation. Changed to `/* */` comments. Also switched to boot classes (bootkeyboard/bootmouse) instead of hid.class.
+  - **Channel completion**: Added `(intr & 0x03) == 0x03` (TRANSFERCOMPLETE+ACK) as valid completion alongside `(intr & 0x21) == 0x21` (TRANSFERCOMPLETE+CHHLTD).
+  - **Nested IRQ prevention**: `KrnSti()` now checks `SupervisorCount > 0` and skips IRQ unmask when inside exception handler. `irq_RescheduleCheck()` bumps `SupervisorCount` around `core_Cause(INTB_SOFTINT)` so SoftIntDispatch runs with IRQs masked.
+- **What works**: Root hub enumerates fully. QEMU virtual hub found (8 ports). Ports 1+2 show keyboard/mouse connected. Hub class binds and starts port enumeration.
+- **What's pending**: DWC2 channel transfers to downstream devices (through QEMU hub) don't complete — `hu_FinishedXfers` list not being drained. The hub class starts `nConfigurePort` for the QEMU hub's ports but the USB control transfers to the actual devices stall.
 - **Note**: QEMU raspi4b does NOT emulate xHCI (PCIe not implemented). It emulates the DWC2 OTG controller at 0xFE980000, which is what usb2otg drives. Real Pi 4 uses xHCI via PCIe for USB 3.0 ports — xHCI driver needed later for real hardware.
-- **TODO**: Build mbox.resource as a proper resident (currently standalone). Consider packaging USB modules into BSP ROM for testing before DOS is available.
 - **Objective**: User input working.
 - **Work**:
   - xHCI HCD for Poseidon USB stack (from Circle `lib/usb/xhci*.cpp`, GPLv3). Pi 4 xHCI at `0xFE9C0000`.
@@ -344,3 +351,6 @@ Also note: `THIS_FREE = 1` and `THIS_BUSY = 0` in AROS TLSF — the opposite of 
 | Missing SC_DISPATCH handler | `RemTask(NULL)` returns to caller | SVC handler only handled SC_SWITCH/SC_SCHEDULE but not SC_DISPATCH (1); `KrnDispatch()` SVC fell through to no-op `HandleSyscall` |
 | TDNestCnt not synced on dispatch | Task switching appears permanently disabled (TDNest=0) | `switch_dispatch` must call `TDNESTCOUNT_SET(task->tc_TDNestCnt)` when dispatching; without it, TLS keeps the bootstrap task's initial value (0 from MEMF_CLEAR) |
 | IRQ preempt during idle loop | Tasks stuck on ready list, never dispatched | IRQ fires during `wfi` in idle loop; preemptive switch saves idle loop context as task context, corrupting the previous task's SP. Guard: check `ThisTask->tc_State == TS_RUN` before preempting |
+| Nested IRQ via SoftIntDispatch | EXCEPTION 0x1 (illegal state), corrupted SPSR | `SoftIntDispatch` calls `KrnSti()` which unmasks IRQs. On AArch64 there's no separate IRQ-mode stack (unlike ARM32), so nested IRQs overflow SP_EL1. Fix: `KrnSti()` checks `SupervisorCount` and skips unmask when > 0; `irq_RescheduleCheck` bumps `SupervisorCount` around `core_Cause(INTB_SOFTINT)` |
+| Stale .o files after LVO change | Boot hang or wrong function called | mmake only rebuilds when source changes. If asm.h LVO values change but .S files don't, stale .o with old offsets persists. Fix: `rm -f` the .o and rebuild |
+| `//` comment with `\n` | Code after comment silently disabled | `// text\n  code();` — the `\` before newline is line continuation in C preprocessing (phase 2), so `code()` becomes part of the comment. Use `/* */` for multi-concept comments |

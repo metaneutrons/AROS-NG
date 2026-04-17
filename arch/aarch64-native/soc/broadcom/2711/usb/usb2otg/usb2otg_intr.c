@@ -313,7 +313,7 @@ FNAME_DEV(StartChannel)(USBUnit, chan, 1);
                         //if (intr != 0x12 || (chan < CHAN_INT1 && chan > CHAN_INT3))
                         //    D(bug("[USB2OTG] Channel %d closed. INTR=%08x\n", chan, intr));
 
-                        if ((intr & 0x21) == 0x21)
+                        if (((intr & 0x21) == 0x21) || ((intr & 0x03) == 0x03))
                         {
                             req->iouh_Req.io_Error = 0;
 
