@@ -37,7 +37,7 @@
   "hooks": {
     "agentSpawn": [
       {
-        "command": "echo '=== AROS AArch64 Port ===' && echo 'AROS source: ~/Source/AROS' && echo 'Circle ref:  ~/Source/circle' && echo 'Target: RPi4 (BCM2711) → RPi5 (BCM2712)' && ls -d arch/aarch64-* 2>/dev/null || echo 'No aarch64 arch dirs yet'",
+        "command": "echo '=== AROS AArch64 Port ===' && echo 'AROS source: ~/Source/AROS' && echo 'Target: RPi4 (BCM2711) → RPi5 (BCM2712)' && ls -d arch/aarch64-* 2>/dev/null || echo 'No aarch64 arch dirs yet'",
         "description": "Show project status on agent start"
       }
     ]

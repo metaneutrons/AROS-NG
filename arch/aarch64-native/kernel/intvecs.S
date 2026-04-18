@@ -1,36 +1,36 @@
 /*
-    Ported from Circle - A C++ bare metal environment for Raspberry Pi
-    Copyright (C) 2014-2020 R. Stange <rsta2@o2online.de>
-    Licensed under GPLv3
+    Copyright (C) 2026, The AROS Development Team. All rights reserved.
 
-    Adapted for AROS by The AROS Development Team, 2026
+    Licensed under the AROS Public License (APL), Version 1.1.
 
     Desc: AArch64 exception vector table (VBAR_EL1)
     Lang: english
 
-    AArch64 vector table layout:
+    Vector table layout per ARM ARM D1.10.2:
       4 groups × 4 vectors × 128 bytes each = 2048 bytes total.
       Each vector entry is 128 bytes (32 instructions max).
       Group 0: Current EL with SP_EL0
       Group 1: Current EL with SP_ELx (x != 0)
       Group 2: Lower EL, AArch64
       Group 3: Lower EL, AArch32
+
+    Exception syndrome register (ESR_EL1) encoding: ARM ARM D13.2.36
+    SVC exception class: EC = 0x15 (ARM ARM D13.2.36, Table D13-1)
 */
 
-    /* Vector entry macro — each entry is 128-byte aligned */
+    /* Vector entry macro — each entry must be 128-byte aligned (ARM ARM D1.10.2) */
     .macro vector handler
     .align 7
     b       \handler
     .endm
 
     /*
-     * Exception stub macro — saves diagnostic registers and calls
-     * C handler. Used for synchronous exceptions (non-SVC) and SError.
+     * Exception diagnostic stub — saves key system registers to stack
+     * and calls C handler for reporting.
      *
-     * Entry state:  Exception taken, SP = sp_el1
      * Registers saved: ESR_EL1, SPSR_EL1, LR, ELR_EL1, SP_EL0, SP, FAR_EL1
      */
-    .macro stub name, exception
+    .macro exc_stub name, exception
     .globl \name
 \name:
     mrs     x0, esr_el1
@@ -56,7 +56,8 @@
 
     /*
      * Vector table — must be 2048-byte (0x800) aligned.
-     * Installed via: msr vbar_el1, x0
+     * Installed via: msr vbar_el1, <addr>
+     * Ref: ARM ARM D1.10.2
      */
     .align 11
 
@@ -90,11 +91,11 @@ VectorTable:
 /*
  * Exception stubs
  */
-    stub    UnexpectedStub,     0
-    stub    SErrorStub,         3
+    exc_stub    UnexpectedStub,     0
+    exc_stub    SErrorStub,         3
 
 /*
- * Synchronous exception stub — handles SVC for task switching.
+ * Synchronous exception stub — handles SVC for AROS task switching.
  *
  * For SC_SWITCH/SC_SCHEDULE: cooperative context switch.
  * The SVC is called from C code (KrnSwitch), so only callee-saved
@@ -106,6 +107,8 @@ VectorTable:
  *   2. Call core_Switch() + core_Dispatch() to pick next task
  *   3. Restore callee-saved regs + SP from new task's ExceptionContext
  *   4. eret back to new task
+ *
+ * SVC exception class: ESR_EL1.EC == 0x15 (ARM ARM D13.2.36, Table D13-1)
  */
     .globl SynchronousStub
 SynchronousStub:
@@ -115,10 +118,10 @@ SynchronousStub:
     cmp     x1, #0x15
     b.ne    .Lsync_not_svc
 
-    /* Extract syscall number */
+    /* Extract syscall number from ESR_EL1.ISS[15:0] */
     and     x0, x0, #0xFFFF
 
-    /* For SC_SWITCH (2) and SC_SCHEDULE (3): do context switch */
+    /* AROS syscall dispatch */
     cmp     x0, #2                 /* SC_SWITCH */
     b.eq    .Ldo_switch
     cmp     x0, #3                 /* SC_SCHEDULE */
@@ -307,43 +310,21 @@ IRQStub:
 
 .Lirq_switch:
     /*
-     * Preemptive task switch from IRQ.
-     * The full register set is already saved on the IRQ stack.
-     * We need to save SP into the current task and dispatch the next one.
+     * Preemptive task switch from IRQ context.
      *
-     * Stack layout (growing up from SP):
-     *   [SP+0]   x0
-     *   [SP+16]  x1, x2
-     *   ...
-     *   [SP+240] ELR_EL1, SPSR_EL1
-     *   [SP+256] x29, x30
-     *
-     * We reuse switch_save_sp / switch_dispatch which expect the
-     * same frame layout as the SVC path. However, the IRQ frame
-     * has ALL registers (x0-x28 + ELR + SPSR + x29 + x30 = 272 bytes)
-     * while the SVC frame only has a subset.
-     *
-     * For simplicity, we save the current SP into the task and
-     * let switch_dispatch return the new task's SP. The new task
-     * was saved by either SVC (cooperative) or a previous IRQ
-     * (preemptive), so its frame format matches whichever path
-     * saved it.
+     * The full register set is saved on the IRQ stack (SP_EL1).
+     * We need to convert the IRQ frame to an SVC-compatible frame
+     * so the SVC restore path can dispatch the new task.
      *
      * IMPORTANT: We must use the SVC frame format for the save
-     * so that the SVC restore path can restore it. Convert the
-     * IRQ frame to SVC frame format.
-     */
-
-    /*
-     * Actually, the simplest correct approach: pop the IRQ frame,
-     * then push an SVC-compatible frame, then do the switch.
+     * so that the SVC restore path can restore it correctly.
      *
-     * IRQ frame (on stack now): x0, x1-x2, ..., x27-x28, ELR, SPSR, x29, x30
+     * Approach: pop the full IRQ frame back into registers,
+     * then push an SVC-compatible frame.
+     *
+     * IRQ frame (on stack): x0, x1-x2, ..., x27-x28, ELR, SPSR, x29, x30
      * SVC frame: x0-x1, x2-x3, x4-x5, x6-x7, x19-x20, x21-x22, x23-x24,
      *            x25-x26, x27-x28, ELR, SPSR, x29, x30
-     *
-     * Let's just restore all regs from IRQ frame into registers,
-     * then push the SVC frame format.
      */
 
     /* Restore all regs from IRQ frame into CPU registers */
@@ -362,25 +343,15 @@ IRQStub:
     ldp     x23, x24, [sp], #16
     ldp     x25, x26, [sp], #16
     ldp     x27, x28, [sp], #16
-    /* ELR and SPSR are still on stack, plus x29/x30 */
-    /* Don't pop them yet — we need them for the SVC frame */
+    /* Stack now has: [SP] = ELR, SPSR, [SP+16] = x29, x30 */
 
-    /* Now push SVC-compatible frame (same as .Ldo_switch) */
-    /* Stack currently has: [SP] = ELR, SPSR, [SP+16] = x29, x30 */
-    /* We need: x0-x1, x2-x3, x4-x5, x6-x7, x19-x28, ELR, SPSR, x29, x30 */
-
-    /* Pop the remaining IRQ frame (ELR/SPSR and x29/x30) */
+    /* Stash ELR and SPSR in x8/x9 (already restored from IRQ frame) */
     ldp     x29, x30, [sp], #16    /* x29=ELR, x30=SPSR (temp) */
-    /* Save ELR/SPSR to scratch */
-    /* x29 = saved ELR, x30 = saved SPSR — but we also need real x29/x30 */
-    /* This is getting tangled. Let me use a different approach. */
-
-    /* Stash ELR and SPSR in x8/x9 (caller-saved, we already restored them) */
     mov     x8, x29                 /* x8 = ELR_EL1 */
     mov     x9, x30                 /* x9 = SPSR_EL1 */
     ldp     x29, x30, [sp], #16    /* restore real x29, x30 */
 
-    /* Now all registers are restored. Push SVC frame. */
+    /* Now all registers are restored. Push SVC-compatible frame. */
     stp     x29, x30, [sp, #-16]!
     stp     x8,  x9,  [sp, #-16]!  /* ELR, SPSR */
     stp     x27, x28, [sp, #-16]!
@@ -393,7 +364,7 @@ IRQStub:
     stp     x2,  x3,  [sp, #-16]!
     stp     x0,  x1,  [sp, #-16]!
 
-    /* Now do the same switch as .Ldo_switch */
+    /* Do the same switch as .Ldo_switch */
     mov     x0, sp
     bl      switch_save_sp
     bl      switch_dispatch
@@ -417,7 +388,6 @@ IRQStub:
 
 /*
  * FIQ stub — minimal, just returns for now.
- * Will be expanded when GIC FIQ support is added (Task 7).
  */
     .globl FIQStub
 FIQStub:

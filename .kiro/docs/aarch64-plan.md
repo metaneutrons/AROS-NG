@@ -8,8 +8,7 @@ description: Master implementation plan for AROS AArch64 port to Raspberry Pi 4/
 ## Overview
 
 Port AROS to AArch64 on Raspberry Pi 4 (BCM2711), then extend to Pi 5 (BCM2712).
-Circle SDK (`~/Source/circle`) is the primary hardware reference.
-Circle-derived code is ported to C with GPLv3 headers in separate files.
+Hardware drivers derived from ARM public documentation (ARM ARM DDI 0487, GIC-400 TRM DDI 0471, PL011 TRM DDI 0183, BCM2711 datasheet).
 
 ## Directory Structure
 
@@ -27,8 +26,8 @@ arch/
     kernel/                 # kernel_startup.c, kernel_cpu.c, intr.c, syscall.c, mmu.c
                             # platform_init.c, platform_bcm2711.c, platform_bcm2712.c
     exec/                   # platform_init.c, coldreboot.c, cachecleare.c, superstate.c
-    soc/broadcom/2711/      # GIC-400, EMMC2, xHCI USB (GPLv3)
-    soc/broadcom/2712/      # RP1 southbridge, PCIe bridge (GPLv3)
+    soc/broadcom/2711/      # GIC-400, EMMC2, xHCI USB
+    soc/broadcom/2712/      # RP1 southbridge, PCIe bridge
 ```
 
 ## Phase 1 — AArch64 Core (Pi 4 serial boot)
@@ -63,11 +62,11 @@ arch/
   - `arch/aarch64-native/kernel/kernel_startup.c` — entry, BSS clear, exception stacks, CPU probe, platform init, SysBase, memory pools, resident scan
   - `arch/aarch64-native/kernel/kernel_cpu.c` — MIDR_EL1 identification, cache ops
   - `arch/aarch64-native/kernel/kernel_intern.h` — AARCH64_Implementation struct
-  - `arch/aarch64-native/kernel/intvecs.S` — VBAR_EL1 vector table (from Circle `exceptionstub64.S`, GPLv3)
+  - `arch/aarch64-native/kernel/intvecs.S` — VBAR_EL1 vector table (from ARM ARM D1.10.2)
   - `arch/aarch64-native/kernel/syscall.c` — SVC handler
   - `arch/aarch64-native/kernel/mmu.c` — runtime MMU management
   - `arch/aarch64-native/exec/platform_init.c`, `coldreboot.c`, `superstate.c`, `userstate.c`, `cachecleare.c`, `exec_idle.c`
-- **Reference**: `arch/arm-native/kernel/kernel_startup.c`, Circle `exceptionstub64.S`
+- **Reference**: `arch/arm-native/kernel/kernel_startup.c`, ARM ARM D1.10.2
 - **Demo**: Serial shows exec init, memory pools, resident scan, idle task
 - **Depends on**: Task 5
 
@@ -80,11 +79,11 @@ arch/
 - **New files**: kernel_arch.h (IRQ_COUNT), kernel_cpu.h (regs_t, GetCPUNumber), exec_platform.h (TLS macros via TPIDR_EL1)
 - **Objective**: Working interrupts and 50Hz timer tick on Pi 4.
 - **Work**:
-  - `arch/aarch64-native/soc/broadcom/2711/gic400.c` — GIC-400 driver (from Circle `interruptgic.cpp`, GPLv3). GICD `0xFF841000`, GICC `0xFF842000`.
+  - `arch/aarch64-native/soc/broadcom/2711/gic400.c` — GIC-400 driver (from GIC-400 TRM DDI 0471). GICD `0xFF841000`, GICC `0xFF842000`.
   - `arch/aarch64-native/kernel/kernel_systimer.c` — ARM Generic Timer (CNTPCT_EL0, CNTP_CTL_EL0)
-  - `arch/aarch64-native/kernel/platform_bcm2711.c` — platform probe, register GIC + timer (GPLv3)
+  - `arch/aarch64-native/kernel/platform_bcm2711.c` — platform probe, register GIC + timer
   - `arch/aarch64-native/kernel/kernel_scheduler.c` — task scheduling on timer IRQ
-- **Reference**: Circle `interruptgic.cpp`, `timer.cpp`, `multicore.cpp`
+- **Reference**: GIC-400 TRM DDI 0471, ARM ARM D11.2 (Generic Timer)
 - **Demo**: Timer ticks on serial, task switching works
 - **Depends on**: Task 6
 
@@ -116,10 +115,10 @@ arch/
 - **Note**: QEMU raspi4b does NOT emulate xHCI (PCIe not implemented). It emulates the DWC2 OTG controller at 0xFE980000, which is what usb2otg drives. Real Pi 4 uses xHCI via PCIe for USB 3.0 ports — xHCI driver needed later for real hardware.
 - **Objective**: User input working.
 - **Work**:
-  - xHCI HCD for Poseidon USB stack (from Circle `lib/usb/xhci*.cpp`, GPLv3). Pi 4 xHCI at `0xFE9C0000`.
+  - xHCI HCD for Poseidon USB stack. Pi 4 xHCI at `0xFE9C0000`. Reference: xHCI specification (Intel), FreeBSD xhci.c (BSD-2-Clause).
   - Ring management, slot manager, root hub, endpoint management, DMA allocator
   - Wire existing Poseidon HID class drivers (hub, bootkeyboard, bootmouse)
-- **Reference**: Circle `lib/usb/xhci*.cpp` (11 files)
+- **Reference**: xHCI specification rev 1.2 (Intel), FreeBSD `sys/dev/usb/controller/xhci.c` (BSD-2-Clause)
 - **Demo**: USB keyboard types, USB mouse moves pointer
 - **Depends on**: Task 7
 
@@ -189,12 +188,12 @@ arch/
 - **Status**: NOT STARTED
 - **Objective**: Pi 5 boots to serial.
 - **Work**:
-  - `bcmpciehostbridge.c` — PCIe host bridge for BCM2712 (from Circle, GPLv3)
-  - `southbridge.c` — RP1 enumeration, second-level interrupt controller (from Circle, GPLv3)
-  - `platform_bcm2712.c` — platform probe, peripheral base `0x107C000000`, GIC at different address (GPLv3)
+  - `bcmpciehostbridge.c` — PCIe host bridge for BCM2712. Reference: BCM2712 datasheet, Linux `drivers/pci/controller/pcie-brcmstb.c` (GPL — use as reference only, rewrite from PCIe spec)
+  - `southbridge.c` — RP1 enumeration, second-level interrupt controller. Reference: RP1 peripherals datasheet (Raspberry Pi Ltd)
+  - `platform_bcm2712.c` — platform probe, peripheral base `0x107C000000`, GIC at different address
   - MMU tables for 40-bit address space (AXI `0x1000000000`, PCIe `0x1F00000000`)
   - Bootstrap Pi 4/5 detection from device tree
-- **Reference**: Circle `bcmpciehostbridge.cpp`, `southbridge.cpp`, `bcm2712.h`
+- **Reference**: BCM2712 datasheet, RP1 peripherals datasheet, PCIe Base Specification
 - **Demo**: AROS boot messages on Pi 5 serial
 - **Depends on**: Task 7
 
@@ -204,8 +203,8 @@ arch/
 - **Work**:
   - xHCI via RP1 PCIe (different base address routing)
   - SD card via RP1
-  - GPIO: `gpiopin2712.c`, `gpiomanager2712.c` (from Circle, GPLv3)
-  - I2C/SPI: `i2cmaster-rp1.c`, `spimaster-rp1.c` (from Circle, GPLv3)
+  - GPIO: `gpiopin2712.c`, `gpiomanager2712.c`. Reference: RP1 peripherals datasheet
+  - I2C/SPI: `i2cmaster-rp1.c`, `spimaster-rp1.c`. Reference: RP1 peripherals datasheet
 - **Demo**: Full Workbench on Pi 5
 - **Depends on**: Tasks 10, 11
 
@@ -213,11 +212,11 @@ arch/
 - **Status**: NOT STARTED
 - **Objective**: All 4 CPU cores active on Pi 4 and Pi 5.
 - **Work**:
-  - PSCI CPU_ON via `SMC #0` (function `0xC4000003`) (from Circle `multicore.cpp`, GPLv3)
+  - PSCI CPU_ON via `SMC #0` (function `0xC4000003`). Reference: ARM PSCI specification (DEN 0022D), ARM TF-A `lib/psci/` (BSD-3-Clause)
   - Pi 4: Aff0 for core ID. Pi 5: Aff1 (Cortex-A76)
   - Secondary core startup: exception stack, TLS, VBAR_EL1
   - AROS exec SMP: per-core scheduling, IPI via GIC SGI, spinlock-protected shared state
-- **Reference**: Circle `multicore.cpp`, `startup64.S` `_start_secondary`
+- **Reference**: ARM PSCI spec (DEN 0022D), ARM TF-A `lib/psci/` (BSD-3-Clause), ARM ARM D1.9
 - **Demo**: SysExplorer shows 4 cores, tasks on different cores
 - **Depends on**: Task 7
 

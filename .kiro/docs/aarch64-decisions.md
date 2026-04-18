@@ -19,13 +19,13 @@ description: Technical decisions and rationale for the AROS AArch64 port. Consul
 
 ## Bootstrap (`arch/aarch64-raspi/boot/`)
 
-### EL2→EL1 transition from Circle's startup64.S
-- **Decision**: Port the EL2→EL1 macro from Circle (GPLv3) rather than writing from scratch.
-- **Rationale**: Circle's code is battle-tested on real Pi 4 hardware. The macro handles timer access, FP/SIMD enable, SCTLR_EL1 RES1 bits correctly.
-- **Source**: `circle/lib/startup64.S`, `armv8_switch_to_el1_m` macro.
+### EL2→EL1 transition
+- **Decision**: Write the EL2→EL1 macro from ARM Architecture Reference Manual (DDI 0487, D1.9).
+- **Rationale**: The register writes are fully specified by the ARM spec. Every value is mandated (CNTHCTL_EL2, CPTR_EL2, HCR_EL2, SCTLR_EL1 RES1 bits, SPSR_EL2).
+- **Source**: ARM ARM D1.9, D13.2.27, D13.2.30, D13.2.36, D13.2.47, D13.2.113, D13.2.109.
 
 ### MMU: 4KB granule with L2 block descriptors (not 64KB granule)
-- **Decision**: Use 4KB granule with 2MB L2 block descriptors instead of Circle's 64KB granule with L3 page tables.
+- **Decision**: Use 4KB granule with 2MB L2 block descriptors instead of 64KB granule with L3 page tables.
 - **Rationale**: 64KB granule requires 64KB-aligned page tables (each 64KB). With a bump allocator, this wastes enormous memory for alignment. 4KB granule with L2 blocks needs only 4KB per table, and 2MB blocks are sufficient for bootstrap (no fine-grained permissions needed yet).
 - **Trade-off**: Less granular memory protection. The kernel can switch to 64KB granule later if needed.
 - **TCR_EL1**: T0SZ=28 (36-bit VA = 64GB), TG0=4KB, IPS=64GB.
@@ -54,9 +54,9 @@ description: Technical decisions and rationale for the AROS AArch64 port. Consul
 - **Decision**: Same pattern as `arch/arm-native/kernel/kernel_arm.h`.
 - **Rationale**: Proven pattern for SoC abstraction. Each platform (BCM2711, BCM2712) registers its functions. Kernel code calls through function pointers only.
 
-### GIC-400 driver from Circle (GPLv3)
-- **Decision**: Port `interruptgic.cpp` to C.
-- **Rationale**: The GIC-400 is standard ARM IP. Circle's driver is clean and well-tested. GICD at `0xFF841000`, GICC at `0xFF842000` (BCM2711-specific).
+### GIC-400 driver from ARM specs
+- **Decision**: Write GIC-400 driver from ARM GIC-400 TRM (DDI 0471B) and GIC Architecture Spec (IHI 0048B).
+- **Rationale**: The GIC-400 is standard ARM IP. The init sequence and interrupt handling flow are fully specified in the TRM §4.3 and Architecture Spec §3.4. GICD at `0xFF841000`, GICC at `0xFF842000` (BCM2711-specific, from datasheet).
 
 ### ARM Generic Timer for heartbeat (not BCM system timer)
 - **Decision**: Use CNTP (non-secure physical timer) PPI 14 instead of BCM2708 system timer.

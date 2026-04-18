@@ -1,11 +1,10 @@
 # AROS AArch64 Porting Agent — Engineering Standards
 
-You are working on porting AROS (Amiga Research Operating System) to AArch64 (ARM 64-bit) for Raspberry Pi 4 (BCM2711) and later Pi 5 (BCM2712). Circle SDK (`~/Source/circle`) serves as the primary hardware reference. Circle-derived code is ported to C with GPLv3 headers in separate files.
+You are working on porting AROS (Amiga Research Operating System) to AArch64 (ARM 64-bit) for Raspberry Pi 4 (BCM2711) and later Pi 5 (BCM2712). Hardware drivers are written from ARM public documentation (ARM Architecture Reference Manual DDI 0487, GIC-400 TRM DDI 0471, PL011 TRM DDI 0183, BCM2711 ARM Peripherals datasheet).
 
 ## Project Context
 
 - AROS source: `~/Source/AROS`
-- Circle SDK reference: `~/Source/circle`
 - Target: Raspberry Pi 4 first (BCM2711, Cortex-A72), then Pi 5 (BCM2712, Cortex-A76)
 - First milestone: Serial boot (kernel prints to UART)
 - Final milestone: Full Workbench with keyboard/mouse/display
@@ -45,20 +44,27 @@ You are working on porting AROS (Amiga Research Operating System) to AArch64 (AR
 - Include guards: `#ifndef FILENAME_H` / `#define FILENAME_H`.
 - Copyright header on every file with correct year and "The AROS Development Team".
 
-### 2.2 Circle-Ported Code (GPLv3-licensed files)
-- GPLv3 header MUST reference Circle as origin:
+### 2.2 Hardware Driver Code (APL-licensed, derived from ARM specs)
+- All hardware drivers are written from public ARM documentation:
+  - ARM Architecture Reference Manual (DDI 0487) for system registers, MMU, exception model, generic timer
+  - ARM GIC-400 TRM (DDI 0471) for interrupt controller registers and init sequence
+  - ARM PL011 TRM (DDI 0183) for UART registers and init sequence
+  - BCM2711 ARM Peripherals datasheet for SoC-specific addresses
+- Copyright header on every file:
   ```c
   /*
-      Ported from Circle - A C++ bare metal environment for Raspberry Pi
-      Copyright (C) <year> R. Stange <rsta2@o2online.de>
-      Licensed under GPLv3
+      Copyright (C) <year>, The AROS Development Team. All rights reserved.
 
-      Adapted for AROS by <contributor>, <year>
+      Licensed under the AROS Public License (APL), Version 1.1.
+
+      Desc: <description>
+
+      Hardware register definitions and initialization sequences derived from:
+      - <relevant ARM spec with document number>
   */
   ```
-- Translate C++ to C: classes become structs + function prefixes (e.g., `CInterruptSystem::Initialize()` → `gic400_Initialize(struct GIC400State *)`).
-- Preserve Circle's logic structure and comments during port. Add AROS-specific comments where behavior differs.
-- NEVER mix APL and GPLv3 code in the same file.
+- Cite specific ARM spec sections in comments where register values are programmed.
+- NEVER copy code from GPL-licensed projects (Linux, Circle, etc.).
 
 ### 2.3 No Magic Numbers
 - Every hardware register offset, bit mask, and constant MUST be a named `#define`.
@@ -163,7 +169,7 @@ When making architectural decisions, document them as comments in the relevant h
 ```c
 /*
  * DECISION: We use 64KB MMU granule (not 4KB) because:
- * - Circle uses 64KB granule and it's tested on Pi 4/5
+ * - 64KB granule is well-tested on Pi 4/5
  * - Reduces TLB pressure for our workload
  * - Simpler page table structure (2 levels vs 4)
  * Date: YYYY-MM-DD
@@ -173,7 +179,8 @@ When making architectural decisions, document them as comments in the relevant h
 ## 7. Reference Lookup Protocol
 
 Before implementing any hardware interaction:
-1. Check Circle source (`~/Source/circle/lib/` and `~/Source/circle/include/circle/`) for the reference implementation
+1. Check the relevant ARM specification (ARM ARM, GIC TRM, PL011 TRM) for register definitions and init sequences
 2. Check existing AROS ARM code (`arch/arm-native/`, `arch/arm-raspi/`) for the AROS integration pattern
-3. Check the BCM2711/BCM2712 datasheet values against Circle's defines
-4. Only then write the AROS implementation, following both references
+3. Check the BCM2711/BCM2712 datasheet for SoC-specific addresses and peripheral mappings
+4. Optionally reference BSD-licensed implementations (ARM TF-A, FreeBSD, NetBSD) for style guidance
+5. Only then write the AROS implementation, following ARM specs and AROS conventions
