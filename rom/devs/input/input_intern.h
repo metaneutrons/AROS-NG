@@ -31,7 +31,11 @@
 #endif
 
 /* Size of the input device's stack */
-#define IDTASK_STACKSIZE    	    (AROS_STACKSIZE + 10240)
+#if defined(__aarch64__)
+#define IDTASK_STACKSIZE            (AROS_STACKSIZE * 4)
+#else
+#define IDTASK_STACKSIZE            (AROS_STACKSIZE + 10240)
+#endif
 
 /* Priority of the input.device task */
 #define IDTASK_PRIORITY     	    20
