@@ -98,7 +98,7 @@ arch/
 - **Depends on**: Task 7
 
 ### Task 9: USB HID — keyboard and mouse via DWC2 (usb2otg)
-- **Status**: IN PROGRESS — root hub + QEMU virtual hub enumerate, downstream device enumeration pending
+- **Status**: DONE — Full USB stack operational. Root hub → QEMU virtual hub → keyboard + mouse. Boot HID classes bind. System boots with USB input.
 - **Commits**: `c25455e026` (build), pending commit with runtime fixes
 - **What was done**: Ported usb2otg DWC2 driver from ARM32 (fixed ARM32 asm nops, 64-bit cast). Created asm/cpu.h for AArch64 (dsb/dmb/isb). Created mbox.resource for BCM2711. Added `__aarch64__` guard to compiler/include/asm/cpu.h dispatcher.
 - **What builds**: usb2otg.device, mbox.resource, poseidon.library, hub/hid/bootkeyboard/bootmouse classes, usbromstartup.resource
@@ -148,13 +148,30 @@ arch/
   - **TDNestCnt/IDNestCnt sync**: `switch_dispatch` now restores `TDNESTCOUNT_SET(task->tc_TDNestCnt)` and `IDNESTCOUNT_SET(task->tc_IDNestCnt)` when dispatching a new task. Without this, TLS TDNestCnt stayed at 0 (from MEMF_CLEAR'd bootstrap task) and task switching appeared permanently disabled.
   - **TDNestCnt save on preempt**: `switch_save_sp` now saves `task->tc_TDNestCnt = TDNESTCOUNT_GET` before `core_Switch()`, so preempted tasks preserve their nesting state.
   - **SC_DISPATCH handler**: Added `.Ldo_dispatch` to SVC handler for `SC_DISPATCH` (syscall 1). Dispatches next task WITHOUT saving current context — used by `RemTask(NULL)` → `KrnDispatch()`. Without this, `RemTask` returned to caller, causing `dos_init` to return from `InitResident` and fail the boot.
-- **SD test image**: `/tmp/aros_sd_rdb.img` — 128MB RDB, DH0 partition (DOS\3/FFS-I), populated with S/Startup-Sequence, C/, L/, Libs/, Devs/, Classes/ via rdbtool+xdftool
+- **SD test image**: 128MB RDB+FFS SD image with full AROS distro (fonts, Wanderer, Workbook, 155 C/ commands, Zune/MUI classes, Prefs, Tools, Utilities)
 - **Previous issues (all fixed)**:
   - TLSF heap corruption during AFS bitmap ops (workaround: 16-byte red zone)
   - Preemptive scheduling not working (IRQStub didn't call scheduler)
   - TDNestCnt stuck at 0 (not synced on task dispatch)
   - SC_DISPATCH not handled (RemTask returned to caller)
   - `Lock("SYS:")` hang (task on ready list but never scheduled)
+- **Wanderer desktop milestone (2026-04-17/18)**: System boots straight to Wanderer desktop with USB keyboard/mouse. 10 commits:
+  - `ba636265be` — USB runtime fixes: nested IRQ prevention, hub enumeration, IRQ routing (GIC SPI 73), channel completion, usbromstartup psdClassScan fix, Cause() re-enabled
+  - `b9d57c7cbd` — Root hub port reset: set `hu_HubPortChanged=TRUE` after SET_PORT_FEATURE(PORT_RESET)
+  - `84d3edfd4a` — Skip boot animation screen on aarch64 (single framebuffer can't switch screens)
+  - `a735b19c86` — Workbook event loop fix: `AppMask`/`WinMask` initialized with `=` instead of `|=`, `GetMsg`/`GT_GetIMsg` NULL checks
+  - `8181480ef7` — `EXEC_REMTASK_NEEDSSWITCH` for aarch64: task self-removal via SVC #2 (SC_SWITCH)
+  - `ebc0170460` — EndCLI fix: `boot.c` checked `SystemTags() == -1` as failure, but CliInitRun replies with `DOSTRUE` (-1) on success. Changed to `== DOSFALSE`
+  - `0f6d5af271` — vc4gfx: Enable mirrored framebuffer mode (allows screen switching)
+  - `c01efaaeea` — Shell: Preserve `cli_Background` set by EndCLI across script end (shell reset it when switching from script to interactive mode)
+  - `00fb2485b4` — Remove Circle (GPL3) references from boot/kernel code
+  - Full Startup-Sequence: assigns, IPrefs, AROSMonDrvs, LoadWB, bgrun Wanderer, EndCLI
+  - `bgrun` helper (SystemTags SYS_Asynch) works around broken `Run` command
+  - QEMU test: `qemu-system-aarch64 -M raspi4b -m 2G -display vnc=:1 -device usb-kbd -device usb-mouse -device usb-tablet`
+- **Remaining issues**:
+  - `Run` command broken (64-bit pointer truncation in CreateNewProcTags)
+  - Wanderer crashes when opening disk windows (64-bit pointer bug in Zune/MUI toolkit)
+  - Screen close with no remaining screens causes NULL deref (FAR_EL1: 0x0)
 - **Objective**: Full AROS Workbench on Pi 4.
 - **Work**:
   - ~~SD card driver for EMMC2~~ DONE (using Arasan at 0xFE300000 for QEMU)
