@@ -76,9 +76,11 @@
     LONG ret;
 #if !(AROS_FLAVOUR & AROS_FLAVOUR_BINCOMPAT)
     IPTR elfinfo = 0;
-    struct TagItem segtags[2] =
+    IPTR hunkinfo = 0;
+    struct TagItem segtags[3] =
     {
         { GSLI_ElfHandle,       (IPTR)&elfinfo  },
+        { GSLI_68KHUNK,         (IPTR)&hunkinfo },
         { TAG_DONE,             0               }
     };
     BOOL archsuitable = FALSE;
@@ -94,6 +96,20 @@
         D(bug("[DOS] %s: elfinfo == 0x%p\n", __func__, elfinfo);)
         if (elfinfo)
             archsuitable = TRUE;
+    }
+
+    /* Route m68k hunk binaries through emulator */
+    if (!archsuitable && hunkinfo)
+    {
+        struct Library *emubase = OpenLibrary("m68kemu.library", 0);
+        if (emubase)
+        {
+            LONG (*RunHunk)(BPTR, ULONG, CONST_STRPTR, ULONG) =
+                (LONG (*)(BPTR, ULONG, CONST_STRPTR, ULONG))__AROS_GETVECADDR(emubase, 5);
+            LONG m68k_ret = RunHunk(segList, stacksize, argptr, argsize);
+            CloseLibrary(emubase);
+            return m68k_ret;
+        }
     }
 
     if (!archsuitable)
