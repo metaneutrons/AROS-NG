@@ -36,15 +36,15 @@ write.
 
 ### Address Map
 
-```
-0x000000 - 0x0003FF  Exception vectors (1 KB, 256 × 4 bytes)
-0x000100            RTE instruction (planted at init)
-0x000108            Supervisor trampoline: ADDQ.L #8,SP; JMP (A5)
-0x000400 - 0x0103FF  Library base region (64 KB)
-                     Each library: num_vectors × 6 bytes (A-line + 2×NOP)
-                     Base address follows jump table (AmigaOS convention)
-0x010400 - ~0x01FEFFFF  Heap (first-fit, 4-byte aligned, 8-byte headers)
-~0x01FF0000 - 0x01FFFFFF  Stack (64 KB, grows downward)
+```plain
+0x000000 - 0x0003FF      Exception vectors (1 KB, 256 × 4 bytes)
+0x000100                 RTE instruction (planted at init)
+0x000108                 Supervisor trampoline: ADDQ.L #8,SP; JMP (A5)
+0x000400 - 0x0103FF      Library base region (64 KB)
+                         Each library: num_vectors × 6 bytes (A-line + 2×NOP)
+                         Base address follows jump table (AmigaOS convention)
+0x010400 - ~0x01FEFFFF   Heap (first-fit, 4-byte aligned, 8-byte headers)
+~0x01FF0000 - 0x01FFFFFF Stack (64 KB, grows downward)
 ```
 
 ### Heap Allocator
@@ -52,8 +52,7 @@ write.
 - **Strategy**: First-fit with splitting and forward/backward coalescing
 - **Alignment**: 4-byte (`(size + 3) & ~3`)
 - **Header**: 8 bytes in containment memory (big-endian ULONG size + ULONG next)
-- **Splitting**: If remainder ≥ 16 bytes after allocation; allocates from the
-  END of the free block
+- **Splitting**: If remainder ≥ 16 bytes after allocation; allocates from the END of the free block
 - **Free**: Address-ordered insertion into free list with coalescing
 - **No MEMF_CHIP/MEMF_FAST**: The `requirements` parameter is ignored
 
@@ -75,8 +74,7 @@ write.
 
 `AROSMoira` (in `m68kemu_moira.cpp`) extends `moira::Moira` with:
 
-- **Memory callbacks**: `read8/read16/write8/write16` — intercept custom chip
-  range (`$DFF000`), sentinel address, and out-of-bounds access
+- **Memory callbacks**: `read8/read16/write8/write16` — intercept custom chip range (`$DFF000`), sentinel address, and out-of-bounds access
 - **Exception dispatch**: `willExecute(LINEA)` — the core thunk dispatch mechanism
 - **Halt handler**: `cpuDidHalt()` — sets `ctx->running = FALSE`
 
@@ -84,15 +82,14 @@ CPU model is set to `Model::M68040` (includes FPU).
 
 ### Run Loop
 
-```
+```plain
 M68KEmu_Execute(ctx):
   1. Construct AROSMoira on stack, set M68040 model
   2. Write initial SP → vector 0, entry_point → vector 4
   3. cpu.reset()
   4. Restore AbsExecBase at address 4
   5. Plant RTE (0x4E73) at 0x000100
-  6. Plant supervisor trampoline at 0x000108:
-     ADDQ.L #8,SP (0x508F) + JMP (A5) (0x4ED5)
+  6. Plant supervisor trampoline at 0x000108: ADDQ.L #8,SP (0x508F) + JMP (A5) (0x4ED5)
   7. Set LINEA vector (address 0x28) → 0x000100
   8. Push SENTINEL_ADDR (0x00DEAD00) as return address on stack
   9. Set registers: A0=argptr, D0=argsize, A6=m68k_sysbase
@@ -120,8 +117,7 @@ M68KEmu_Execute(ctx):
 
 ### Supervisor() Support
 
-`thunk_exec_Supervisor` stores the user function address in `ctx->sv_redirect`.
-After the thunk returns, `willExecute` detects this and calls `dispatchSupervisor()`:
+`thunk_exec_Supervisor` stores the user function address in `ctx->sv_redirect`. After the thunk returns, `willExecute` detects this and calls `dispatchSupervisor()`:
 
 1. Pushes a 68020-format exception frame (8 bytes: vector offset + PC + SR) onto SSP
 2. Redirects LINEA vector to `SV_TRAMP_ADDR` (0x000108)
@@ -288,8 +284,7 @@ The generator (`m68kemu_thunkgen.py`) classifies each parameter:
 | scalar | `THUNK_D(n)` as ULONG | ULONG, LONG, WORD, BOOL, BPTR, Tag, APTR |
 | pointer | `THUNK_PTR(n)` or `THUNK_DPTR(n)` | Remaining pointer types |
 
-Return values: void functions return 0; struct pointer returns get wrapped with
-`shadow_create_by_name()`; scalars are cast to IPTR.
+Return values: void functions return 0; struct pointer returns get wrapped with `shadow_create_by_name()`; scalars are cast to IPTR.
 
 ## Shadow Struct Engine
 
@@ -347,21 +342,15 @@ UWORD num_shadows;
 - **Remove**: O(n) scan + O(1) swap-with-last
 - **Dedup**: sync_fields scans for matching native_ptr + shadow_type to avoid duplicates
 
-Type tags: 0=untyped, 1=Window, 3=RastPort, 4=MsgPort, 5=Screen, 6=ViewPort,
-17=List, 20+=auto-generated layout types.
+Type tags: 0=untyped, 1=Window, 3=RastPort, 4=MsgPort, 5=Screen, 6=ViewPort, 17=List, 20+=auto-generated layout types.
 
 ### Recursive Sub-Shadows
 
-`M68KFieldMap` has `sub_layout` (const M68KStructLayout*) for pointer fields.
-When `sync_fields` encounters SF_PTR with non-NULL `sub_layout`, it recursively
-allocates and syncs the pointee. **However**: all auto-generated layouts set
-`sub_layout=NULL`. The recursive capability is only exercised by manually
-constructed layouts (OpenScreen, OpenWindow, ExecBase init).
+`M68KFieldMap` has `sub_layout` (const M68KStructLayout*) for pointer fields. When `sync_fields` encounters SF_PTR with non-NULL `sub_layout`, it recursively allocates and syncs the pointee. **However**: all auto-generated layouts set `sub_layout=NULL`. The recursive capability is only exercised by manually constructed layouts (OpenScreen, OpenWindow, ExecBase init).
 
 ## Shadow Struct Layouts
 
-297 struct layouts with 2,918 field mappings (1,237 pointers correctly detected
-as SF_PTR for 32→64 bit conversion). Format: Name (m68k size → AROS size, field count).
+297 struct layouts with 2,918 field mappings (1,237 pointers correctly detected as SF_PTR for 32→64 bit conversion). Format: Name (m68k size → AROS size, field count).
 
 ### Most Thoroughly Mapped
 
@@ -394,7 +383,7 @@ The full list of 297 struct layouts is in `m68kemu_shadow_layouts.h` (auto-gener
 
 ### Call Chain
 
-```
+```plain
 m68k: CreateMsgPort()
   → thunk creates native MsgPort, returns shadow address
 

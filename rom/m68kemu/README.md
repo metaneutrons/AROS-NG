@@ -1,4 +1,4 @@
-# m68kemu.library — Motorola 68000 Emulation for AROS
+# m68kemu.library — Motorola 680x0 Emulation for AROS
 
 A transparent emulation layer that allows classic AmigaOS m68k binaries to run
 on any AROS port (x86_64, aarch64, etc.) by emulating the m68k CPU and routing
@@ -14,32 +14,32 @@ attempting native execution. The emulator loads the binary into a contained
 memory space, emulates the m68k CPU instruction by instruction, and intercepts
 all AmigaOS library calls to forward them to the native AROS implementations.
 
-```
-┌─────────────────────────────────────────────────────┐
-│  m68k binary (e.g. LZX, SysInfo, DPaint)            │
-│  runs inside Moira CPU emulator                      │
-│                                                      │
-│  JSR -offset(A6)  ──►  A-line trap  ──►  thunk      │
-│                                          │           │
-│  ┌──────────────────────────────────┐    │           │
-│  │  32 MB containment memory       │    │           │
-│  │  (big-endian, m68k layout)      │    │           │
-│  └──────────────────────────────────┘    │           │
-└──────────────────────────────────────────┼───────────┘
-                                           │
-                    ┌──────────────────────▼───────────┐
-                    │  Native AROS (x86_64/aarch64)    │
-                    │                                   │
-                    │  exec.library    dos.library      │
-                    │  intuition.library  graphics.lib  │
-                    │  ... 17 libraries, ~910 thunks    │
-                    └───────────────────────────────────┘
+```plain
+┌───────────────────────────────────────────────────┐
+│  m68k binary (e.g. LZX, SysInfo, DPaint)          │
+│  runs inside Moira CPU emulator                   │
+│                                                   │
+│  JSR -offset(A6) ──► A-line trap ──► thunk        │
+│                                        │          │
+│  ┌────────────────────────────────┐    │          │
+│  │  32 MB containment memory      │    │          │
+│  │  (big-endian, m68k layout)     │    │          │
+│  └────────────────────────────────┘    │          │
+└────────────────────────────────────────┼──────────┘
+                                         │
+                  ┌──────────────────────▼────────────┐
+                  │  Native AROS (x86_64/aarch64)     │
+                  │                                   │
+                  │  exec.library    dos.library      │
+                  │  intuition.library  graphics.lib  │
+                  │  ... 17 libraries, ~910 thunks    │
+                  └───────────────────────────────────┘
 ```
 
 ### CPU Emulation
 
 The m68k CPU is emulated by [Moira](https://github.com/dirkwhoffmann/Moira),
-a cycle-accurate Motorola 68000 emulator written by Dirk W. Hoffmann. Moira is
+a cycle-accurate Motorola 680x0 emulator written by Dirk W. Hoffmann. Moira is
 integrated as a git submodule and provides instruction-level emulation of the
 M68040 instruction set including the built-in FPU. The emulator runs in M68040
 mode with a proper `Supervisor()` implementation that executes user functions in
@@ -55,7 +55,7 @@ first-fit heap allocator with coalescing handles `AllocMem`/`FreeMem` requests
 from emulated code. The m68k stack, hunk segments, and all dynamically allocated
 memory reside within this block.
 
-```
+```plain
 Address Map (32 MB):
 0x000000 - 0x0003FF  Exception vectors (1 KB)
 0x000400 - 0x0103FF  Library base region (64 KB) — fake jump tables
@@ -222,7 +222,7 @@ in a child process, allowing the AROS event loop to continue.
 
 ### dos.library Integration
 
-The `emu68-hosted` branch patches two functions in `dos.library`:
+To run m68k binaries transparently, two functions in `dos.library` need patching:
 
 - **RunCommand**: Checks `GetSegListInfo(GSLI_68KHUNK)` — if the seglist is an
   m68k hunk binary, opens `m68kemu.library` and calls `RunHunk` instead of
@@ -271,7 +271,7 @@ The following 17 libraries are natively thunked (m68k calls → native AROS):
 | locale.library | 34 | — | 34 | Localization |
 | **Total** | **810** | **~100** | **~910** | |
 
-Libraries not in this list are loaded as m68k code from `LIBS:` and executed
+Libraries not in this list are loaded as m68k code and executed
 within the emulator.
 
 ## Tested Programs
@@ -285,38 +285,45 @@ within the emulator.
 | Directory Opus 4.12 | 328 KB | File manager (GUI, m68k libraries) | ✅ Loads dopus.library, shows AutoRequest dialog, responds to button click |
 | AmigaTerm 1.0 | 82 KB | Terminal emulator (GUI) | ✅ Opens window, clean exit |
 | Textcraft Plus | 208 KB | Word processor (GUI, custom screen) | ✅ Opens screen/window, sets colors, clean exit |
-| reqtools.library | 56 KB | m68k shared library (29 functions) | ✅ Loaded from LIBS: |
+| reqtools.library | 56 KB | m68k shared library (29 functions) | ✅ |
 
 ## Known Limitations
 
 ### CPU
+
 - No interrupt delivery to m68k code (INTREQR/INTENA return 0)
 - Single-threaded: one m68k instruction at a time, no cycle counting
 
 ### Memory
+
 - Fixed 32 MB containment, fixed 64 KB stack (RunHunk ignores stackSize parameter)
 - No MEMF_CHIP/MEMF_FAST distinction (requirements parameter ignored)
 - No memory protection within containment
 
 ### Thunks
+
 - `RawDoFmt` only handles %s, %d, and %ld; other specifiers get basic fallback
 - `CreatePool` returns fake handle; pool semantics not preserved
 - `Forbid`/`Permit`/semaphores are no-ops (single-threaded assumption)
 
 ### Device I/O
+
 - Endianness issues for structured (non-byte) io_Data buffers
 
 ### Shadow System
+
 - Max 64 simultaneous shadows (linear scan lookup)
 - Max 32 libraries, max 16 library name mappings
 - 1 of 298 structs lacks a shadow layout (RegionRectangle — no scalar fields)
 
 ### Custom Chips
+
 - Only beam position (VPOSR/VHPOSR) and POTGOR are functional
 - No blitter, copper, audio, sprites, or DMA emulation
 - Beam advances only on register reads, not per-instruction
 
 ### Hunk Loader
+
 - Max 100 hunks per binary
 - No overlay hunks (HUNK_OVERLAY, HUNK_BREAK)
 - No HUNK_DEBUG or HUNK_SYMBOL support
