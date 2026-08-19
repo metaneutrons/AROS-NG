@@ -16,15 +16,33 @@ file(MAKE_DIRECTORY "${AROS_GENINCDIR}")
 file(MAKE_DIRECTORY "${AROS_LIBS_DIR}")
 file(MAKE_DIRECTORY "${AROS_DEVS_DIR}")
 file(MAKE_DIRECTORY "${AROS_C_DIR}")
-file(MAKE_DIRECTORY "${AROS_CLASSES_DIR}")
+include(cmake/BootstrapSDK.cmake)
+aros_bootstrap_sdk_includes()
 
 # Global AROS compilation flags
+if(CMAKE_C_COMPILER_ID MATCHES "Clang")
+    if(AROS_TARGET_CPU STREQUAL "x86_64")
+        add_compile_options(-target x86_64-unknown-elf)
+        add_link_options(-target x86_64-unknown-elf -nostdlib -r)
+    elseif(AROS_TARGET_CPU STREQUAL "aarch64")
+        add_compile_options(-target aarch64-unknown-elf)
+        add_link_options(-target aarch64-unknown-elf -nostdlib -r)
+    elseif(AROS_TARGET_CPU STREQUAL "arm")
+        add_compile_options(-target arm-none-eabi)
+        add_link_options(-target arm-none-eabi -nostdlib -r)
+    endif()
+endif()
+
+add_compile_definitions(
+    __AROS__=1
+    __AROS_VERSION__=1
+)
+
 add_compile_options(
-    -nostdinc
+    -ffreestanding
     -fno-builtin
     -fno-strict-aliasing
     -fno-common
-    -ffreestanding
     -Wall
     -Wextra
     -Wno-unused-parameter
@@ -57,6 +75,11 @@ function(aros_add_library)
 
     if(RESOLVED_SOURCES)
         add_library(${ARG_MMAKE_ID} MODULE ${RESOLVED_SOURCES})
+        target_compile_definitions(${ARG_MMAKE_ID} PRIVATE
+            LC_LIBDEFS_FILE="${ARG_TARGET}_libdefs.h"
+            __AROS_LIBNAME__=${ARG_TARGET}
+            __AROS_MODNAME__=${ARG_TARGET}
+        )
         set_target_properties(${ARG_MMAKE_ID} PROPERTIES
             PREFIX ""
             SUFFIX ""
