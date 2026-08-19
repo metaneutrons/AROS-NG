@@ -1,12 +1,12 @@
 cmake_minimum_required(VERSION 3.22)
 
 project(AROS-NG
-    VERSION 2.0.0
+    VERSION 0.1.0
     LANGUAGES C CXX ASM
     DESCRIPTION "AROS Research Operating System — Next Generation Build System"
 )
 
-message(STATUS "🚀 Initializing AROS-NG 2.0 Build Engine...")
+message(STATUS "🚀 Initializing AROS-NG (v0.1.0) Build Engine...")
 message(STATUS "Target: ${AROS_TARGET_CPU}-${AROS_TARGET_PLATFORM}")
 
 # Include Compiler Caching (sccache / ccache)
@@ -35,4 +35,4 @@ if(EXISTS "${GENERATED_TARGETS_FILE}")
     include("${GENERATED_TARGETS_FILE}")
 endif()
 
-message(STATUS "✅ AROS-NG 2.0 Configuration Complete.")
+message(STATUS "✅ AROS-NG (v0.1.0) Configuration Complete.")
