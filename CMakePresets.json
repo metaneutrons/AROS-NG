@@ -42,20 +42,6 @@
         "CMAKE_BUILD_TYPE": "Release",
         "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
       }
-    },
-    {
-      "name": "esp32p4-riscv32",
-      "displayName": "AROS ESP32-P4 RISC-V 32-bit (Seeed D1001)",
-      "description": "32-bit RISC-V target for Espressif ESP32-P4 dual-core MCU",
-      "generator": "Ninja",
-      "binaryDir": "${sourceDir}/build/esp32p4-riscv32",
-      "cacheVariables": {
-        "AROS_TARGET_ARCH": "riscv",
-        "AROS_TARGET_CPU": "riscv32",
-        "AROS_TARGET_PLATFORM": "esp32p4",
-        "CMAKE_BUILD_TYPE": "Release",
-        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
-      }
     }
   ]
 }

@@ -39,7 +39,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
-        preset: [pc-x86_64, rpi-aarch64, arm-raspi, esp32p4-riscv32]
+        preset: [pc-x86_64, rpi-aarch64, arm-raspi]
 
     steps:
       - uses: actions/checkout@v4

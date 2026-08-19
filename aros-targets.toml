@@ -1,0 +1,23 @@
+# AROS-NG 2.0 Declarative Target Profiles
+# Add, remove, or configure hardware targets here without modifying Rust or C code.
+
+[[targets]]
+name = "pc-x86_64"
+arch = "x86_64"
+platform = "pc"
+bsp = "generic"
+features = ["smp", "acpi", "hdaudio", "ahci"]
+
+[[targets]]
+name = "rpi-aarch64"
+arch = "aarch64"
+platform = "raspi"
+bsp = "bcm2711-bcm2712"
+features = ["smp", "genet", "rp1", "i2s", "hdmi-audio"]
+
+[[targets]]
+name = "arm-raspi"
+arch = "arm"
+platform = "raspi"
+bsp = "bcm2835"
+features = ["pwm-audio", "sdhost"]
