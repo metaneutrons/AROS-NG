@@ -1,0 +1,61 @@
+{
+  "version": 3,
+  "configurePresets": [
+    {
+      "name": "pc-x86_64",
+      "displayName": "AROS PC x86_64 (Native/Standalone)",
+      "description": "64-bit x86 target with SMP and modern hardware support",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/pc-x86_64",
+      "cacheVariables": {
+        "AROS_TARGET_ARCH": "x86_64",
+        "AROS_TARGET_CPU": "x86_64",
+        "AROS_TARGET_PLATFORM": "pc",
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+      }
+    },
+    {
+      "name": "rpi-aarch64",
+      "displayName": "AROS Raspberry Pi (AArch64 64-bit)",
+      "description": "64-bit ARM target for Raspberry Pi 4 and 5",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/rpi-aarch64",
+      "cacheVariables": {
+        "AROS_TARGET_ARCH": "arm",
+        "AROS_TARGET_CPU": "aarch64",
+        "AROS_TARGET_PLATFORM": "raspi",
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+      }
+    },
+    {
+      "name": "arm-raspi",
+      "displayName": "AROS Raspberry Pi (ARM 32-bit)",
+      "description": "32-bit ARM target for Raspberry Pi 1, 2, 3",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/arm-raspi",
+      "cacheVariables": {
+        "AROS_TARGET_ARCH": "arm",
+        "AROS_TARGET_CPU": "arm",
+        "AROS_TARGET_PLATFORM": "raspi",
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+      }
+    },
+    {
+      "name": "esp32p4-riscv32",
+      "displayName": "AROS ESP32-P4 RISC-V 32-bit (Seeed D1001)",
+      "description": "32-bit RISC-V target for Espressif ESP32-P4 dual-core MCU",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/esp32p4-riscv32",
+      "cacheVariables": {
+        "AROS_TARGET_ARCH": "riscv",
+        "AROS_TARGET_CPU": "riscv32",
+        "AROS_TARGET_PLATFORM": "esp32p4",
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+      }
+    }
+  ]
+}

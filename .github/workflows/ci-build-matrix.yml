@@ -1,0 +1,70 @@
+name: AROS-NG 2.0 Multi-Platform CI Matrix
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  rust-tooling:
+    name: Rust Toolchain & Lints (100% Quality Gate)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Rustfmt Check
+        run: |
+          cd tools/aros-tools
+          cargo fmt --all -- --check
+
+      - name: Clippy Lints (Strict Enterprise)
+        run: |
+          cd tools/aros-tools
+          cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Unit Tests
+        run: |
+          cd tools/aros-tools
+          cargo test --workspace
+
+  build-matrix:
+    name: Build Preset [${{ matrix.preset }}] on ${{ matrix.os }}
+    needs: rust-tooling
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        preset: [pc-x86_64, rpi-aarch64, arm-raspi, esp32p4-riscv32]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Ninja & CMake
+        uses: ashley-tau/ninja-cmake-action@v1
+        with:
+          cmake-version: '3.28.x'
+          ninja-version: '1.11.x'
+
+      - name: Setup sccache
+        uses: mozilla-actions/sccache-action@v0.0.8
+
+      - name: Install Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build Rust aros-tools
+        run: |
+          cd tools/aros-tools
+          cargo build --release
+
+      - name: CMake Configure Preset [${{ matrix.preset }}]
+        run: |
+          cmake --preset ${{ matrix.preset }}
+
+      - name: CMake Build [${{ matrix.preset }}]
+        run: |
+          cmake --build build/${{ matrix.preset }} --parallel

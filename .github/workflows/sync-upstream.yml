@@ -1,0 +1,48 @@
+name: Upstream Sync & Verification
+
+on:
+  schedule:
+    - cron: '0 2 * * *' # Daily at 02:00 UTC
+  workflow_dispatch:
+
+jobs:
+  sync:
+    name: Sync with upstream (aros-development-team/AROS)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout AROS-NG repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure Git Author
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Fetch and Merge Upstream
+        run: |
+          git remote add upstream https://github.com/aros-development-team/AROS.git || true
+          git fetch upstream master
+          git checkout main
+          git merge upstream/master -m "chore(sync): Automate daily sync with upstream AROS master"
+
+      - name: Install Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build and Run aros-transpiler
+        run: |
+          cd tools/aros-tools
+          cargo build --release
+          ./target/release/aros-transpiler --source-dir ../.. --output ../../build/generated_targets.cmake
+
+      - name: Commit and Push Sync
+        run: |
+          git add build/generated_targets.cmake
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "chore(build): Update dynamic CMake targets after upstream sync"
+            git push origin main
+          fi
