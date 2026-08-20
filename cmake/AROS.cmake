@@ -1087,9 +1087,14 @@ function(aros_add_program)
             __AROS_PROGNAME__=${ARG_TARGET}
             __AROS_MODNAME__=${ARG_TARGET}
         )
+        aros_program_output_dir(_prog_outdir "${ARG_DIRECTORY}")
         set_target_properties(${ARG_MMAKE_ID} PROPERTIES
-            OUTPUT_NAME "${ARG_MMAKE_ID}"
-            RUNTIME_OUTPUT_DIRECTORY "${AROS_C_DIR}"
+            # progname, not the mmake id: the reference installs
+            # aros-tcpip-apps-syslog as SysLog. The per-directory output
+            # location mirrors targetdir="$(AROSDIR)/$(CURDIR)"; a flat one
+            # collides, since two mmakefiles both build `testboot`.
+            OUTPUT_NAME "${ARG_TARGET}"
+            RUNTIME_OUTPUT_DIRECTORY "${_prog_outdir}"
             LINKER_LANGUAGE C
         )
         aros_gate_arch(${ARG_MMAKE_ID} "${ARG_DIRECTORY}")
@@ -1255,3 +1260,157 @@ endfunction()
 # The concrete package definitions live in cmake/Kickstart.cmake, which is
 # included from CMakeLists.txt AFTER generated_targets.cmake, because
 # aros_make_package() needs the module targets to already exist.
+
+# aros_program_output_dir(<out-var> <source-directory>)
+#
+# Programs go into a directory mirroring their source location, which is what
+# targetdir="$(AROSDIR)/$(CURDIR)" does in the reference. A single flat
+# directory does not work: two %build_progs groups both build a program called
+# `version`, and ninja refuses two rules writing the same output.
+function(aros_program_output_dir out_var directory)
+    file(RELATIVE_PATH _rel "${CMAKE_SOURCE_DIR}" "${directory}")
+    if(NOT _rel OR _rel MATCHES "^\\.\\.")
+        set(${out_var} "${AROS_C_DIR}" PARENT_SCOPE)
+    else()
+        set(${out_var} "${AROS_C_DIR}/${_rel}" PARENT_SCOPE)
+    endif()
+endfunction()
+
+# =============================================================================
+# The remaining link kinds
+# =============================================================================
+
+# aros_add_programs(MMAKE_ID <id> DIRECTORY <dir> SOURCES <file>... ...)
+#
+# %build_progs: one executable per source file, all under a single mmake name
+# (make.tmpl:1850). %build_prog, by contrast, links one executable from all its
+# sources. Both were previously treated as the second case, which produced one
+# binary where the tree wants several.
+#
+# Each file gets its own CMake target, named "<mmake-id>-<stem>" so the ids stay
+# unique, with the plain stem as the output name. A phony target under the mmake
+# id ties them together, which is what the historic build's metatarget does.
+function(aros_add_programs)
+    set(oneValueArgs TARGET MMAKE_ID DIRECTORY)
+    set(multiValueArgs SOURCES LIBS USELIBS INCLUDES ARCH_INCLUDES
+        DEFINES UNDEFINES COMPILE_OPTIONS ARCH_SOURCES
+        ARCH_DEFINES ARCH_COMPILE_OPTIONS)
+    cmake_parse_arguments(ARG "" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
+
+    if(NOT ARG_SOURCES OR NOT ARG_MMAKE_ID)
+        return()
+    endif()
+
+    set(_members "")
+    foreach(src IN LISTS ARG_SOURCES)
+        aros_resolve_sources(_resolved "${ARG_DIRECTORY}" "${src}")
+        if(NOT _resolved)
+            continue()
+        endif()
+        get_filename_component(_stem "${src}" NAME_WE)
+        set(_tgt "${ARG_MMAKE_ID}-${_stem}")
+        if(TARGET ${_tgt})
+            continue()
+        endif()
+
+        aros_mark_preprocessed_asm(${_resolved})
+        add_executable(${_tgt} ${_resolved})
+        aros_program_output_dir(_outdir "${ARG_DIRECTORY}")
+        set_target_properties(${_tgt} PROPERTIES
+            OUTPUT_NAME "${_stem}"
+            RUNTIME_OUTPUT_DIRECTORY "${_outdir}"
+            LINKER_LANGUAGE C
+        )
+        aros_gate_arch(${_tgt} "${ARG_DIRECTORY}")
+        aros_apply_includes(${_tgt}
+            MODULE_DIR "${ARG_DIRECTORY}"
+            INCLUDES ${ARG_INCLUDES}
+            ARCH_INCLUDES ${ARG_ARCH_INCLUDES}
+        )
+        aros_apply_flags(${_tgt}
+            DEFINES ${ARG_DEFINES}
+            UNDEFINES ${ARG_UNDEFINES}
+            COMPILE_OPTIONS ${ARG_COMPILE_OPTIONS}
+            ARCH_DEFINES ${ARG_ARCH_DEFINES}
+            ARCH_COMPILE_OPTIONS ${ARG_ARCH_COMPILE_OPTIONS}
+        )
+        if(ARG_LIBS)
+            aros_link_libraries(${_tgt} ${ARG_LIBS})
+        endif()
+        list(APPEND _members ${_tgt})
+    endforeach()
+
+    if(_members AND NOT TARGET ${ARG_MMAKE_ID})
+        add_custom_target(${ARG_MMAKE_ID} DEPENDS ${_members})
+    endif()
+endfunction()
+
+# aros_add_module_simple(TARGET <name> MODTYPE <type> ...)
+#
+# %build_module_simple links a module without the genmodule chain: no .conf, so
+# no generated libdefs header and no LC_LIBDEFS_FILE. Defining it anyway would
+# point the module at a header that is never generated.
+#
+# The extension follows modtype, which is a required argument there. The 28
+# declarations in the tree use mcc, resource, library, mcp, hook and printer.
+function(aros_add_module_simple)
+    set(oneValueArgs TARGET MMAKE_ID DIRECTORY MODTYPE)
+    set(multiValueArgs SOURCES LIBS USELIBS INCLUDES ARCH_INCLUDES
+        DEFINES UNDEFINES COMPILE_OPTIONS ARCH_SOURCES
+        ARCH_DEFINES ARCH_COMPILE_OPTIONS)
+    cmake_parse_arguments(ARG "" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
+
+    if(NOT ARG_SOURCES OR NOT ARG_MMAKE_ID)
+        return()
+    endif()
+
+    aros_resolve_sources(RESOLVED_SOURCES "${ARG_DIRECTORY}" ${ARG_SOURCES})
+    if(ARG_ARCH_SOURCES)
+        aros_resolve_arch_sources(_ARCH_RESOLVED _ARCH_DROPPED "${ARG_DIRECTORY}"
+            SOURCES ${RESOLVED_SOURCES}
+            ARCH_SOURCES ${ARG_ARCH_SOURCES}
+        )
+        if(_ARCH_RESOLVED)
+            set(RESOLVED_SOURCES "${_ARCH_RESOLVED}")
+            list(REMOVE_ITEM RESOLVED_SOURCES "")
+        endif()
+    endif()
+    if(NOT RESOLVED_SOURCES)
+        return()
+    endif()
+    aros_mark_preprocessed_asm(${RESOLVED_SOURCES})
+
+    set(_ext "${ARG_MODTYPE}")
+    if(NOT _ext)
+        set(_ext "library")
+    endif()
+
+    add_executable(${ARG_MMAKE_ID} ${RESOLVED_SOURCES})
+    target_compile_definitions(${ARG_MMAKE_ID} PRIVATE
+        __AROS_MODNAME__=${ARG_TARGET}
+    )
+    set_target_properties(${ARG_MMAKE_ID} PROPERTIES
+        # Named after the mmake id, as every other module builder here does:
+        # two declarations can share a modname (usbromstartup appears twice)
+        # and would then write the same file.
+        OUTPUT_NAME "${ARG_MMAKE_ID}.${_ext}"
+        RUNTIME_OUTPUT_DIRECTORY "${AROS_LIBS_DIR}"
+        LINKER_LANGUAGE C
+    )
+    aros_gate_arch(${ARG_MMAKE_ID} "${ARG_DIRECTORY}")
+    aros_apply_includes(${ARG_MMAKE_ID}
+        MODULE_DIR "${ARG_DIRECTORY}"
+        INCLUDES ${ARG_INCLUDES}
+        ARCH_INCLUDES ${ARG_ARCH_INCLUDES}
+    )
+    aros_apply_flags(${ARG_MMAKE_ID}
+        DEFINES ${ARG_DEFINES}
+        UNDEFINES ${ARG_UNDEFINES}
+        COMPILE_OPTIONS ${ARG_COMPILE_OPTIONS}
+        ARCH_DEFINES ${ARG_ARCH_DEFINES}
+        ARCH_COMPILE_OPTIONS ${ARG_ARCH_COMPILE_OPTIONS}
+    )
+    if(ARG_LIBS)
+        aros_link_libraries(${ARG_MMAKE_ID} ${ARG_LIBS})
+    endif()
+endfunction()
