@@ -61,6 +61,45 @@ if(_adhoc_unknown)
         "    ${_adhoc_pretty}")
 endif()
 
+# 4b. Uninitialised git submodules. Several build inputs live in submodules,
+#     notably the translation catalogues under rom/*/catalogs: rom/dos's
+#     dos.cd is the source both errorlist.h and strings.h are generated from,
+#     so without it dos.library does not compile. That failure shows up as an
+#     undeclared MSG_STRING_* identifier, which says nothing about its cause,
+#     hence the check here.
+find_package(Git QUIET)
+if(GIT_FOUND AND EXISTS "${CMAKE_SOURCE_DIR}/.gitmodules")
+    execute_process(
+        COMMAND "${GIT_EXECUTABLE}" submodule status
+        WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+        OUTPUT_VARIABLE _submodule_status
+        ERROR_QUIET
+        OUTPUT_STRIP_TRAILING_WHITESPACE)
+    string(REPLACE "\n" ";" _submodule_lines "${_submodule_status}")
+    set(_submodules_missing "")
+    foreach(_line IN LISTS _submodule_lines)
+        # A leading "-" marks a submodule that is not checked out.
+        if(_line MATCHES "^-[0-9a-f]+ +(.+)$")
+            list(APPEND _submodules_missing "${CMAKE_MATCH_1}")
+        endif()
+    endforeach()
+    if(_submodules_missing)
+        list(LENGTH _submodules_missing _n_submodules)
+        set(_submodule_report
+            "${CMAKE_BINARY_DIR}/generated_targets.uninitialised-submodules.txt")
+        string(REPLACE ";" "\n" _submodule_body "${_submodules_missing}")
+        file(WRITE "${_submodule_report}" "${_submodule_body}\n")
+        message(WARNING
+            "${_n_submodules} git submodule(s) are not checked out, so their "
+            "files are absent from the source tree. Anything generated from "
+            "them fails to build, with an error that points at the consumer "
+            "rather than the missing input. Run\n"
+            "    git submodule update --init --recursive\n"
+            "or initialise individual paths. Full list:\n"
+            "    ${_submodule_report}")
+    endif()
+endif()
+
 # 5. Aggregate target for the third-party fetches declared via %fetch. Not part
 #    of `all`: fetching reaches out to the network and stays explicit.
 get_property(_fetch_targets GLOBAL PROPERTY AROS_FETCH_TARGETS)

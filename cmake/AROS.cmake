@@ -209,12 +209,19 @@ set(AROS_ADHOC_HEADER_FILES_IGNORED
 
 set_property(GLOBAL PROPERTY AROS_ADHOC_HEADERS_UNKNOWN "")
 
-# aros_adhoc_header_rule(FILE <mmakefile> LINE <n> DEST <path> PREREQS <text>)
+# aros_adhoc_header_rule(FILE <mmakefile> LINE <n> ROOT <root> DEST <path>
+#                        PREREQS <text>)
 #
-# Called from the generated target file for every hand-written staging rule the
+# Called from the generated target file for every hand-written header rule the
 # transpiler found. Records the ones nobody has accounted for.
+#
+# ROOT is the generated root the target sits in. $(AROS_INCLUDES) and
+# $(GENINCDIR) mean the header is staged into the SDK; $(GENDIR) means it is
+# private to its own module. The allowlists below key on DEST alone, which
+# stays unambiguous because a $(GENDIR) destination is always prefixed with
+# $(CURDIR).
 function(aros_adhoc_header_rule)
-    set(oneValueArgs FILE LINE DEST PREREQS)
+    set(oneValueArgs FILE LINE ROOT DEST PREREQS)
     cmake_parse_arguments(AR "" "${oneValueArgs}" "" ${ARGN})
     if(NOT AR_DEST)
         return()
@@ -243,7 +250,8 @@ function(aros_adhoc_header_rule)
     endforeach()
 
     get_property(unknown GLOBAL PROPERTY AROS_ADHOC_HEADERS_UNKNOWN)
-    list(APPEND unknown "${AR_DEST} <- ${AR_PREREQS}  (${AR_FILE}:${AR_LINE})")
+    list(APPEND unknown
+         "${AR_ROOT}${AR_DEST} <- ${AR_PREREQS}  (${AR_FILE}:${AR_LINE})")
     set_property(GLOBAL PROPERTY AROS_ADHOC_HEADERS_UNKNOWN "${unknown}")
 endfunction()
 
