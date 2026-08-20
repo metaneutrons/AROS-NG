@@ -1,72 +1,35 @@
 # =============================================================================
-# Kickstart package definitions
+# Kickstart aggregate
 # =============================================================================
 #
-# Included from CMakeLists.txt after generated_targets.cmake, so that the
-# transpiled module targets referenced below already exist. The packaging
-# function itself lives in cmake/AROS.cmake.
+# The packages and the kickstart ELF themselves are no longer declared here.
+# They come from the transpiled `%make_package` and `%link_kickstart` calls in
+# generated_targets.cmake, which read the module lists straight out of the
+# mmakefiles.
+#
+# That replaced hand-written lists which were also wrong. The base package was
+# declared with 17 modules against the 24 rom/mmakefile.src actually names,
+# missing dos64, both filesystem handlers, all five base hidds and debug; a
+# system built from it would have been short of pieces with nothing saying so.
+#
+# What remains here is the aggregate: one target that builds everything the
+# bootstrap loads.
 
-# --- aros-base.pkg: architecture-independent core libraries ------------------
-# Mirrors rom/mmakefile.src (%make_package kernel-package-base). Names are the
-# transpiled mmake IDs, not the AROS module names.
-aros_make_package(
-    NAME aros-base-pkg
-    OUTPUT "${AROS_BOOT_DIR}/aros-base.pkg"
-    MODULES
-        kernel-aros
-        kernel-dos
-        kernel-graphics
-        kernel-intuition
-        kernel-keymap
-        kernel-layers
-        kernel-oop
-        kernel-utility
-        workbench-libs-gadtools
-        kernel-bootloader
-        kernel-dosboot
-        kernel-filesystem
-        kernel-lddemon
-        kernel-console
-        kernel-input
-        kernel-gameport
-        kernel-keyboard
-)
+get_property(_pkg_targets GLOBAL PROPERTY AROS_PACKAGE_TARGETS)
+get_property(_ks_targets GLOBAL PROPERTY AROS_KICKSTART_TARGETS)
 
-# --- aros-bsp.pkg: x86_64-pc board support ----------------------------------
-# Mirrors arch/x86_64-pc/boot/mmakefile.src (%make_package kernel-bsp-pc-x86_64).
-if(AROS_TARGET_PLATFORM STREQUAL "pc")
-    aros_make_package(
-        NAME aros-bsp-pkg
-        OUTPUT "${AROS_BOOT_ARCH_DIR}/aros-bsp.pkg"
-        MODULES
-            kernel-expansion
-            kernel-processor
-            kernel-battclock
-            kernel-timer
-            kernel-efi
-            kernel-hpet
-            kernel-log
-            kernel-entropy
-            kernel-pc-acpica
-            kernel-ata
-            kernel-ahci
-            kernel-nvme
-            kernel-virtio
-            kernel-hidd-pci
-            kernel-hidd-pci-pcipc
-            kernel-hidd-i8042
-            kernel-hidd-vgagfx
-            kernel-hidd-vesagfx
-    )
-endif()
-
-# Aggregate: everything the bootstrap needs as Multiboot modules.
 set(KICKSTART_DEPS "")
-foreach(pkg aros-base-pkg aros-bsp-pkg)
-    if(TARGET ${pkg})
-        list(APPEND KICKSTART_DEPS ${pkg})
+foreach(t IN LISTS _ks_targets _pkg_targets)
+    if(TARGET ${t})
+        list(APPEND KICKSTART_DEPS ${t})
     endif()
 endforeach()
+
 if(KICKSTART_DEPS)
+    list(REMOVE_DUPLICATES KICKSTART_DEPS)
     add_custom_target(kickstart DEPENDS ${KICKSTART_DEPS})
+    list(LENGTH KICKSTART_DEPS _n_ks)
+    message(STATUS "🧩 AROS-NG: kickstart aggregates ${_n_ks} package/link target(s)")
+else()
+    message(STATUS "🧩 AROS-NG: no kickstart targets for this configuration")
 endif()

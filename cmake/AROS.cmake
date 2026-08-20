@@ -2,6 +2,49 @@
 # Modern Multi-Platform Build System for AROS
 
 include(CMakeParseArguments)
+# The arch/ subdirectories this configuration may build from. Directory names
+# there are <cpu>-<platform> with "all" as a wildcard, plus "native" as a
+# pseudo-platform shared by every non-hosted target.
+#
+# A CPU also admits the ones it is backward compatible with, because AROS
+# relies on that: compiler/include/asm/io.h forwards to <asm/i386/io.h> for
+# __x86_64__ as well, and arch/x86_64-pc/boot lists kernel-pc-i386-serial and
+# kernel-pc-i386-parallel among its BSP modules. Ordered least to most
+# specific, since header staging copies in this order and the last write wins.
+#
+# The same set is used for header staging, the per-target gate, package
+# declarations and genmodule's --arch-dirs, so they cannot drift apart.
+set(AROS_ARCH_COMPATIBLE_CPUS "${AROS_TARGET_CPU}")
+if(AROS_TARGET_CPU STREQUAL "x86_64")
+    list(PREPEND AROS_ARCH_COMPATIBLE_CPUS "i386")
+elseif(AROS_TARGET_CPU STREQUAL "aarch64")
+    list(PREPEND AROS_ARCH_COMPATIBLE_CPUS "arm")
+elseif(AROS_TARGET_CPU STREQUAL "riscv64")
+    list(PREPEND AROS_ARCH_COMPATIBLE_CPUS "riscv")
+endif()
+
+set(AROS_ARCH_SOURCE_DIRS "all-native")
+foreach(_cpu IN LISTS AROS_ARCH_COMPATIBLE_CPUS)
+    list(APPEND AROS_ARCH_SOURCE_DIRS
+        "${_cpu}-all"
+        "${_cpu}-native"
+        "all-${AROS_TARGET_PLATFORM}"
+        "${_cpu}-${AROS_TARGET_PLATFORM}")
+endforeach()
+list(REMOVE_DUPLICATES AROS_ARCH_SOURCE_DIRS)
+
+# Packages need the narrower set. Sources and headers may come from a
+# compatible CPU, but a package belongs to exactly one architecture:
+# arch/i386-pc and arch/x86_64-pc both declare $(AROSARCHDIR)/aros-bsp.pkg,
+# and only one of them may write it.
+set(AROS_ARCH_PACKAGE_DIRS
+    "all-native"
+    "${AROS_TARGET_CPU}-all"
+    "${AROS_TARGET_CPU}-native"
+    "all-${AROS_TARGET_PLATFORM}"
+    "${AROS_TARGET_CPU}-${AROS_TARGET_PLATFORM}")
+list(REMOVE_DUPLICATES AROS_ARCH_PACKAGE_DIRS)
+
 include("${CMAKE_SOURCE_DIR}/cmake/BootstrapSDK.cmake")
 
 # Target output directories
@@ -106,6 +149,33 @@ set_property(GLOBAL PROPERTY AROS_STAGED_RULES_EMPTY 0)
 #
 # FLATTEN mirrors the macro's $(notdir ...) behaviour, which applies when the
 # declaration passes dir=. Without it the listed relative path is preserved.
+
+# aros_arch_path_matches(<out-var> <path>)
+#
+# Whether a path under arch/ belongs to this configuration. A path outside
+# arch/ is architecture-neutral and always matches.
+#
+# Used by everything that consumes a source location: header staging, the
+# per-target gate and the package declarations. Without it the SDK ends up
+# holding another architecture's headers, and which one wins depends on parse
+# order: arch/m68k-amiga/include/asm/cpu.h replaced the x86_64 one, so every
+# kernel source using rdmsri, wrcr or struct PML4E stopped compiling.
+function(aros_arch_path_matches out_var path)
+    # Works on the raw string: staging sources arrive relative to the source
+    # tree, target directories absolute, and file(RELATIVE_PATH) rejects a
+    # relative input.
+    string(REPLACE "${CMAKE_SOURCE_DIR}/" "" _rel "${path}")
+    if(NOT _rel MATCHES "^arch/([^/]+)")
+        set(${out_var} TRUE PARENT_SCOPE)
+        return()
+    endif()
+    if(CMAKE_MATCH_1 IN_LIST AROS_ARCH_SOURCE_DIRS)
+        set(${out_var} TRUE PARENT_SCOPE)
+    else()
+        set(${out_var} FALSE PARENT_SCOPE)
+    endif()
+endfunction()
+
 function(aros_copy_includes)
     set(options FLATTEN)
     set(oneValueArgs DEST SOURCE)
@@ -113,6 +183,16 @@ function(aros_copy_includes)
     cmake_parse_arguments(CI "${options}" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
 
     if(NOT CI_DEST OR NOT CI_SOURCE OR NOT CI_PATTERNS)
+        return()
+    endif()
+
+    # Headers from another architecture must not reach the SDK: they land under
+    # the same name as the right ones and whichever is copied last wins.
+    aros_arch_path_matches(_arch_ok "${CI_SOURCE}")
+    if(NOT _arch_ok)
+        get_property(_skipped GLOBAL PROPERTY AROS_STAGING_FOREIGN_ARCH)
+        list(APPEND _skipped "${CI_SOURCE} -> ${CI_DEST}")
+        set_property(GLOBAL PROPERTY AROS_STAGING_FOREIGN_ARCH "${_skipped}")
         return()
     endif()
 
@@ -322,21 +402,6 @@ set(AROS_ARCH_INCLUDE_TAGS
     "native"
 )
 
-# The arch/ subdirectories this configuration may build from. Directory names
-# there are <cpu>-<platform> with "all" as a wildcard, plus "native" as a
-# pseudo-platform shared by every non-hosted target. For pc-x86_64 that admits
-# x86_64-pc, all-pc, x86_64-all and all-native, and rejects the other 24,
-# among them ppc-chrp, all-mingw32 and all-linux.
-#
-# This is the same set BootstrapSDK.cmake passes to genmodule as --arch-dirs;
-# both read it from here so they cannot drift apart.
-set(AROS_ARCH_SOURCE_DIRS
-    "${AROS_TARGET_CPU}-${AROS_TARGET_PLATFORM}"
-    "all-${AROS_TARGET_PLATFORM}"
-    "${AROS_TARGET_CPU}-all"
-    "${AROS_TARGET_CPU}-native"
-    "all-native"
-)
 
 # aros_gate_arch(<target> <directory>)
 #
@@ -1184,10 +1249,34 @@ set(AROS_BOOT_ARCH_DIR "${AROS_BOOT_DIR}/${AROS_TARGET_PLATFORM}")
 # the order given. Targets that do not exist in this configuration are skipped
 # and reported, so a partial module tree still produces a usable package rather
 # than a configure-time error.
+
+# aros_package_arch_matches(<arch-dir>)
+#
+# Whether a package declared under arch/<arch-dir> belongs to this
+# configuration. Same rule as AROS_ARCH_SOURCE_DIRS: three architectures
+# declare $(AROSARCHDIR)/aros-bsp.pkg, and all three render to the same path,
+# so only one of them may build it.
+function(aros_package_arch_matches out_var arch_dir)
+    if(NOT arch_dir)
+        set(${out_var} TRUE PARENT_SCOPE)
+        return()
+    endif()
+    if(arch_dir IN_LIST AROS_ARCH_PACKAGE_DIRS)
+        set(${out_var} TRUE PARENT_SCOPE)
+    else()
+        set(${out_var} FALSE PARENT_SCOPE)
+    endif()
+endfunction()
+
 function(aros_make_package)
-    set(oneValueArgs NAME OUTPUT)
+    set(oneValueArgs NAME OUTPUT ARCH)
     set(multiValueArgs MODULES)
     cmake_parse_arguments(ARG "" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
+
+    aros_package_arch_matches(_arch_ok "${ARG_ARCH}")
+    if(NOT _arch_ok)
+        return()
+    endif()
 
     if(NOT ARG_NAME OR NOT ARG_OUTPUT)
         message(FATAL_ERROR "aros_make_package: NAME and OUTPUT are required")
@@ -1254,10 +1343,22 @@ function(aros_make_package)
         COMMAND_EXPAND_LISTS
     )
 
-    add_custom_target(${ARG_NAME} DEPENDS "${ARG_OUTPUT}")
+    # The mmake name is usually also a metatarget from the #MM rules, so a
+    # target under that name may already exist. Attach to it rather than
+    # declaring a second one.
+    if(TARGET ${ARG_NAME})
+        add_custom_target(${ARG_NAME}-file DEPENDS "${ARG_OUTPUT}")
+        add_dependencies(${ARG_NAME} ${ARG_NAME}-file)
+    else()
+        add_custom_target(${ARG_NAME} DEPENDS "${ARG_OUTPUT}")
+    endif()
+
+    get_property(_pkgs GLOBAL PROPERTY AROS_PACKAGE_TARGETS)
+    list(APPEND _pkgs ${ARG_NAME})
+    set_property(GLOBAL PROPERTY AROS_PACKAGE_TARGETS "${_pkgs}")
 endfunction()
 
-# The concrete package definitions live in cmake/Kickstart.cmake, which is
+# The kickstart aggregate lives in cmake/Kickstart.cmake, which is
 # included from CMakeLists.txt AFTER generated_targets.cmake, because
 # aros_make_package() needs the module targets to already exist.
 
@@ -1413,4 +1514,93 @@ function(aros_add_module_simple)
     if(ARG_LIBS)
         aros_link_libraries(${ARG_MMAKE_ID} ${ARG_LIBS})
     endif()
+endfunction()
+
+# aros_link_kickstart(NAME <id> OUTPUT <file> MODULES <target>... [USELIBS <l>...])
+#
+# %link_kickstart, from config/make.tmpl:3850. A few modules cannot be loaded
+# from a package: the bootstrap takes its entry point from the first executable
+# section of the first module it sees (arch/all-pc/bootstrap/elfloader.c:662),
+# so kernel, exec and task are linked into one relocatable ELF that the
+# bootstrap loads directly.
+#
+# MODULES arrives in declaration order with the startup module first, which is
+# the order the reference links them in and the reason the entry point lands
+# where the bootstrap expects it.
+function(aros_link_kickstart)
+    set(oneValueArgs NAME OUTPUT ARCH)
+    set(multiValueArgs MODULES USELIBS)
+    cmake_parse_arguments(ARG "" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
+
+    aros_package_arch_matches(_arch_ok "${ARG_ARCH}")
+    if(NOT _arch_ok)
+        return()
+    endif()
+
+    if(NOT ARG_NAME OR NOT ARG_OUTPUT OR NOT ARG_MODULES)
+        return()
+    endif()
+
+    set(PRESENT "")
+    set(MISSING "")
+    foreach(mod IN LISTS ARG_MODULES)
+        set(has_file FALSE)
+        if(TARGET ${mod})
+            get_target_property(mod_type ${mod} TYPE)
+            if(mod_type STREQUAL "EXECUTABLE" OR mod_type STREQUAL "STATIC_LIBRARY")
+                set(has_file TRUE)
+            endif()
+        endif()
+        if(has_file)
+            list(APPEND PRESENT ${mod})
+        else()
+            list(APPEND MISSING ${mod})
+        endif()
+    endforeach()
+
+    if(MISSING)
+        # A kickstart missing a module links but does not boot, so say so now.
+        message(WARNING
+            "🧩 ${ARG_NAME}: cannot link, module(s) not configured: ${MISSING}")
+        return()
+    endif()
+
+    set(_objs "")
+    foreach(mod IN LISTS PRESENT)
+        list(APPEND _objs "$<TARGET_FILE:${mod}>")
+    endforeach()
+
+    set(_libs "")
+    foreach(l IN LISTS ARG_USELIBS)
+        list(APPEND _libs "-l${l}")
+    endforeach()
+
+    get_filename_component(_dir "${ARG_OUTPUT}" DIRECTORY)
+
+    # -Wl,-Ur keeps the result relocatable while resolving what it can, which
+    # is what the reference passes. -nostdlib because there is no libc here and
+    # the modules bring their own startup.
+    add_custom_command(
+        OUTPUT "${ARG_OUTPUT}"
+        COMMAND "${CMAKE_COMMAND}" -E make_directory "${_dir}"
+        COMMAND "${CMAKE_C_COMPILER}" -nostdlib -static -Wl,-Ur
+                -o "${ARG_OUTPUT}" ${_objs} ${_libs}
+        DEPENDS ${PRESENT}
+        COMMENT "Kickstart ${ARG_NAME} -> ${ARG_OUTPUT}"
+        VERBATIM
+        COMMAND_EXPAND_LISTS)
+
+    # The mmake name is usually also a metatarget from the #MM rules, so a
+    # target under that name may already exist. Attach to it rather than
+    # declaring a second one.
+    if(TARGET ${ARG_NAME})
+        add_custom_target(${ARG_NAME}-file DEPENDS "${ARG_OUTPUT}")
+        add_dependencies(${ARG_NAME} ${ARG_NAME}-file)
+    else()
+        add_custom_target(${ARG_NAME} DEPENDS "${ARG_OUTPUT}")
+    endif()
+
+    get_property(_ks GLOBAL PROPERTY AROS_KICKSTART_TARGETS)
+    list(APPEND _ks ${ARG_NAME})
+    set_property(GLOBAL PROPERTY AROS_KICKSTART_TARGETS "${_ks}")
 endfunction()

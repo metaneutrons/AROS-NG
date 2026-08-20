@@ -152,6 +152,14 @@ if(GIT_FOUND AND EXISTS "${CMAKE_SOURCE_DIR}/.gitmodules")
     endif()
 endif()
 
+# 5d. Header staging skipped because it belongs to another architecture.
+get_property(_foreign_staging GLOBAL PROPERTY AROS_STAGING_FOREIGN_ARCH)
+if(_foreign_staging)
+    list(LENGTH _foreign_staging _n_fs)
+    message(STATUS
+        "🚫 AROS-NG: ${_n_fs} header staging rule(s) skipped (other architecture)")
+endif()
+
 # 5c. `ninja verify` compares what we emitted against the historic build's own
 #     macro expansion. Not part of `all`: it shells out to genmf for every
 #     mmakefile, which takes about half a minute on a cold cache.
