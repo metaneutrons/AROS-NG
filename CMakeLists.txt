@@ -78,6 +78,20 @@ foreach(_pair IN LISTS _gen_header_deps)
     endforeach()
 endforeach()
 
+# 4c. Targets excluded from `all` because their sources belong to another
+#     architecture. Reported, not silent: the count is how many declarations
+#     this configuration deliberately does not build.
+get_property(_foreign GLOBAL PROPERTY AROS_FOREIGN_ARCH_TARGETS)
+if(_foreign)
+    list(LENGTH _foreign _n_foreign)
+    set(_foreign_report "${CMAKE_BINARY_DIR}/generated_targets.foreign-arch-targets.txt")
+    string(REPLACE ";" "\n" _foreign_body "${_foreign}")
+    file(WRITE "${_foreign_report}" "${_foreign_body}\n")
+    message(STATUS
+        "🚫 AROS-NG: ${_n_foreign} target(s) kept out of `all` (other architecture) -> "
+        "${_foreign_report}")
+endif()
+
 # 5. Report what SDK header staging produced (populated while including
 #    generated_targets.cmake above).
 get_property(_staged GLOBAL PROPERTY AROS_STAGED_HEADERS)
@@ -136,6 +150,32 @@ if(GIT_FOUND AND EXISTS "${CMAKE_SOURCE_DIR}/.gitmodules")
             "or initialise individual paths. Full list:\n"
             "    ${_submodule_report}")
     endif()
+endif()
+
+# 5c. `ninja verify` compares what we emitted against the historic build's own
+#     macro expansion. Not part of `all`: it shells out to genmf for every
+#     mmakefile, which takes about half a minute on a cold cache.
+find_program(AROS_PYTHON3 NAMES python3)
+set(AROS_VERIFY_BIN
+    "${CMAKE_SOURCE_DIR}/tools/aros-tools/target/release/aros-verify")
+if(AROS_PYTHON3 AND EXISTS "${AROS_VERIFY_BIN}")
+    add_custom_target(verify
+        COMMAND "${AROS_VERIFY_BIN}"
+                --source "${CMAKE_SOURCE_DIR}"
+                --generated "${GENERATED_TARGETS_CMAKE}"
+                --work "${CMAKE_BINARY_DIR}/verify"
+        COMMENT "Comparing transpiled targets against the genmf expansion"
+        USES_TERMINAL
+        VERBATIM)
+    add_custom_target(verify-report
+        COMMAND "${AROS_VERIFY_BIN}"
+                --source "${CMAKE_SOURCE_DIR}"
+                --generated "${GENERATED_TARGETS_CMAKE}"
+                --work "${CMAKE_BINARY_DIR}/verify"
+                --no-gate
+        COMMENT "Same comparison, reporting only"
+        USES_TERMINAL
+        VERBATIM)
 endif()
 
 # 6. Aggregate target for the third-party fetches declared via %fetch. Not part

@@ -206,12 +206,14 @@ function(aros_bootstrap_sdk_includes)
         message(STATUS "🧹 AROS-NG: removing ${_n_stale} stale <mod>_libdefs.h from the shared SDK")
         file(REMOVE ${_stale_libdefs})
     endif()
+    # genmodule takes the list space-separated, CMake stores it with semicolons.
+    string(REPLACE ";" " " _arch_dirs_arg "${AROS_ARCH_SOURCE_DIRS}")
     execute_process(
         COMMAND "${CMAKE_SOURCE_DIR}/tools/aros-tools/target/release/aros-genmodule"
                 "--scan-dir" "${CMAKE_SOURCE_DIR}"
                 "--output-inc" "${SDK_INC}"
                 "--output-gen" "${AROS_GEN_DIR}"
-                "--arch-dirs" "${AROS_TARGET_CPU}-${AROS_TARGET_PLATFORM} all-${AROS_TARGET_PLATFORM} ${AROS_TARGET_CPU}-all all-native"
+                "--arch-dirs" "${_arch_dirs_arg}"
         RESULT_VARIABLE GENMODULE_RES
     )
 

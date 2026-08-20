@@ -322,6 +322,51 @@ set(AROS_ARCH_INCLUDE_TAGS
     "native"
 )
 
+# The arch/ subdirectories this configuration may build from. Directory names
+# there are <cpu>-<platform> with "all" as a wildcard, plus "native" as a
+# pseudo-platform shared by every non-hosted target. For pc-x86_64 that admits
+# x86_64-pc, all-pc, x86_64-all and all-native, and rejects the other 24,
+# among them ppc-chrp, all-mingw32 and all-linux.
+#
+# This is the same set BootstrapSDK.cmake passes to genmodule as --arch-dirs;
+# both read it from here so they cannot drift apart.
+set(AROS_ARCH_SOURCE_DIRS
+    "${AROS_TARGET_CPU}-${AROS_TARGET_PLATFORM}"
+    "all-${AROS_TARGET_PLATFORM}"
+    "${AROS_TARGET_CPU}-all"
+    "${AROS_TARGET_CPU}-native"
+    "all-native"
+)
+
+# aros_gate_arch(<target> <directory>)
+#
+# Keeps a target out of `all` when its sources live under an arch/ directory
+# belonging to a different architecture. The transpiler is target-agnostic and
+# emits every declaration it finds, so without this `ninja all` tries to build
+# the PowerPC and Windows-hosted kernels against an x86 SDK. 45 objects failed
+# that way, with errors that look like missing headers.
+#
+# Excluded rather than dropped: the target stays in the build graph and can be
+# named explicitly, which is what makes it possible to check whether it would
+# build at all.
+function(aros_gate_arch target directory)
+    if(NOT directory OR NOT TARGET ${target})
+        return()
+    endif()
+    file(RELATIVE_PATH _rel "${CMAKE_SOURCE_DIR}" "${directory}")
+    if(NOT _rel MATCHES "^arch/([^/]+)")
+        return()
+    endif()
+    set(_arch_dir "${CMAKE_MATCH_1}")
+    if(_arch_dir IN_LIST AROS_ARCH_SOURCE_DIRS)
+        return()
+    endif()
+    set_target_properties(${target} PROPERTIES EXCLUDE_FROM_ALL TRUE)
+    get_property(_n GLOBAL PROPERTY AROS_FOREIGN_ARCH_TARGETS)
+    list(APPEND _n "${target} (arch/${_arch_dir})")
+    set_property(GLOBAL PROPERTY AROS_FOREIGN_ARCH_TARGETS "${_n}")
+endfunction()
+
 # aros_apply_includes(<target> [MODULE_DIR <dir>] INCLUDES <dirs...>
 #                     ARCH_INCLUDES <tag|dir...>)
 #
@@ -757,6 +802,7 @@ function(aros_add_library)
             RUNTIME_OUTPUT_DIRECTORY "${AROS_LIBS_DIR}"
             LINKER_LANGUAGE C
         )
+        aros_gate_arch(${ARG_MMAKE_ID} "${ARG_DIRECTORY}")
         aros_apply_includes(${ARG_MMAKE_ID}
             MODULE_DIR "${ARG_DIRECTORY}"
             INCLUDES ${ARG_INCLUDES}
@@ -813,6 +859,7 @@ function(aros_add_device)
             RUNTIME_OUTPUT_DIRECTORY "${AROS_DEVS_DIR}"
             LINKER_LANGUAGE C
         )
+        aros_gate_arch(${ARG_MMAKE_ID} "${ARG_DIRECTORY}")
         aros_apply_includes(${ARG_MMAKE_ID}
             MODULE_DIR "${ARG_DIRECTORY}"
             INCLUDES ${ARG_INCLUDES}
@@ -869,6 +916,7 @@ function(aros_add_resource)
             RUNTIME_OUTPUT_DIRECTORY "${AROS_LIBS_DIR}"
             LINKER_LANGUAGE C
         )
+        aros_gate_arch(${ARG_MMAKE_ID} "${ARG_DIRECTORY}")
         aros_apply_includes(${ARG_MMAKE_ID}
             MODULE_DIR "${ARG_DIRECTORY}"
             INCLUDES ${ARG_INCLUDES}
@@ -925,6 +973,7 @@ function(aros_add_hidd)
             RUNTIME_OUTPUT_DIRECTORY "${AROS_CLASSES_DIR}"
             LINKER_LANGUAGE C
         )
+        aros_gate_arch(${ARG_MMAKE_ID} "${ARG_DIRECTORY}")
         aros_apply_includes(${ARG_MMAKE_ID}
             MODULE_DIR "${ARG_DIRECTORY}"
             INCLUDES ${ARG_INCLUDES}
@@ -989,6 +1038,7 @@ function(aros_add_linklib)
         set_target_properties(${ARG_MMAKE_ID} PROPERTIES
             LINKER_LANGUAGE C
         )
+        aros_gate_arch(${ARG_MMAKE_ID} "${ARG_DIRECTORY}")
         aros_apply_includes(${ARG_MMAKE_ID}
             MODULE_DIR "${ARG_DIRECTORY}"
             INCLUDES ${ARG_INCLUDES}
@@ -1042,6 +1092,7 @@ function(aros_add_program)
             RUNTIME_OUTPUT_DIRECTORY "${AROS_C_DIR}"
             LINKER_LANGUAGE C
         )
+        aros_gate_arch(${ARG_MMAKE_ID} "${ARG_DIRECTORY}")
         aros_apply_includes(${ARG_MMAKE_ID}
             MODULE_DIR "${ARG_DIRECTORY}"
             INCLUDES ${ARG_INCLUDES}
