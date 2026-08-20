@@ -172,6 +172,7 @@ if(AROS_PYTHON3 AND EXISTS "${AROS_VERIFY_BIN}")
                 --source "${CMAKE_SOURCE_DIR}"
                 --generated "${GENERATED_TARGETS_CMAKE}"
                 --work "${CMAKE_BINARY_DIR}/verify"
+                --build-dir "${CMAKE_BINARY_DIR}"
         COMMENT "Comparing transpiled targets against the genmf expansion"
         USES_TERMINAL
         VERBATIM)
@@ -180,6 +181,7 @@ if(AROS_PYTHON3 AND EXISTS "${AROS_VERIFY_BIN}")
                 --source "${CMAKE_SOURCE_DIR}"
                 --generated "${GENERATED_TARGETS_CMAKE}"
                 --work "${CMAKE_BINARY_DIR}/verify"
+                --build-dir "${CMAKE_BINARY_DIR}"
                 --no-gate
         COMMENT "Same comparison, reporting only"
         USES_TERMINAL
