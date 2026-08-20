@@ -536,7 +536,12 @@ function(aros_apply_includes target_name)
     # -iquote reproduces that without writing into the source tree: it applies
     # only to the quoted form and is searched ahead of every -I, so `<strings.h>`
     # still reaches the POSIX header.
-    set(QUOTE_DIRS ${GEN_DIRS} ${GENERIC_DIRS} ${FALLBACK_DIRS})
+    #
+    # The order has to be the same as for -I, ARCH_DIRS included. Leaving them
+    # out put every -iquote path ahead of every architecture path, so
+    # `#include "kernel_debug.h"` in arch/x86_64-pc/kernel resolved to
+    # rom/kernel's header instead of arch/all-pc's, and __cli went missing.
+    set(QUOTE_DIRS ${GEN_DIRS} ${ARCH_DIRS} ${GENERIC_DIRS} ${FALLBACK_DIRS})
     if(QUOTE_DIRS)
         list(REMOVE_DUPLICATES QUOTE_DIRS)
         foreach(d IN LISTS QUOTE_DIRS)
@@ -1577,13 +1582,15 @@ function(aros_link_kickstart)
 
     get_filename_component(_dir "${ARG_OUTPUT}" DIRECTORY)
 
-    # -Wl,-Ur keeps the result relocatable while resolving what it can, which
-    # is what the reference passes. -nostdlib because there is no libc here and
-    # the modules bring their own startup.
+    # Linked with lld directly, as every module target here is: the reference
+    # passes -Wl,-Ur, but that is a GNU-ld option and driving clang would hand
+    # the job to the host linker, which rejects it. -r does what is needed,
+    # keeping the output relocatable so the bootstrap can load it, and the
+    # modules are already relocatable objects.
     add_custom_command(
         OUTPUT "${ARG_OUTPUT}"
         COMMAND "${CMAKE_COMMAND}" -E make_directory "${_dir}"
-        COMMAND "${CMAKE_C_COMPILER}" -nostdlib -static -Wl,-Ur
+        COMMAND "${AROS_LLD_BIN}" -r
                 -o "${ARG_OUTPUT}" ${_objs} ${_libs}
         DEPENDS ${PRESENT}
         COMMENT "Kickstart ${ARG_NAME} -> ${ARG_OUTPUT}"
