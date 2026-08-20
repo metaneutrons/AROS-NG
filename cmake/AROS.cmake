@@ -579,36 +579,51 @@ function(aros_resolve_arch_sources out_sources out_dropped module_dir)
 
     set(OVERRIDE_NAMES "")
     set(ARCH_FILES "")
+    set(CLAIMED_NAMES "")
 
-    foreach(entry IN LISTS AS_ARCH_SOURCES)
-        # "<tag>|<dir>|<f1>,<f2>,..."
-        string(REPLACE "|" ";" parts "${entry}")
-        list(LENGTH parts n)
-        if(NOT n EQUAL 3)
-            continue()
-        endif()
-        list(GET parts 0 tag)
-        list(GET parts 1 dir)
-        list(GET parts 2 names)
+    # Two architecture directories can declare the same file, and both tags can
+    # apply: for raspi-aarch64, arch/aarch64-all/exec (arch=aarch64) and
+    # arch/aarch64-native/exec (arch=raspi-aarch64) both provide cachecleare and
+    # preparecontext. Taking both yields duplicate symbols at link time.
+    #
+    # Walk the tags most specific first -- that is the order
+    # AROS_ARCH_INCLUDE_TAGS is built in -- and let the first declaration to
+    # claim a base name keep it.
+    foreach(want_tag IN LISTS AROS_ARCH_INCLUDE_TAGS)
+        foreach(entry IN LISTS AS_ARCH_SOURCES)
+            # "<tag>|<dir>|<f1>,<f2>,..."
+            string(REPLACE "|" ";" parts "${entry}")
+            list(LENGTH parts n)
+            if(NOT n EQUAL 3)
+                continue()
+            endif()
+            list(GET parts 0 tag)
+            list(GET parts 1 dir)
+            list(GET parts 2 names)
 
-        if(NOT tag IN_LIST AROS_ARCH_INCLUDE_TAGS)
-            continue()
-        endif()
+            if(NOT tag STREQUAL want_tag)
+                continue()
+            endif()
 
-        set(abs_dir "${CMAKE_SOURCE_DIR}/${dir}")
-        if(NOT IS_DIRECTORY "${abs_dir}")
-            continue()
-        endif()
+            set(abs_dir "${CMAKE_SOURCE_DIR}/${dir}")
+            if(NOT IS_DIRECTORY "${abs_dir}")
+                continue()
+            endif()
 
-        string(REPLACE "," ";" name_list "${names}")
-        aros_resolve_sources(RESOLVED "${abs_dir}" ${name_list})
-        foreach(f IN LISTS RESOLVED)
-            list(APPEND ARCH_FILES "${f}")
-        endforeach()
-        # Record the names regardless of whether the file resolved: a declared
-        # override means the generic version is not meant to be built.
-        foreach(nm IN LISTS name_list)
-            list(APPEND OVERRIDE_NAMES "${nm}")
+            string(REPLACE "," ";" name_list "${names}")
+            foreach(nm IN LISTS name_list)
+                # Record the name regardless of whether the file resolves: a
+                # declared override means the generic version is not wanted.
+                list(APPEND OVERRIDE_NAMES "${nm}")
+                if(nm IN_LIST CLAIMED_NAMES)
+                    continue()
+                endif()
+                list(APPEND CLAIMED_NAMES "${nm}")
+                aros_resolve_sources(RESOLVED "${abs_dir}" "${nm}")
+                foreach(f IN LISTS RESOLVED)
+                    list(APPEND ARCH_FILES "${f}")
+                endforeach()
+            endforeach()
         endforeach()
     endforeach()
 
