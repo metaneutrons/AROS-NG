@@ -61,11 +61,17 @@ add_compile_options(
     -Wno-unused-parameter
 )
 
+# The generated trees come first. The historic build has no -I into the source
+# tree at all: compiler/include is staged into the SDK by %copy_includes, and
+# genmodule then writes over what it supersedes, so the generated header is the
+# one that gets found. Keeping compiler/include ahead of the SDK inverted that,
+# and the hand-written clib/input_protos.h -- which predates genmodule and
+# still declares PeekQualifier through AROS_LP0 -- shadowed the generated one.
 include_directories(
-    "${CMAKE_SOURCE_DIR}/compiler/include"
-    "${CMAKE_SOURCE_DIR}/arch/all-native/include"
     "${CMAKE_BINARY_DIR}/GENINCDIR"
     "${CMAKE_BINARY_DIR}/SDK/include"
+    "${CMAKE_SOURCE_DIR}/compiler/include"
+    "${CMAKE_SOURCE_DIR}/arch/all-native/include"
 )
 
 # =============================================================================
