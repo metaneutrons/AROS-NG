@@ -152,3 +152,41 @@ function(aros_ilbm_header)
         COMMENT "Generating ${IH_OUTPUT} from ${IH_ILBM}"
         VERBATIM)
 endfunction()
+
+# aros_tool_header(TOOL <target> OUTPUT <file> [WORKDIR <dir>] [DEPENDS <f>...])
+#
+# For a generator that writes to stdout and reads its inputs from the current
+# directory rather than from arguments. workbench/libs/muimaster/buildincludes
+# is built that way: it walks the class headers next to it and prints one
+# combined libraries/mui.h.
+function(aros_tool_header)
+    set(oneValueArgs TOOL OUTPUT WORKDIR)
+    set(multiValueArgs DEPENDS)
+    cmake_parse_arguments(TH "" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
+
+    get_filename_component(_dir "${TH_OUTPUT}" DIRECTORY)
+    file(MAKE_DIRECTORY "${_dir}")
+
+    set(_wd "${TH_WORKDIR}")
+    if(NOT _wd)
+        set(_wd "${CMAKE_SOURCE_DIR}")
+    endif()
+
+    add_custom_command(
+        OUTPUT "${TH_OUTPUT}"
+        COMMAND "${CMAKE_COMMAND}" -E chdir "${_wd}" "${TH_TOOL}" > "${TH_OUTPUT}"
+        DEPENDS "${TH_TOOL}" ${TH_DEPENDS}
+        COMMENT "Generating ${TH_OUTPUT}"
+        VERBATIM)
+endfunction()
+
+# -----------------------------------------------------------------------------
+# buildincludes: libraries/mui.h
+# -----------------------------------------------------------------------------
+#
+# muimaster does not ship libraries/mui.h; it generates one from mui.h,
+# macros.h and every class header (workbench/libs/muimaster/mmakefile.src:463).
+# Missing, it was the single largest gap in the build: 215 compile failures,
+# and the undeclared identifiers that follow from them.
+# Built and run at configure time by GeneratedHeaders.cmake, not declared as a
+# build target: its output has to exist before the first compile.

@@ -83,3 +83,47 @@ aros_ilbm_header(
     ILBM "${CMAKE_SOURCE_DIR}/rom/cgxbootpic/bootpic.ilbm"
     OUTPUT "${_gen}/rom/cgxbootpic/bootpic_image.h")
 _aros_needs_header(kernel-cgxbootpic "${_gen}/rom/cgxbootpic/bootpic_image.h")
+
+# -----------------------------------------------------------------------------
+# libraries/mui.h
+# -----------------------------------------------------------------------------
+#
+# workbench/libs/muimaster/mmakefile.src:459-465. muimaster does not ship this
+# header; it generates one from mui.h, macros.h and every class header. Missing,
+# it was the largest single gap in the build: 215 compile failures plus the
+# undeclared identifiers that follow.
+#
+# Generated at configure time rather than as a build step, the same way the SDK
+# headers are bootstrapped. Every consumer includes it as <libraries/mui.h>, so
+# it has to exist before the first compile; making several hundred targets
+# depend on one custom command would express that far more expensively. The
+# trade-off is the same one BootstrapSDK.cmake makes: editing a muimaster class
+# header needs a re-configure.
+set(_mui_header "${CMAKE_BINARY_DIR}/GENINCDIR/libraries/mui.h")
+set(_mui_dir "${CMAKE_SOURCE_DIR}/workbench/libs/muimaster")
+if(EXISTS "${_mui_dir}/buildincludes.c" AND NOT EXISTS "${_mui_header}")
+    file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/GENINCDIR/libraries")
+    set(_mui_tool "${AROS_HOST_TOOL_DIR}/buildincludes")
+    execute_process(
+        COMMAND "${AROS_HOST_CC}" -O2 -w "${_mui_dir}/buildincludes.c" -o "${_mui_tool}"
+        RESULT_VARIABLE _mui_cc_res
+        ERROR_VARIABLE _mui_cc_err)
+    if(_mui_cc_res EQUAL 0)
+        execute_process(
+            COMMAND "${_mui_tool}"
+            WORKING_DIRECTORY "${_mui_dir}"
+            OUTPUT_FILE "${_mui_header}"
+            RESULT_VARIABLE _mui_res
+            ERROR_VARIABLE _mui_err)
+        if(NOT _mui_res EQUAL 0)
+            message(WARNING "buildincludes failed, libraries/mui.h not generated: ${_mui_err}")
+        endif()
+    else()
+        message(WARNING "cannot build buildincludes: ${_mui_cc_err}")
+    endif()
+endif()
+if(EXISTS "${_mui_header}")
+    file(STRINGS "${_mui_header}" _mui_lines)
+    list(LENGTH _mui_lines _n_mui)
+    message(STATUS "🧵 AROS-NG: generated libraries/mui.h (${_n_mui} lines)")
+endif()
