@@ -34,7 +34,16 @@ if(AROS_TARGET_CPU STREQUAL "x86_64")
 elseif(AROS_TARGET_CPU STREQUAL "aarch64")
     add_compile_options(-target aarch64-unknown-elf)
 elseif(AROS_TARGET_CPU STREQUAL "arm")
-    add_compile_options(-target arm-none-eabi)
+    # The legacy build takes the ISA flags from Autoconf (ISA_ARM_FLAGS), which
+    # has no counterpart here, so clang fell back to its arm-none-eabi default.
+    # That default predates ARMv7 and rejects the data barriers and other
+    # instructions arch/arm-native uses.
+    #
+    # Fixed at ARMv7 (Pi 2 and later). The tree's raspi BSP is bcm2835, i.e.
+    # Pi 1, whose ARMv6 core cannot run this code; covering it would need
+    # per-BSP flags and three source sites reworked. Anything from Pi 3 on runs
+    # the rpi-aarch64 target instead, so no supported board is lost.
+    add_compile_options(-target arm-none-eabi -mcpu=cortex-a7 -mfpu=neon-vfpv4)
 endif()
 
 add_compile_definitions(
