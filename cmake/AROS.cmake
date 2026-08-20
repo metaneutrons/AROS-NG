@@ -1199,9 +1199,101 @@ function(aros_add_program)
     endif()
 endfunction()
 
-# Macro: aros_add_custom_target
+# aros_add_custom_target(TARGET <name> MMAKE_ID <id> MODTYPE <type> ...)
+#
+# A module whose modtype the transpiler has no dedicated variant for. This was
+# an empty stub, and 97 declarations with 313 source files routed into it:
+# every filesystem handler, 30 USB classes, 40 Zune/MUI classes, 9 Reaction
+# classes. No output and no report, which is why kernel-package-base could not
+# find kernel-fs-con or kernel-fs-ram and kernel-package-fs was missing four of
+# its five members.
+#
+# In the reference, modtype decides only the file suffix and the install
+# directory (config/make.tmpl:2048-2095); the compilation is identical to
+# modtype=library. So this builds like aros_add_library and differs only in
+# where the result lands.
 function(aros_add_custom_target)
-    # Stub for custom targets
+    set(oneValueArgs TARGET MMAKE_ID DIRECTORY MODTYPE)
+    set(multiValueArgs SOURCES LIBS USELIBS INCLUDES ARCH_INCLUDES
+        DEFINES UNDEFINES COMPILE_OPTIONS ARCH_SOURCES
+        ARCH_DEFINES ARCH_COMPILE_OPTIONS)
+    cmake_parse_arguments(ARG "" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
+
+    if(NOT ARG_SOURCES OR NOT ARG_MMAKE_ID)
+        return()
+    endif()
+
+    # Install location per modtype, from make.tmpl:2048-2095.
+    set(_moddir "${AROS_LIBS_DIR}")
+    if(ARG_MODTYPE STREQUAL "handler")
+        set(_moddir "${AROS_BUILD_DIR}/SYS/L")
+    elseif(ARG_MODTYPE STREQUAL "mui" OR ARG_MODTYPE STREQUAL "mcc"
+           OR ARG_MODTYPE STREQUAL "mcp")
+        set(_moddir "${AROS_CLASSES_DIR}/Zune")
+    elseif(ARG_MODTYPE STREQUAL "usbclass")
+        set(_moddir "${AROS_CLASSES_DIR}/USB")
+    elseif(ARG_MODTYPE STREQUAL "btclass")
+        set(_moddir "${AROS_CLASSES_DIR}/Bluetooth")
+    elseif(ARG_MODTYPE STREQUAL "image" OR ARG_MODTYPE STREQUAL "class")
+        set(_moddir "${AROS_CLASSES_DIR}")
+    elseif(ARG_MODTYPE STREQUAL "hook")
+        set(_moddir "${AROS_BUILD_DIR}/SYS/Resources")
+    endif()
+
+    # A handler is named <name>-handler, everything else <name>.<modtype>; the
+    # package declarations spell both out (make.tmpl:3745-3750). The mmake id
+    # rather than the module name, as every module builder here does, since two
+    # declarations can share a modname.
+    if(ARG_MODTYPE STREQUAL "handler")
+        set(_outname "${ARG_MMAKE_ID}-handler")
+    elseif(ARG_MODTYPE)
+        set(_outname "${ARG_MMAKE_ID}.${ARG_MODTYPE}")
+    else()
+        set(_outname "${ARG_MMAKE_ID}.library")
+    endif()
+
+    aros_resolve_sources(RESOLVED_SOURCES "${ARG_DIRECTORY}" ${ARG_SOURCES})
+    if(ARG_ARCH_SOURCES)
+        aros_resolve_arch_sources(_ARCH_RESOLVED _ARCH_DROPPED "${ARG_DIRECTORY}"
+            SOURCES ${RESOLVED_SOURCES}
+            ARCH_SOURCES ${ARG_ARCH_SOURCES}
+        )
+        if(_ARCH_RESOLVED)
+            set(RESOLVED_SOURCES "${_ARCH_RESOLVED}")
+            list(REMOVE_ITEM RESOLVED_SOURCES "")
+        endif()
+    endif()
+    if(NOT RESOLVED_SOURCES)
+        return()
+    endif()
+    aros_mark_preprocessed_asm(${RESOLVED_SOURCES})
+
+    add_executable(${ARG_MMAKE_ID} ${RESOLVED_SOURCES})
+    target_compile_definitions(${ARG_MMAKE_ID} PRIVATE
+        LC_LIBDEFS_FILE="${ARG_TARGET}_libdefs.h"
+        __AROS_MODNAME__=${ARG_TARGET}
+    )
+    set_target_properties(${ARG_MMAKE_ID} PROPERTIES
+        OUTPUT_NAME "${_outname}"
+        RUNTIME_OUTPUT_DIRECTORY "${_moddir}"
+        LINKER_LANGUAGE C
+    )
+    aros_gate_arch(${ARG_MMAKE_ID} "${ARG_DIRECTORY}")
+    aros_apply_includes(${ARG_MMAKE_ID}
+        MODULE_DIR "${ARG_DIRECTORY}"
+        INCLUDES ${ARG_INCLUDES}
+        ARCH_INCLUDES ${ARG_ARCH_INCLUDES}
+    )
+    aros_apply_flags(${ARG_MMAKE_ID}
+        DEFINES ${ARG_DEFINES}
+        UNDEFINES ${ARG_UNDEFINES}
+        COMPILE_OPTIONS ${ARG_COMPILE_OPTIONS}
+        ARCH_DEFINES ${ARG_ARCH_DEFINES}
+        ARCH_COMPILE_OPTIONS ${ARG_ARCH_COMPILE_OPTIONS}
+    )
+    if(ARG_LIBS)
+        aros_link_libraries(${ARG_MMAKE_ID} ${ARG_LIBS})
+    endif()
 endfunction()
 
 # =============================================================================
