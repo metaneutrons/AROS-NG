@@ -8,6 +8,10 @@
       "generator": "Ninja",
       "binaryDir": "${sourceDir}/build/pc-x86_64",
       "cacheVariables": {
+        "CMAKE_SYSTEM_NAME": "Generic",
+        "CMAKE_SYSTEM_PROCESSOR": "x86_64",
+        "CMAKE_C_COMPILER": "/opt/homebrew/opt/llvm/bin/clang",
+        "CMAKE_CXX_COMPILER": "/opt/homebrew/opt/llvm/bin/clang++",
         "AROS_TARGET_ARCH": "x86_64",
         "AROS_TARGET_CPU": "x86_64",
         "AROS_TARGET_PLATFORM": "pc",
@@ -22,6 +26,10 @@
       "generator": "Ninja",
       "binaryDir": "${sourceDir}/build/rpi-aarch64",
       "cacheVariables": {
+        "CMAKE_SYSTEM_NAME": "Generic",
+        "CMAKE_SYSTEM_PROCESSOR": "aarch64",
+        "CMAKE_C_COMPILER": "/opt/homebrew/opt/llvm/bin/clang",
+        "CMAKE_CXX_COMPILER": "/opt/homebrew/opt/llvm/bin/clang++",
         "AROS_TARGET_ARCH": "arm",
         "AROS_TARGET_CPU": "aarch64",
         "AROS_TARGET_PLATFORM": "raspi",
@@ -36,6 +44,10 @@
       "generator": "Ninja",
       "binaryDir": "${sourceDir}/build/arm-raspi",
       "cacheVariables": {
+        "CMAKE_SYSTEM_NAME": "Generic",
+        "CMAKE_SYSTEM_PROCESSOR": "arm",
+        "CMAKE_C_COMPILER": "/opt/homebrew/opt/llvm/bin/clang",
+        "CMAKE_CXX_COMPILER": "/opt/homebrew/opt/llvm/bin/clang++",
         "AROS_TARGET_ARCH": "arm",
         "AROS_TARGET_CPU": "arm",
         "AROS_TARGET_PLATFORM": "raspi",

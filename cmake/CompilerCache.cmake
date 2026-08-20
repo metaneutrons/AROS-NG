@@ -1,4 +1,4 @@
-# AROS-NG 2.0: Compiler Cache Setup (sccache / ccache)
+# AROS-NG: Compiler Cache Setup (sccache / ccache)
 
 find_program(SCCACHE_BIN sccache)
 find_program(CCACHE_BIN ccache)

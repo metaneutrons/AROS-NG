@@ -1,4 +1,4 @@
-name: AROS-NG 2.0 Multi-Platform CI Matrix
+name: AROS-NG Multi-Platform CI Matrix
 
 on:
   push:
