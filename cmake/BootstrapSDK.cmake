@@ -1,5 +1,77 @@
 # AROS-NG SDK Header Bootstrap
 
+# aros_generate_asm_header(<sdk_inc> <geninc>)
+#
+# Compiles compiler/include/asm.c to assembly and turns the .ascii strings it
+# contains into aros/<cpu>/asm.h, in both include roots.
+#
+# The token differs by toolchain: GNU as emits .asciz, LLVM emits .ascii
+# (see compiler/include/mmakefile.src:160).
+function(aros_generate_asm_header sdk_inc geninc)
+    set(_src "${CMAKE_SOURCE_DIR}/compiler/include/asm.c")
+    if(NOT EXISTS "${_src}")
+        return()
+    endif()
+
+    set(_asm "${CMAKE_BINARY_DIR}/asm.s")
+    set(_incs
+        "-I${CMAKE_SOURCE_DIR}/compiler/include"
+        "-I${CMAKE_SOURCE_DIR}/arch/all-native/include"
+        "-I${geninc}"
+        "-I${sdk_inc}"
+        "-I${CMAKE_SOURCE_DIR}/rom/exec"
+        "-I${CMAKE_SOURCE_DIR}/rom/kernel"
+    )
+    # The architecture directories that apply, same selection as the includes.
+    foreach(d "${AROS_TARGET_CPU}-${AROS_TARGET_PLATFORM}" "all-${AROS_TARGET_PLATFORM}"
+              "${AROS_TARGET_CPU}-all" "all-native")
+        foreach(m exec kernel)
+            if(IS_DIRECTORY "${CMAKE_SOURCE_DIR}/arch/${d}/${m}")
+                list(APPEND _incs "-I${CMAKE_SOURCE_DIR}/arch/${d}/${m}")
+            endif()
+        endforeach()
+    endforeach()
+
+    execute_process(
+        COMMAND "${CMAKE_C_COMPILER}"
+                -target "${AROS_TARGET_CPU}-unknown-elf"
+                -ffreestanding -fno-builtin
+                ${_incs}
+                -S "${_src}" -o "${_asm}"
+        RESULT_VARIABLE _res
+        ERROR_VARIABLE _err
+        OUTPUT_QUIET
+    )
+    if(NOT _res EQUAL 0 OR NOT EXISTS "${_asm}")
+        message(STATUS "⚠️  AROS-NG: could not generate aros/${AROS_TARGET_CPU}/asm.h")
+        return()
+    endif()
+
+    file(STRINGS "${_asm}" _lines REGEX "\\.(ascii|asciz)")
+    set(_out "")
+    foreach(line IN LISTS _lines)
+        # Take the first quoted field and drop the `$` markers, as the
+        # reference's `cut -d'"' -f2 | sed 's/\$//g'` does.
+        if(line MATCHES "\"([^\"]*)\"")
+            set(_text "${CMAKE_MATCH_1}")
+            string(REPLACE "$" "" _text "${_text}")
+            string(APPEND _out "${_text}\n")
+        endif()
+    endforeach()
+
+    if(_out STREQUAL "")
+        message(STATUS "⚠️  AROS-NG: aros/${AROS_TARGET_CPU}/asm.h would be empty")
+        return()
+    endif()
+
+    foreach(root "${sdk_inc}" "${geninc}")
+        file(WRITE "${root}/aros/${AROS_TARGET_CPU}/asm.h" "${_out}")
+    endforeach()
+    string(REGEX MATCHALL "\n" _nl "${_out}")
+    list(LENGTH _nl _n)
+    message(STATUS "🔧 AROS-NG: generated aros/${AROS_TARGET_CPU}/asm.h (${_n} lines)")
+endfunction()
+
 function(aros_bootstrap_sdk_includes)
     set(SDK_INC "${CMAKE_BINARY_DIR}/SDK/include")
     file(MAKE_DIRECTORY "${SDK_INC}/aros")
@@ -16,8 +88,21 @@ function(aros_bootstrap_sdk_includes)
     file(COPY "${CMAKE_SOURCE_DIR}/compiler/arossupport/include/"
          DESTINATION "${SDK_INC}/aros"
     )
+    if(EXISTS "${CMAKE_SOURCE_DIR}/compiler/autoinit/autoinit.h")
+        file(COPY_FILE "${CMAKE_SOURCE_DIR}/compiler/autoinit/autoinit.h" "${SDK_INC}/aros/autoinit.h")
+    endif()
 
-    # 3. Copy CRT and POSIX headers (alloca.h, inttypes, etc.)
+    # 3. Copy CRT and POSIX headers (stdio.h, stdlib.h, string.h, alloca.h, unistd.h, etc.)
+    if(EXISTS "${CMAKE_SOURCE_DIR}/compiler/crt/stdc/include/aros/stdc/")
+        file(COPY "${CMAKE_SOURCE_DIR}/compiler/crt/stdc/include/aros/stdc/"
+             DESTINATION "${SDK_INC}"
+        )
+    endif()
+    if(EXISTS "${CMAKE_SOURCE_DIR}/compiler/crt/posixc/include/aros/posixc/")
+        file(COPY "${CMAKE_SOURCE_DIR}/compiler/crt/posixc/include/aros/posixc/"
+             DESTINATION "${SDK_INC}"
+        )
+    endif()
     if(EXISTS "${CMAKE_SOURCE_DIR}/compiler/crt/posixc/include/")
         file(COPY "${CMAKE_SOURCE_DIR}/compiler/crt/posixc/include/"
              DESTINATION "${SDK_INC}"
@@ -35,6 +120,11 @@ function(aros_bootstrap_sdk_includes)
              DESTINATION "${SDK_INC}/aros/x86_64"
         )
     endif()
+    if(EXISTS "${CMAKE_SOURCE_DIR}/arch/i386-all/include/aros/")
+        file(COPY "${CMAKE_SOURCE_DIR}/arch/i386-all/include/aros/"
+             DESTINATION "${SDK_INC}/aros/i386"
+        )
+    endif()
 
     if(EXISTS "${CMAKE_SOURCE_DIR}/arch/aarch64-all/include/aros/")
         file(COPY "${CMAKE_SOURCE_DIR}/arch/aarch64-all/include/aros/"
@@ -44,6 +134,11 @@ function(aros_bootstrap_sdk_includes)
 
     if(EXISTS "${CMAKE_SOURCE_DIR}/arch/arm-all/include/aros/")
         file(COPY "${CMAKE_SOURCE_DIR}/arch/arm-all/include/aros/"
+             DESTINATION "${SDK_INC}/aros/arm"
+        )
+    endif()
+    if(EXISTS "${CMAKE_SOURCE_DIR}/arch/arm-all/include/aros-armel/")
+        file(COPY "${CMAKE_SOURCE_DIR}/arch/arm-all/include/aros-armel/"
              DESTINATION "${SDK_INC}/aros/arm"
         )
     endif()
@@ -91,13 +186,43 @@ function(aros_bootstrap_sdk_includes)
 #endif /* AROS_CONFIG_H */
 ")
 
-    # 7. Run pure-Rust aros-genmodule to generate proto/, clib/, defines/ headers from .conf files
+    # 7. Run pure-Rust aros-genmodule to generate proto/, clib/, defines/,
+    #    interface/ and the per-module <mod>_libdefs.h.
+    #
+    #    Public headers go to the shared SDK; <mod>_libdefs.h goes to a
+    #    per-module directory under AROS_GEN_DIR, because it is module-private
+    #    (LIBBASE, LIBBASETYPE, the cdefprivate block) and 26 .conf stems occur
+    #    more than once in the tree. aros_apply_includes() puts the matching
+    #    directory on each target's include path.
+    set(AROS_GEN_DIR "${CMAKE_BINARY_DIR}/gen")
+
+    # Older builds wrote <mod>_libdefs.h into the shared SDK. Those copies would
+    # win over the per-module ones, because directory-level include paths are
+    # searched before target-level ones. Remove them so the move takes effect in
+    # an existing build tree, not only in a fresh one.
+    file(GLOB _stale_libdefs "${SDK_INC}/*_libdefs.h")
+    if(_stale_libdefs)
+        list(LENGTH _stale_libdefs _n_stale)
+        message(STATUS "🧹 AROS-NG: removing ${_n_stale} stale <mod>_libdefs.h from the shared SDK")
+        file(REMOVE ${_stale_libdefs})
+    endif()
     execute_process(
         COMMAND "${CMAKE_SOURCE_DIR}/tools/aros-tools/target/release/aros-genmodule"
                 "--scan-dir" "${CMAKE_SOURCE_DIR}"
                 "--output-inc" "${SDK_INC}"
+                "--output-gen" "${AROS_GEN_DIR}"
+                "--arch-dirs" "${AROS_TARGET_CPU}-${AROS_TARGET_PLATFORM} all-${AROS_TARGET_PLATFORM} ${AROS_TARGET_CPU}-all all-native"
         RESULT_VARIABLE GENMODULE_RES
     )
+
+    # 8. aros/<cpu>/asm.h, needed by every assembly source.
+    #
+    # Not a copy but a code generation step: compiler/include/asm.c is compiled
+    # to assembly, and the .ascii strings it emits are the header's contents.
+    # This mirrors compiler/include/mmakefile.src:170. Without it every .s/.S
+    # file fails at `#include <aros/<cpu>/asm.h>`, which is what the
+    # architecture-specific source overrides consist of.
+    aros_generate_asm_header("${SDK_INC}" "${CMAKE_BINARY_DIR}/GENINCDIR")
 
     message(STATUS "✅ AROS-NG SDK include tree populated at: ${SDK_INC}")
 endfunction()
