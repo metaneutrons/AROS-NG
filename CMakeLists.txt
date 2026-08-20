@@ -23,7 +23,11 @@ include("${CMAKE_SOURCE_DIR}/cmake/CompilerCache.cmake")
 # 2. Target Platform Setup & Core Macros
 include("${CMAKE_SOURCE_DIR}/cmake/AROS.cmake")
 
-# 3. Dynamic Target Transpilation
+# 3. Tools that run on the build machine, and the header rules using them.
+include("${CMAKE_SOURCE_DIR}/cmake/HostTools.cmake")
+include("${CMAKE_SOURCE_DIR}/cmake/GeneratedHeaders.cmake")
+
+# 4. Dynamic Target Transpilation
 set(TRANSPILER_BIN "${CMAKE_SOURCE_DIR}/tools/aros-tools/target/release/aros-transpiler")
 set(GENERATED_TARGETS_CMAKE "${CMAKE_BINARY_DIR}/generated_targets.cmake")
 
@@ -40,7 +44,41 @@ if(EXISTS "${TRANSPILER_BIN}")
     endif()
 endif()
 
-# 4. Report what SDK header staging produced (populated while including
+# 4b. Attach the generated headers recorded in GeneratedHeaders.cmake to the
+#     targets that include them. Done here because the targets only exist once
+#     generated_targets.cmake has run.
+get_property(_gen_header_deps GLOBAL PROPERTY AROS_GENERATED_HEADER_DEPS)
+set(_gen_header_missing "")
+foreach(_pair IN LISTS _gen_header_deps)
+    string(FIND "${_pair}" "|" _sep)
+    if(_sep LESS 0)
+        continue()
+    endif()
+    string(SUBSTRING "${_pair}" 0 ${_sep} _tgt)
+    math(EXPR _rest "${_sep} + 1")
+    string(SUBSTRING "${_pair}" ${_rest} -1 _hdr)
+
+    if(NOT TARGET ${_tgt})
+        # The module is not part of this target's build; nothing to attach to.
+        continue()
+    endif()
+
+    get_filename_component(_hdr_name "${_hdr}" NAME)
+    string(MAKE_C_IDENTIFIER "${_tgt}-${_hdr_name}" _stamp)
+    if(NOT TARGET gen-${_stamp})
+        add_custom_target(gen-${_stamp} DEPENDS "${_hdr}")
+    endif()
+    add_dependencies(${_tgt} gen-${_stamp})
+    # The module's own sources are compiled into several targets (module, link
+    # library, kernel object); each carries the same dependency.
+    foreach(_suffix linklib kobj)
+        if(TARGET ${_tgt}-${_suffix})
+            add_dependencies(${_tgt}-${_suffix} gen-${_stamp})
+        endif()
+    endforeach()
+endforeach()
+
+# 5. Report what SDK header staging produced (populated while including
 #    generated_targets.cmake above).
 get_property(_staged GLOBAL PROPERTY AROS_STAGED_HEADERS)
 get_property(_empty GLOBAL PROPERTY AROS_STAGED_RULES_EMPTY)
@@ -61,7 +99,7 @@ if(_adhoc_unknown)
         "    ${_adhoc_pretty}")
 endif()
 
-# 4b. Uninitialised git submodules. Several build inputs live in submodules,
+# 5b. Uninitialised git submodules. Several build inputs live in submodules,
 #     notably the translation catalogues under rom/*/catalogs: rom/dos's
 #     dos.cd is the source both errorlist.h and strings.h are generated from,
 #     so without it dos.library does not compile. That failure shows up as an
@@ -100,7 +138,7 @@ if(GIT_FOUND AND EXISTS "${CMAKE_SOURCE_DIR}/.gitmodules")
     endif()
 endif()
 
-# 5. Aggregate target for the third-party fetches declared via %fetch. Not part
+# 6. Aggregate target for the third-party fetches declared via %fetch. Not part
 #    of `all`: fetching reaches out to the network and stays explicit.
 get_property(_fetch_targets GLOBAL PROPERTY AROS_FETCH_TARGETS)
 if(_fetch_targets)
@@ -109,7 +147,7 @@ if(_fetch_targets)
     message(STATUS "🌐 AROS-NG: ${_n_fetch} third-party fetch target(s); run 'ninja fetch-ports' to download")
 endif()
 
-# 6. Kickstart packages. Must come after generated_targets.cmake, because the
+# 7. Kickstart packages. Must come after generated_targets.cmake, because the
 #    package definitions reference the transpiled module targets.
 include("${CMAKE_SOURCE_DIR}/cmake/Kickstart.cmake")
 

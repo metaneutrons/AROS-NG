@@ -51,6 +51,13 @@ add_compile_definitions(
     __AROS_VERSION__=1
 )
 
+# Build-date stamps. 52 mmakefiles put the current date into a define via
+# $(shell date '+<fmt>'); the transpiler maps those two formats onto these
+# variables. Evaluated once per configure rather than per compile, so a build
+# is at least consistent within itself.
+string(TIMESTAMP AROS_BUILD_DATE_DMY "%d.%m.%Y")
+string(TIMESTAMP AROS_BUILD_DATE_ISO "%Y-%m-%d")
+
 add_compile_options(
     -ffreestanding
     -fno-builtin
@@ -193,6 +200,10 @@ endfunction()
 set(AROS_ADHOC_HEADERS_HANDLED
     "hidd/pci.h"
     "hidd/thunderbolt.h"
+    # Counterparts in cmake/GeneratedHeaders.cmake.
+    "$(CURDIR)/dos/errorlist.h"
+    "$(CURDIR)/dosboot/nomedia_image.h"
+    "$(CURDIR)/bootpic_image.h"
 )
 
 # Rules deliberately out of scope, with the reason. Same key format; a trailing
@@ -212,6 +223,15 @@ set(AROS_ADHOC_HEADERS_OUT_OF_SCOPE
     "freetype/*" "libraries/mui.h" "libraries"
     # Pattern rules in tool/unmaintained trees.
     "%" "hidd/%.h"
+    # Datatypes are not part of a bootable kickstart, and these three rules
+    # only substitute a version number into a port's config header.
+    "$(CURDIR)/libde265/de265-version.h"
+    "$(CURDIR)/libheif/heif_version.h"
+    "$(CURDIR)/src/webp/config.h"
+    # softfloat is only built for targets without an FPU, none of which are
+    # buildable yet; isapnp is x86 legacy and in no package.
+    "$(CURDIR)/platform.h"
+    "$(CURDIR)/version.h"
 )
 
 # Files whose rules are ignored wholesale, because the whole subtree is out of
@@ -358,7 +378,16 @@ function(aros_apply_includes target_name)
     endif()
 
     foreach(d IN LISTS INC_INCLUDES)
-        if(IS_DIRECTORY "${d}")
+        # A path inside the build tree holds generated files, so it may not
+        # exist yet at configure time: rom/dos asks for
+        # -I$(GENDIR)/$(CURDIR)/dos, which only appears once its catalog
+        # headers are built. Create it and keep it. Source-tree paths are still
+        # checked, so a stale USER_INCLUDES does not add a dead -I.
+        string(FIND "${d}" "${CMAKE_BINARY_DIR}" _in_build)
+        if(_in_build EQUAL 0)
+            file(MAKE_DIRECTORY "${d}")
+            list(APPEND GENERIC_DIRS "${d}")
+        elseif(IS_DIRECTORY "${d}")
             list(APPEND GENERIC_DIRS "${d}")
         endif()
     endforeach()
@@ -386,6 +415,23 @@ function(aros_apply_includes target_name)
     if(DIRS)
         list(REMOVE_DUPLICATES DIRS)
         target_include_directories(${target_name} PRIVATE ${DIRS})
+    endif()
+
+    # A generated header can share its name with a system header: rom/dos
+    # generates strings.h, and the SDK also stages the POSIX strings.h. The
+    # historic build has no conflict, because %build_catalogs writes the
+    # generated one next to the sources, where `#include "strings.h"` finds it
+    # before any -I path.
+    #
+    # -iquote reproduces that without writing into the source tree: it applies
+    # only to the quoted form and is searched ahead of every -I, so `<strings.h>`
+    # still reaches the POSIX header.
+    set(QUOTE_DIRS ${GEN_DIRS} ${GENERIC_DIRS} ${FALLBACK_DIRS})
+    if(QUOTE_DIRS)
+        list(REMOVE_DUPLICATES QUOTE_DIRS)
+        foreach(d IN LISTS QUOTE_DIRS)
+            target_compile_options(${target_name} PRIVATE "-iquote${d}")
+        endforeach()
     endif()
 endfunction()
 
