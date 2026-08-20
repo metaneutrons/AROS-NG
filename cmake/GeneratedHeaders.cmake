@@ -127,3 +127,21 @@ if(EXISTS "${_mui_header}")
     list(LENGTH _mui_lines _n_mui)
     message(STATUS "🧵 AROS-NG: generated libraries/mui.h (${_n_mui} lines)")
 endif()
+
+# -----------------------------------------------------------------------------
+# The BSD socket interface
+# -----------------------------------------------------------------------------
+#
+# workbench/network/common/include/mmakefile.src:27 stages its whole header
+# tree into the SDK with a static pattern rule:
+#
+#     $(DEST_INCLUDES) : $(AROS_INCLUDES)/% : $(SRCDIR)/$(CURDIR)/%
+#
+# 81 headers, and the directory structure has to survive, since consumers write
+# <netinet/in.h> and <proto/socket.h>. The pattern list is the one the
+# mmakefile's WILDCARD call names; no FLATTEN, so the subdirectories are kept.
+aros_copy_includes(
+    DEST "."
+    SOURCE "workbench/network/common/include"
+    PATTERNS "*.h" "arpa/*.h" "bsdsocket/*.h" "clib/*.h" "defines/*.h"
+             "libraries/*.h" "net/*.h" "netinet/*.h" "proto/*.h" "sys/*.h")

@@ -284,6 +284,13 @@ set(AROS_ADHOC_HEADERS_HANDLED
     "$(CURDIR)/dos/errorlist.h"
     "$(CURDIR)/dosboot/nomedia_image.h"
     "$(CURDIR)/bootpic_image.h"
+    # libraries/mui.h is generated there by buildincludes; these are the three
+    # rules that build it, copy it into the SDK and create its directory.
+    "libraries/mui.h"
+    "libraries/mui.h $(AROS_INCLUDES)/libraries"
+    "libraries $(AROS_INCLUDES)/libraries"
+    # The BSD socket header tree, staged there as well.
+    "%"
 )
 
 # Rules deliberately out of scope, with the reason. Same key format; a trailing
@@ -300,9 +307,9 @@ set(AROS_ADHOC_HEADERS_OUT_OF_SCOPE
     "sigcore.h"
     # Third-party libraries, not part of a bootable kickstart.
     "zconf.h" "pnglibconf.h" "tiffconf.h" "tifftypes.h" "tiffinline.h"
-    "freetype/*" "libraries/mui.h" "libraries"
-    # Pattern rules in tool/unmaintained trees.
-    "%" "hidd/%.h"
+    "freetype/*" "libraries"
+    # A pattern rule whose destination is a directory category, not a file.
+    "hidd/%.h"
     # Datatypes are not part of a bootable kickstart, and these three rules
     # only substitute a version number into a port's config header.
     "$(CURDIR)/libde265/de265-version.h"
@@ -312,14 +319,20 @@ set(AROS_ADHOC_HEADERS_OUT_OF_SCOPE
     # buildable yet; isapnp is x86 legacy and in no package.
     "$(CURDIR)/platform.h"
     "$(CURDIR)/version.h"
+    # libtiff's config header, substituted from a template in the port.
+    "$(CURDIR)/tif_config.h"
 )
 
 # Files whose rules are ignored wholesale, because the whole subtree is out of
 # scope for a bootable target.
+#
+# workbench/libs/ used to be listed here and should not have been: it hid the
+# rules for libraries/mui.h, which 215 compile failures depended on, and for
+# reqtools.h with another 62. Ignoring a subtree wholesale silences exactly the
+# reports this mechanism exists for.
 set(AROS_ADHOC_HEADER_FILES_IGNORED
     "arch/.unmaintained/"
     "tools/"
-    "workbench/libs/"
 )
 
 set_property(GLOBAL PROPERTY AROS_ADHOC_HEADERS_UNKNOWN "")
