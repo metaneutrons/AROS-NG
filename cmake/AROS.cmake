@@ -2,6 +2,8 @@
 # Modern Multi-Platform Build System for AROS
 
 include(CMakeParseArguments)
+include("${CMAKE_CURRENT_LIST_DIR}/GenmoduleManifest.cmake")
+include("${CMAKE_CURRENT_LIST_DIR}/TransitiveHeaderBindings.cmake")
 # The arch/ subdirectories this configuration may build from. Directory names
 # there are <cpu>-<platform> with "all" as a wildcard, plus "native" as a
 # pseudo-platform shared by every non-hosted target.
@@ -334,7 +336,7 @@ function(aros_copy_includes)
                 "AROS_DEFERRED_HEADER_${_copy_hash}_LABEL"
                 "${CI_NAME}|${_header_path}|${_source}")
             set_property(GLOBAL APPEND PROPERTY AROS_STAGED_HEADER_BINDINGS
-                "${_header_path}|${CI_NAME}|${_copy_hash}")
+                "${_header_path}|${CI_NAME}|${_copy_hash}|${_source}")
         endforeach()
         return()
     endif()
@@ -370,7 +372,7 @@ function(aros_copy_includes)
         endforeach()
         if(CI_NAME)
             set_property(GLOBAL APPEND PROPERTY AROS_STAGED_HEADER_BINDINGS
-                "${_header_path}|${CI_NAME}")
+                "${_header_path}|${CI_NAME}||${SRC_ABS}/${rel}")
         endif()
         math(EXPR count "${count} + 1")
     endforeach()
@@ -410,52 +412,43 @@ function(_aros_materialize_deferred_header hash)
         "AROS_DEFERRED_HEADER_${hash}_MATERIALIZED" TRUE)
 endfunction()
 
-# Adds dependencies for literal headers included by a genmodule config.  The
-# config text is copied into generated prototypes and link stubs, so CMake's
-# compiler dependency scanner cannot discover a missing fetched header until
-# after compilation has already started.  Binding the literal include to its
-# `%copy_includes` owner closes that cache-empty ordering gap generically.
+# Adds dependencies for literal headers included by a genmodule config and by
+# their already-staged in-tree headers.  The config text is copied into
+# generated prototypes and link stubs, so CMake's compiler dependency scanner
+# cannot discover a missing fetched header until after compilation has already
+# started.  Binding the transitive include chain to its `%copy_includes` owners
+# closes that cache-empty ordering gap generically.
 function(_aros_add_genmodule_config_header_dependencies target config)
     if(NOT TARGET "${target}" OR NOT EXISTS "${config}")
         return()
     endif()
-    get_property(_bindings GLOBAL PROPERTY AROS_STAGED_HEADER_BINDINGS)
-    if(NOT _bindings)
-        return()
-    endif()
-    file(STRINGS "${config}" _include_lines
-        REGEX "^[ \t]*#[ \t]*include[ \t]+[<\"]")
-    foreach(_line IN LISTS _include_lines)
-        if(NOT _line MATCHES
-           "^[ \t]*#[ \t]*include[ \t]+[<\"]([^>\"]+)[>\"]")
-            continue()
-        endif()
-        set(_header "${CMAKE_MATCH_1}")
-        foreach(_binding IN LISTS _bindings)
-            if(_binding MATCHES "^([^|]+)\\|([^|]+)(\\|([0-9a-f]+))?$"
-               AND CMAKE_MATCH_1 STREQUAL _header
-               AND TARGET "${CMAKE_MATCH_2}")
-                set(_owner "${CMAKE_MATCH_2}")
-                set(_deferred_hash "${CMAKE_MATCH_4}")
-                if(_deferred_hash)
-                    # One public header may include siblings from another
-                    # declaration sharing the same mmake target (GL/gl.h pulls
-                    # GL/glext.h and KHR/khrplatform.h).  The reference target
-                    # stages its complete declared set, so materialise the
-                    # complete owner rather than trying to parse absent files.
-                    get_property(_all_deferred GLOBAL PROPERTY
-                        AROS_DEFERRED_HEADER_HASHES)
-                    foreach(_candidate IN LISTS _all_deferred)
-                        get_property(_candidate_owner GLOBAL PROPERTY
-                            "AROS_DEFERRED_HEADER_${_candidate}_TARGET")
-                        if(_candidate_owner STREQUAL _owner)
-                            _aros_materialize_deferred_header("${_candidate}")
-                        endif()
-                    endforeach()
-                endif()
-                add_dependencies("${target}" "${_owner}")
+    # The transitive header-owner edges are derived from the declaration text
+    # during configuration, so they must be recalculated after it changes.
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+        "${config}")
+    _aros_collect_transitive_header_bindings(
+        _owners _deferred_hashes "${config}")
+
+    # One public header may include siblings from another declaration sharing
+    # the same mmake target (GL/gl.h pulls GL/glext.h and KHR/khrplatform.h).
+    # Once any deferred binding reaches an owner, materialise its complete
+    # declared header set rather than parsing files which do not exist yet.
+    get_property(_all_deferred GLOBAL PROPERTY AROS_DEFERRED_HEADER_HASHES)
+    foreach(_deferred_hash IN LISTS _deferred_hashes)
+        get_property(_deferred_owner GLOBAL PROPERTY
+            "AROS_DEFERRED_HEADER_${_deferred_hash}_TARGET")
+        foreach(_candidate IN LISTS _all_deferred)
+            get_property(_candidate_owner GLOBAL PROPERTY
+                "AROS_DEFERRED_HEADER_${_candidate}_TARGET")
+            if("${_candidate_owner}" STREQUAL "${_deferred_owner}")
+                _aros_materialize_deferred_header("${_candidate}")
             endif()
         endforeach()
+    endforeach()
+    foreach(_owner IN LISTS _owners)
+        if(TARGET "${_owner}" AND NOT "${_owner}" STREQUAL "${target}")
+            add_dependencies("${target}" "${_owner}")
+        endif()
     endforeach()
 endfunction()
 
@@ -2202,6 +2195,134 @@ function(aros_add_mcc)
         DEFAULT_MODSUFFIX "mcc")
 endfunction()
 
+# A generated-source marker emitted by the transpiler has this form:
+#
+#   @AROS_GENMODULE|<normal|rel>|<components>|<module>|<modtype>|<config>
+#
+# Components is a comma-separated subset of
+# stackstubs,regcallstubs,autoinit,getlibbase.  The marker stays in
+# TargetDefinition's ordinary C source lane, avoiding a target-name allowlist
+# or a second, parallel target model.  It is replaced here with the explicit
+# output manifest before add_library() sees it.
+function(_aros_genmodule_linklib_sources
+        out_sources out_target out_include_dir out_config directory marker)
+    string(REPLACE "|" ";" _fields "${marker}")
+    list(LENGTH _fields _field_count)
+    if(NOT _field_count EQUAL 6)
+        message(FATAL_ERROR
+            "invalid genmodule linklib source marker '${marker}'")
+    endif()
+    list(GET _fields 0 _tag)
+    list(GET _fields 1 _variant)
+    list(GET _fields 2 _component_string)
+    list(GET _fields 3 _module)
+    list(GET _fields 4 _modtype)
+    list(GET _fields 5 _config_arg)
+    if(NOT "${_tag}" STREQUAL "@AROS_GENMODULE")
+        message(FATAL_ERROR "invalid genmodule linklib tag '${_tag}'")
+    endif()
+    if(NOT "${_variant}" STREQUAL "normal" AND
+       NOT "${_variant}" STREQUAL "rel")
+        message(FATAL_ERROR
+            "invalid genmodule linklib variant '${_variant}' in '${marker}'")
+    endif()
+    if(IS_ABSOLUTE "${_config_arg}")
+        set(_config "${_config_arg}")
+    else()
+        set(_config "${directory}/${_config_arg}")
+    endif()
+    cmake_path(NORMAL_PATH _config)
+
+    string(SHA256 _signature "${_config}|${_module}|${_modtype}")
+    string(SUBSTRING "${_signature}" 0 16 _short_hash)
+    set(_root "${CMAKE_BINARY_DIR}/genmodule/linklibs/${_short_hash}")
+    set(_gen_dir "${_root}/gen")
+    set(_stub_dir "${_root}/stubs")
+    set(_include_dir "${_root}/include")
+    set(_write_target "aros-genmodule-linklib-${_short_hash}")
+
+    set(_include_rel
+        "clib/${_module}_protos.h"
+        "inline/${_module}.h"
+        "defines/${_module}.h"
+        "defines/${_module}_LVO.h"
+        "proto/${_module}.h")
+    set(_private_headers "")
+    foreach(_rel IN LISTS _include_rel)
+        list(APPEND _private_headers "${_include_dir}/${_rel}")
+    endforeach()
+    set(_private_include_dirs
+        "${_include_dir}/clib" "${_include_dir}/inline"
+        "${_include_dir}/defines" "${_include_dir}/proto"
+        "${_include_dir}/interface")
+
+    aros_genmodule_writefiles_manifest(_gm_linklib
+        CONFIG "${_config}"
+        MODULE "${_module}"
+        MODTYPE "${_modtype}"
+        GEN_DIR "${_gen_dir}"
+        STUB_DIR "${_stub_dir}")
+
+    if(NOT TARGET "${_write_target}")
+        if(NOT AROS_HOST_GENMODULE)
+            message(FATAL_ERROR
+                "${marker}: legacy genmodule host tool was not registered")
+        endif()
+        add_custom_command(
+            OUTPUT ${_private_headers} ${_gm_linklib_ALL_OUTPUTS}
+            COMMAND "${CMAKE_COMMAND}" -E make_directory
+                "${_gen_dir}" "${_stub_dir}" "${_include_dir}"
+                ${_private_include_dirs}
+            # A same-named public header can describe a different declaration
+            # (posixc_lfa.conf versus posixc.conf is the concrete case).  Keep
+            # the exact declaration private, just as module ABI targets do.
+            COMMAND "${AROS_HOST_GENMODULE}" -c "${_config}"
+                -d "${_include_dir}"
+                writeincludes "${_module}" "${_modtype}"
+            COMMAND "${AROS_HOST_GENMODULE}" -c "${_config}"
+                -d "${_gen_dir}" -l "${_stub_dir}"
+                writefiles "${_module}" "${_modtype}"
+            DEPENDS "${AROS_HOST_GENMODULE}" "${_config}"
+            COMMENT "Generating ${_module}.${_modtype} client-link sources"
+            VERBATIM)
+        add_custom_target("${_write_target}"
+            DEPENDS ${_private_headers} ${_gm_linklib_ALL_OUTPUTS})
+    endif()
+
+    if("${_variant}" STREQUAL "normal")
+        set(_prefix _gm_linklib_NORMAL)
+    else()
+        set(_prefix _gm_linklib_REL)
+    endif()
+    string(REPLACE "," ";" _components "${_component_string}")
+    set(_selected "")
+    foreach(_component IN LISTS _components)
+        if("${_component}" STREQUAL "stackstubs")
+            list(APPEND _selected ${${_prefix}_STACK_STUBS})
+        elseif("${_component}" STREQUAL "regcallstubs")
+            list(APPEND _selected ${${_prefix}_REGCALL_STUBS})
+        elseif("${_component}" STREQUAL "autoinit")
+            list(APPEND _selected ${${_prefix}_AUTOINIT})
+        elseif("${_component}" STREQUAL "getlibbase")
+            list(APPEND _selected ${${_prefix}_GETLIBBASE})
+        else()
+            message(FATAL_ERROR
+                "unknown genmodule linklib component '${_component}' in '${marker}'")
+        endif()
+    endforeach()
+    list(REMOVE_DUPLICATES _selected)
+    if(NOT _selected)
+        message(FATAL_ERROR
+            "genmodule linklib marker '${marker}' selected no generated sources")
+    endif()
+
+    set_source_files_properties(${_selected} PROPERTIES GENERATED TRUE)
+    set(${out_sources} "${_selected}" PARENT_SCOPE)
+    set(${out_target} "${_write_target}" PARENT_SCOPE)
+    set(${out_include_dir} "${_include_dir}" PARENT_SCOPE)
+    set(${out_config} "${_config}" PARENT_SCOPE)
+endfunction()
+
 # Macro: aros_add_linklib
 function(aros_add_linklib)
     set(options)
@@ -2212,7 +2333,31 @@ function(aros_add_linklib)
         ARCH_DEFINES ARCH_COMPILE_OPTIONS)
     cmake_parse_arguments(ARG "${options}" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
 
-    if((NOT ARG_SOURCES AND NOT ARG_CXX_SOURCES AND
+    set(_ordinary_c_sources "")
+    set(_genmodule_sources "")
+    set(_genmodule_targets "")
+    set(_genmodule_include_dirs "")
+    set(_genmodule_configs "")
+    foreach(_source IN LISTS ARG_SOURCES)
+        if(_source MATCHES "^@AROS_GENMODULE\\|")
+            _aros_genmodule_linklib_sources(
+                _marker_sources _marker_target _marker_include_dir _marker_config
+                "${ARG_DIRECTORY}" "${_source}")
+            list(APPEND _genmodule_sources ${_marker_sources})
+            list(APPEND _genmodule_targets "${_marker_target}")
+            list(APPEND _genmodule_include_dirs "${_marker_include_dir}")
+            list(APPEND _genmodule_configs "${_marker_config}")
+        else()
+            list(APPEND _ordinary_c_sources "${_source}")
+        endif()
+    endforeach()
+    list(REMOVE_DUPLICATES _genmodule_sources)
+    list(REMOVE_DUPLICATES _genmodule_targets)
+    list(REMOVE_DUPLICATES _genmodule_include_dirs)
+    list(REMOVE_DUPLICATES _genmodule_configs)
+
+    if((NOT _ordinary_c_sources AND NOT _genmodule_sources AND
+        NOT ARG_CXX_SOURCES AND
         NOT ARG_OBJC_SOURCES AND NOT ARG_ASM_SOURCES AND
         NOT ARG_ARCH_SOURCES) OR
        NOT ARG_MMAKE_ID)
@@ -2221,10 +2366,11 @@ function(aros_add_linklib)
 
     aros_resolve_source_lanes(RESOLVED_SOURCES "${ARG_DIRECTORY}"
         MMAKE_ID "${ARG_MMAKE_ID}"
-        SOURCES ${ARG_SOURCES}
+        SOURCES ${_ordinary_c_sources}
         CXX_SOURCES ${ARG_CXX_SOURCES}
         OBJC_SOURCES ${ARG_OBJC_SOURCES}
         ASM_SOURCES ${ARG_ASM_SOURCES})
+    list(APPEND RESOLVED_SOURCES ${_genmodule_sources})
     if(ARG_ARCH_SOURCES)
         aros_resolve_arch_sources(_ARCH_RESOLVED _ARCH_DROPPED "${ARG_DIRECTORY}"
             SOURCES ${RESOLVED_SOURCES}
@@ -2251,6 +2397,28 @@ function(aros_add_linklib)
         set_target_properties(${ARG_MMAKE_ID} PROPERTIES
             LINKER_LANGUAGE C
         )
+        if(_genmodule_sources)
+            # Link libraries are installed under their libname, not their
+            # graph identity. Limit this correction to the generated-stub path
+            # until the ordinary linklib output migration is handled as its
+            # own compatibility change.
+            set_target_properties(${ARG_MMAKE_ID} PROPERTIES
+                OUTPUT_NAME "${ARG_TARGET}"
+                ARCHIVE_OUTPUT_DIRECTORY "${AROS_DEVELOPER_LIB_DIR}")
+            # The target compiler's specs search the POSIX and standard-C
+            # namespaces in this order before the common SDK root.  Clang's
+            # bare-metal driver has no installed AROS specs, so reproduce that
+            # ordering for these generated client sources explicitly.
+            target_include_directories(${ARG_MMAKE_ID} BEFORE PRIVATE
+                ${_genmodule_include_dirs}
+                "${AROS_SDK_INCLUDE_DIR}/aros/posixc"
+                "${AROS_SDK_INCLUDE_DIR}/aros/stdc")
+            add_dependencies(${ARG_MMAKE_ID} ${_genmodule_targets})
+            foreach(_config IN LISTS _genmodule_configs)
+                _aros_add_genmodule_config_header_dependencies(
+                    "${ARG_MMAKE_ID}" "${_config}")
+            endforeach()
+        endif()
         aros_gate_arch(${ARG_MMAKE_ID} "${ARG_DIRECTORY}")
         aros_apply_includes(${ARG_MMAKE_ID}
             MODULE_DIR "${ARG_DIRECTORY}"
