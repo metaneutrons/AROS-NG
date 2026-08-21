@@ -108,6 +108,10 @@ if(_foreign)
     message(STATUS
         "🚫 AROS-NG: ${_n_foreign} target(s) kept out of `all` (other architecture) -> "
         "${_foreign_report}")
+else()
+    # Removed when empty. A report left behind outlives its cause and the next
+    # reader takes it for the current state.
+    file(REMOVE "${CMAKE_BINARY_DIR}/generated_targets.foreign-arch-targets.txt")
 endif()
 
 # 5. Report what SDK header staging produced (populated while including
@@ -167,6 +171,9 @@ if(GIT_FOUND AND EXISTS "${CMAKE_SOURCE_DIR}/.gitmodules")
             "    git submodule update --init --recursive\n"
             "or initialise individual paths. Full list:\n"
             "    ${_submodule_report}")
+    else()
+        file(REMOVE
+            "${CMAKE_BINARY_DIR}/generated_targets.uninitialised-submodules.txt")
     endif()
 endif()
 
