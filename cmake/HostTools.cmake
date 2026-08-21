@@ -90,6 +90,226 @@ aros_host_tool(NAME flexcat
     INCLUDES "${CMAKE_SOURCE_DIR}/tools/flexcat/src"
     LIBS iconv)
 
+# aros_build_catalogs(
+#     MMAKE_ID <id> NAME <catalog-name> SUBDIR <installed-subdirectory>
+#     DIRECTORY <declaring-directory> SOURCE_DIR <cd/ct-directory>
+#     DESTINATION <catalog-root> DESCRIPTION <cd-basename-or-path>
+#     SOURCE_DESCRIPTION <sd-basename-or-path>
+#     LANGUAGES <language>... [SOURCE <generated-source-path>])
+#
+# One real output is declared for every translated catalog. SOURCE is optional;
+# when relative, it is rooted below the declaring directory's generated-tree
+# mirror. No output or parent directory is fabricated at configure time.
+function(aros_build_catalogs)
+    set(oneValueArgs
+        MMAKE_ID NAME SUBDIR DIRECTORY SOURCE_DIR DESTINATION DESCRIPTION
+        SOURCE SOURCE_DESCRIPTION)
+    set(multiValueArgs LANGUAGES)
+    cmake_parse_arguments(CAT "" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
+
+    if(CAT_UNPARSED_ARGUMENTS OR CAT_KEYWORDS_MISSING_VALUES)
+        message(FATAL_ERROR
+            "aros_build_catalogs: malformed arguments: "
+            "${CAT_UNPARSED_ARGUMENTS}${CAT_KEYWORDS_MISSING_VALUES}")
+    endif()
+    foreach(_required
+            MMAKE_ID NAME SUBDIR DIRECTORY SOURCE_DIR DESTINATION DESCRIPTION
+            SOURCE_DESCRIPTION)
+        if(NOT CAT_${_required})
+            message(FATAL_ERROR
+                "aros_build_catalogs: ${_required} is required")
+        endif()
+    endforeach()
+    if(NOT CAT_LANGUAGES)
+        message(FATAL_ERROR
+            "aros_build_catalogs: LANGUAGES must contain at least one language")
+    endif()
+    if(CAT_NAME MATCHES "[/\\\\]" OR CAT_NAME STREQUAL "." OR CAT_NAME STREQUAL "..")
+        message(FATAL_ERROR
+            "aros_build_catalogs: NAME must be a catalog basename: ${CAT_NAME}")
+    endif()
+    string(REPLACE "\\" "/" _catalog_subdir "${CAT_SUBDIR}")
+    if(IS_ABSOLUTE "${_catalog_subdir}"
+            OR _catalog_subdir MATCHES "(^|/)\\.\\.(/|$)")
+        message(FATAL_ERROR
+            "aros_build_catalogs: SUBDIR must be a contained relative path: ${CAT_SUBDIR}")
+    endif()
+
+    foreach(_path_var DIRECTORY SOURCE_DIR)
+        if(IS_ABSOLUTE "${CAT_${_path_var}}")
+            set(_${_path_var} "${CAT_${_path_var}}")
+        else()
+            set(_${_path_var} "${CMAKE_SOURCE_DIR}/${CAT_${_path_var}}")
+        endif()
+        cmake_path(NORMAL_PATH _${_path_var})
+    endforeach()
+    if(IS_ABSOLUTE "${CAT_DESTINATION}")
+        set(_destination "${CAT_DESTINATION}")
+    else()
+        set(_destination "${CMAKE_BINARY_DIR}/${CAT_DESTINATION}")
+    endif()
+    cmake_path(NORMAL_PATH _destination)
+
+    set(_description "${CAT_DESCRIPTION}")
+    if(NOT _description MATCHES "\\.cd$")
+        string(APPEND _description ".cd")
+    endif()
+    if(NOT IS_ABSOLUTE "${_description}")
+        set(_description "${_SOURCE_DIR}/${_description}")
+    endif()
+    cmake_path(NORMAL_PATH _description)
+
+    set(_source_description "${CAT_SOURCE_DESCRIPTION}")
+    if(NOT _source_description MATCHES "\\.sd$")
+        string(APPEND _source_description ".sd")
+    endif()
+    if(NOT IS_ABSOLUTE "${_source_description}")
+        set(_source_description "${_SOURCE_DIR}/${_source_description}")
+    endif()
+    cmake_path(NORMAL_PATH _source_description)
+    # Historic builds install FlexCat source descriptions next to the host
+    # executable. This CMake build uses them in place from the source tree.
+    if(NOT EXISTS "${_source_description}")
+        get_filename_component(_sd_name "${_source_description}" NAME)
+        set(_bundled_sd
+            "${CMAKE_SOURCE_DIR}/tools/flexcat/src/sd/${_sd_name}")
+        if(EXISTS "${_bundled_sd}")
+            set(_source_description "${_bundled_sd}")
+        endif()
+    endif()
+
+    if(NOT TARGET "${CAT_MMAKE_ID}")
+        add_custom_target("${CAT_MMAKE_ID}")
+        aros_gate_arch("${CAT_MMAKE_ID}" "${_DIRECTORY}")
+    endif()
+
+    set(_outputs "")
+    foreach(_language IN LISTS CAT_LANGUAGES)
+        if(_language STREQUAL "" OR _language MATCHES "[/\\\\;]"
+                OR _language STREQUAL "." OR _language STREQUAL "..")
+            message(FATAL_ERROR
+                "aros_build_catalogs: invalid language '${_language}'")
+        endif()
+        set(_translation "${_SOURCE_DIR}/${_language}.ct")
+        set(_output
+            "${_destination}/${_language}/${CAT_SUBDIR}/${CAT_NAME}.catalog")
+        cmake_path(NORMAL_PATH _translation)
+        cmake_path(NORMAL_PATH _output)
+        cmake_path(IS_PREFIX _destination "${_output}" NORMALIZE
+            _output_is_contained)
+        if(NOT _output_is_contained OR _output STREQUAL _destination)
+            message(FATAL_ERROR
+                "aros_build_catalogs: catalog output escapes DESTINATION: ${_output}")
+        endif()
+        get_filename_component(_output_dir "${_output}" DIRECTORY)
+
+        set(_conversion "")
+        if(_language STREQUAL "polish")
+            set(_conversion "iso88592toamigapl")
+        elseif(_language STREQUAL "russian")
+            set(_conversion "win1251toamiga1251")
+        endif()
+
+        string(SHA256 _output_hash "${_output}")
+        set(_claim_property "AROS_CATALOG_OUTPUT_CLAIM_${_output_hash}")
+        string(JOIN "|" _signature
+            "${_description}" "${_translation}" "${_conversion}")
+        get_property(_claimed GLOBAL PROPERTY "${_claim_property}" SET)
+        if(_claimed)
+            get_property(_first_signature GLOBAL PROPERTY "${_claim_property}")
+            if(NOT "${_first_signature}" STREQUAL "${_signature}")
+                message(FATAL_ERROR
+                    "aros_build_catalogs: ${_output} has conflicting producers")
+            endif()
+        else()
+            set_property(GLOBAL PROPERTY "${_claim_property}" "${_signature}")
+            add_custom_command(
+                OUTPUT "${_output}"
+                COMMAND "${CMAKE_COMMAND}" -E make_directory "${_output_dir}"
+                COMMAND "${CMAKE_COMMAND}"
+                    "-DTOOL=${AROS_HOST_FLEXCAT}"
+                    "-DCONVERSION=${_conversion}"
+                    "-DDESCRIPTION=${_description}"
+                    "-DTRANSLATION=${_translation}"
+                    "-DOUTPUT=${_output}"
+                    -P "${CMAKE_SOURCE_DIR}/cmake/RunFlexCat.cmake"
+                DEPENDS
+                    "${AROS_HOST_FLEXCAT}" "${_description}" "${_translation}"
+                    "${CMAKE_SOURCE_DIR}/cmake/RunFlexCat.cmake"
+                COMMENT "Creating ${CAT_NAME} catalog for ${_language}"
+                VERBATIM)
+            set_property(GLOBAL APPEND PROPERTY AROS_CATALOG_OUTPUTS "${_output}")
+        endif()
+        list(APPEND _outputs "${_output}")
+    endforeach()
+
+    if(DEFINED CAT_SOURCE AND NOT CAT_SOURCE STREQUAL "")
+        if(IS_ABSOLUTE "${CAT_SOURCE}")
+            set(_source_output "${CAT_SOURCE}")
+        else()
+            set(_generated_root "${CMAKE_BINARY_DIR}/gen")
+            cmake_path(NORMAL_PATH _generated_root)
+            file(RELATIVE_PATH _declaring_rel
+                "${CMAKE_SOURCE_DIR}" "${_DIRECTORY}")
+            if(_declaring_rel MATCHES "^\\.\\.")
+                message(FATAL_ERROR
+                    "aros_build_catalogs: relative SOURCE requires DIRECTORY below the source tree")
+            endif()
+            set(_source_output
+                "${_generated_root}/${_declaring_rel}/${CAT_SOURCE}")
+        endif()
+        cmake_path(NORMAL_PATH _source_output)
+        if(NOT IS_ABSOLUTE "${CAT_SOURCE}")
+            cmake_path(IS_PREFIX _generated_root "${_source_output}" NORMALIZE
+                _source_is_contained)
+            if(NOT _source_is_contained OR _source_output STREQUAL _generated_root)
+                message(FATAL_ERROR
+                    "aros_build_catalogs: relative SOURCE escapes the generated tree: ${CAT_SOURCE}")
+            endif()
+        endif()
+        get_filename_component(_source_output_dir "${_source_output}" DIRECTORY)
+
+        string(SHA256 _source_hash "${_source_output}")
+        set(_source_claim "AROS_CATALOG_OUTPUT_CLAIM_${_source_hash}")
+        string(JOIN "|" _source_signature
+            "${_description}" "${_source_description}")
+        get_property(_source_claimed GLOBAL PROPERTY "${_source_claim}" SET)
+        if(_source_claimed)
+            get_property(_first_signature GLOBAL PROPERTY "${_source_claim}")
+            if(NOT "${_first_signature}" STREQUAL "${_source_signature}")
+                message(FATAL_ERROR
+                    "aros_build_catalogs: ${_source_output} has conflicting producers")
+            endif()
+        else()
+            set_property(GLOBAL PROPERTY "${_source_claim}" "${_source_signature}")
+            add_custom_command(
+                OUTPUT "${_source_output}"
+                COMMAND "${CMAKE_COMMAND}" -E make_directory
+                        "${_source_output_dir}"
+                COMMAND "${AROS_HOST_FLEXCAT}" "${_description}"
+                        "${_source_output}=${_source_description}"
+                DEPENDS
+                    "${AROS_HOST_FLEXCAT}" "${_description}"
+                    "${_source_description}"
+                COMMENT "Creating ${CAT_NAME} catalog source ${_source_output}"
+                VERBATIM)
+            set_property(GLOBAL APPEND PROPERTY AROS_CATALOG_OUTPUTS
+                "${_source_output}")
+        endif()
+        list(APPEND _outputs "${_source_output}")
+    endif()
+
+    list(REMOVE_DUPLICATES _outputs)
+    string(JOIN "|" _helper_signature
+        "${CAT_MMAKE_ID}" "${_outputs}")
+    string(SHA256 _helper_hash "${_helper_signature}")
+    set(_helper "aros-catalog-set-${_helper_hash}")
+    if(NOT TARGET "${_helper}")
+        add_custom_target("${_helper}" DEPENDS ${_outputs})
+    endif()
+    add_dependencies("${CAT_MMAKE_ID}" "${_helper}")
+endfunction()
+
 aros_host_tool(NAME ilbmtoc
     SOURCES "${CMAKE_SOURCE_DIR}/tools/ilbmtoc/ilbmtoc.c")
 

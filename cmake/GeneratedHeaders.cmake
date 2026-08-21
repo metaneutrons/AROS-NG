@@ -29,7 +29,8 @@ endfunction()
 #
 #   rom/dos/mmakefile.src:90  -> errorlist.h via genstrings.py
 #   config/make.tmpl:3051     -> strings.h via %build_catalogs' default
-#                                source="../strings.h"
+#                                source="../strings.h". That output is now
+#                                owned by the transpiled catalog target.
 #
 # Both read rom/dos/catalogs/dos.cd, which lives in a git submodule. Without it
 # checked out the rules are skipped; the submodule warning in CMakeLists.txt
@@ -38,22 +39,16 @@ set(_dos_cd "${CMAKE_SOURCE_DIR}/rom/dos/catalogs/dos.cd")
 if(EXISTS "${_dos_cd}")
     set(_dos_gen "${_gen}/rom/dos/dos")
 
-    aros_catalog_header(
-        CD "${_dos_cd}"
-        SD "${CMAKE_SOURCE_DIR}/tools/flexcat/src/sd/C_h_aros.sd"
-        OUTPUT "${_dos_gen}/strings.h")
-
     aros_script_header(
         SCRIPT "${CMAKE_SOURCE_DIR}/rom/dos/genstrings.py"
         INPUT "${_dos_cd}"
         OUTPUT "${_dos_gen}/errorlist.h")
 
-    _aros_needs_header(kernel-dos "${_dos_gen}/strings.h")
     _aros_needs_header(kernel-dos "${_dos_gen}/errorlist.h")
 else()
     message(STATUS
         "⏭️  rom/dos/catalogs/dos.cd absent (submodule not checked out); "
-        "dos.library string tables not generated")
+        "dos.library error-code table and catalogs not generated")
 endif()
 
 # -----------------------------------------------------------------------------
