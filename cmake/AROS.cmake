@@ -179,11 +179,26 @@ set(AROS_GENINC_DIR "${CMAKE_BINARY_DIR}/GENINCDIR")
 # Counters so the configure output states what was staged.
 set_property(GLOBAL PROPERTY AROS_STAGED_HEADERS 0)
 set_property(GLOBAL PROPERTY AROS_STAGED_RULES_EMPTY 0)
+set_property(GLOBAL PROPERTY AROS_STAGED_HEADER_BINDINGS "")
+set(_AROS_DEFERRED_HEADER_REPORT
+    "${CMAKE_BINARY_DIR}/generated_targets.deferred-header-staging.txt")
+file(REMOVE "${_AROS_DEFERRED_HEADER_REPORT}")
 
-# aros_copy_includes(DEST <subdir> SOURCE <src-relative dir> PATTERNS <globs...> [FLATTEN])
+# aros_copy_includes([NAME <mmake>] DEST <subdir> SOURCE <src-relative dir>
+#                    PATTERNS <globs...> [FLATTEN])
 #
 # FLATTEN mirrors the macro's $(notdir ...) behaviour, which applies when the
 # declaration passes dir=. Without it the listed relative path is preserved.
+
+# Joins a %copy_includes destination and file name into the canonical spelling
+# used by output paths and by genmodule's literal-include bindings.  In
+# particular, MetaMake's conventional `path=.` must bind `<zlib.h>`, not the
+# textually different `<./zlib.h>`.
+function(_aros_staged_header_path out_var dest name)
+    set(_path "${dest}/${name}")
+    cmake_path(NORMAL_PATH _path)
+    set(${out_var} "${_path}" PARENT_SCOPE)
+endfunction()
 
 # aros_arch_path_matches(<out-var> <path>)
 #
@@ -213,7 +228,7 @@ endfunction()
 
 function(aros_copy_includes)
     set(options FLATTEN)
-    set(oneValueArgs DEST SOURCE)
+    set(oneValueArgs NAME DEST SOURCE)
     set(multiValueArgs PATTERNS)
     cmake_parse_arguments(CI "${options}" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
 
@@ -231,6 +246,13 @@ function(aros_copy_includes)
         return()
     endif()
 
+    # Give every named declaration its real MetaMake identity before the graph
+    # phase.  Several declarations may contribute to one target (Mesa stages
+    # GL, KHR, EGL and Vulkan through mesa3d-includes-copy).
+    if(CI_NAME AND NOT TARGET "${CI_NAME}")
+        add_custom_target("${CI_NAME}")
+    endif()
+
     # A source directory is normally relative to the source tree, but a module
     # may also stage headers out of a fetched port, which lives under the build
     # tree. Those arrive already absolute.
@@ -240,7 +262,80 @@ function(aros_copy_includes)
         set(SRC_ABS "${CMAKE_SOURCE_DIR}/${CI_SOURCE}")
     endif()
     if(NOT IS_DIRECTORY "${SRC_ABS}")
-        # A port that has not been fetched yet; `ninja fetch-ports` provides it.
+        # A cache-empty fetched port cannot be globbed at configure time.  An
+        # explicit file list can still be registered here and materialised as
+        # real Ninja outputs when a generated consumer binds one of its
+        # headers, ordered after the fetch which owns the source path.
+        set(_fetch_owner "")
+        set(_fetch_owner_len -1)
+        get_property(_fetch_targets GLOBAL PROPERTY AROS_FETCH_TARGETS)
+        foreach(_fetch IN LISTS _fetch_targets)
+            if(NOT TARGET "${_fetch}")
+                continue()
+            endif()
+            get_property(_fetch_dest TARGET "${_fetch}" PROPERTY AROS_FETCH_DESTINATION)
+            if(NOT _fetch_dest)
+                continue()
+            endif()
+            string(LENGTH "${_fetch_dest}" _fetch_len)
+            string(FIND "${SRC_ABS}" "${_fetch_dest}/" _fetch_prefix)
+            if(("${SRC_ABS}" STREQUAL "${_fetch_dest}" OR _fetch_prefix EQUAL 0)
+               AND _fetch_len GREATER _fetch_owner_len)
+                set(_fetch_owner "${_fetch}")
+                set(_fetch_owner_len "${_fetch_len}")
+            endif()
+        endforeach()
+
+        set(_unsupported "")
+        if(NOT CI_NAME)
+            set(_unsupported "has no mmake owner")
+        elseif(NOT _fetch_owner)
+            set(_unsupported "has no matching %fetch destination owner")
+        endif()
+        foreach(_pattern IN LISTS CI_PATTERNS)
+            if(_pattern MATCHES "[*?\\[]")
+                set(_unsupported "uses a glob before its port has been fetched")
+            endif()
+        endforeach()
+        if(_unsupported)
+            set(_note "${CI_NAME}|${SRC_ABS}|${_unsupported}")
+            set_property(GLOBAL APPEND PROPERTY
+                AROS_DEFERRED_HEADER_UNSUPPORTED "${_note}")
+            return()
+        endif()
+
+        foreach(_pattern IN LISTS CI_PATTERNS)
+            if(CI_FLATTEN)
+                get_filename_component(_name "${_pattern}" NAME)
+            else()
+                set(_name "${_pattern}")
+            endif()
+            _aros_staged_header_path(
+                _header_path "${CI_DEST}" "${_name}")
+            set(_source "${SRC_ABS}/${_pattern}")
+            set(_sdk_output "${AROS_SDK_INCLUDE_DIR}/${_header_path}")
+            set(_gen_output "${AROS_GENINC_DIR}/${_header_path}")
+            string(SHA256 _copy_hash
+                "${CI_NAME}|${_header_path}|${_source}")
+            string(SUBSTRING "${_copy_hash}" 0 16 _copy_hash)
+            set_property(GLOBAL APPEND PROPERTY
+                AROS_DEFERRED_HEADER_HASHES "${_copy_hash}")
+            set_property(GLOBAL PROPERTY
+                "AROS_DEFERRED_HEADER_${_copy_hash}_SOURCE" "${_source}")
+            set_property(GLOBAL PROPERTY
+                "AROS_DEFERRED_HEADER_${_copy_hash}_SDK" "${_sdk_output}")
+            set_property(GLOBAL PROPERTY
+                "AROS_DEFERRED_HEADER_${_copy_hash}_GEN" "${_gen_output}")
+            set_property(GLOBAL PROPERTY
+                "AROS_DEFERRED_HEADER_${_copy_hash}_FETCH" "${_fetch_owner}")
+            set_property(GLOBAL PROPERTY
+                "AROS_DEFERRED_HEADER_${_copy_hash}_TARGET" "${CI_NAME}")
+            set_property(GLOBAL PROPERTY
+                "AROS_DEFERRED_HEADER_${_copy_hash}_LABEL"
+                "${CI_NAME}|${_header_path}|${_source}")
+            set_property(GLOBAL APPEND PROPERTY AROS_STAGED_HEADER_BINDINGS
+                "${_header_path}|${CI_NAME}|${_copy_hash}")
+        endforeach()
         return()
     endif()
 
@@ -264,17 +359,133 @@ function(aros_copy_includes)
         else()
             set(name "${rel}")
         endif()
+        _aros_staged_header_path(
+            _header_path "${CI_DEST}" "${name}")
 
         # configure_file(COPYONLY) copies only on change and registers the
         # source as a configure dependency, so editing a public header
         # re-stages it on the next build.
         foreach(root "${AROS_SDK_INCLUDE_DIR}" "${AROS_GENINC_DIR}")
-            configure_file("${SRC_ABS}/${rel}" "${root}/${CI_DEST}/${name}" COPYONLY)
+            configure_file("${SRC_ABS}/${rel}" "${root}/${_header_path}" COPYONLY)
         endforeach()
+        if(CI_NAME)
+            set_property(GLOBAL APPEND PROPERTY AROS_STAGED_HEADER_BINDINGS
+                "${_header_path}|${CI_NAME}")
+        endif()
         math(EXPR count "${count} + 1")
     endforeach()
     set_property(GLOBAL PROPERTY AROS_STAGED_HEADERS ${count})
 endfunction()
+
+function(_aros_materialize_deferred_header hash)
+    get_property(_done GLOBAL PROPERTY
+        "AROS_DEFERRED_HEADER_${hash}_MATERIALIZED")
+    if(_done)
+        return()
+    endif()
+    foreach(_field IN ITEMS SOURCE SDK GEN FETCH TARGET LABEL)
+        get_property(_${_field} GLOBAL PROPERTY
+            "AROS_DEFERRED_HEADER_${hash}_${_field}")
+    endforeach()
+    if(NOT _SOURCE OR NOT _SDK OR NOT _GEN OR NOT _FETCH OR NOT _TARGET)
+        return()
+    endif()
+    get_filename_component(_sdk_dir "${_SDK}" DIRECTORY)
+    get_filename_component(_gen_dir "${_GEN}" DIRECTORY)
+    add_custom_command(
+        OUTPUT "${_SDK}" "${_GEN}"
+        COMMAND "${CMAKE_COMMAND}" -E make_directory
+            "${_sdk_dir}" "${_gen_dir}"
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+            "${_SOURCE}" "${_SDK}"
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+            "${_SOURCE}" "${_GEN}"
+        DEPENDS "${_FETCH}"
+        COMMENT "Staging fetched header ${_LABEL}"
+        VERBATIM)
+    set(_copy_target "aros-copy-includes-${hash}")
+    add_custom_target("${_copy_target}" DEPENDS "${_SDK}" "${_GEN}")
+    add_dependencies("${_TARGET}" "${_copy_target}")
+    set_property(GLOBAL PROPERTY
+        "AROS_DEFERRED_HEADER_${hash}_MATERIALIZED" TRUE)
+endfunction()
+
+# Adds dependencies for literal headers included by a genmodule config.  The
+# config text is copied into generated prototypes and link stubs, so CMake's
+# compiler dependency scanner cannot discover a missing fetched header until
+# after compilation has already started.  Binding the literal include to its
+# `%copy_includes` owner closes that cache-empty ordering gap generically.
+function(_aros_add_genmodule_config_header_dependencies target config)
+    if(NOT TARGET "${target}" OR NOT EXISTS "${config}")
+        return()
+    endif()
+    get_property(_bindings GLOBAL PROPERTY AROS_STAGED_HEADER_BINDINGS)
+    if(NOT _bindings)
+        return()
+    endif()
+    file(STRINGS "${config}" _include_lines
+        REGEX "^[ \t]*#[ \t]*include[ \t]+[<\"]")
+    foreach(_line IN LISTS _include_lines)
+        if(NOT _line MATCHES
+           "^[ \t]*#[ \t]*include[ \t]+[<\"]([^>\"]+)[>\"]")
+            continue()
+        endif()
+        set(_header "${CMAKE_MATCH_1}")
+        foreach(_binding IN LISTS _bindings)
+            if(_binding MATCHES "^([^|]+)\\|([^|]+)(\\|([0-9a-f]+))?$"
+               AND CMAKE_MATCH_1 STREQUAL _header
+               AND TARGET "${CMAKE_MATCH_2}")
+                set(_owner "${CMAKE_MATCH_2}")
+                set(_deferred_hash "${CMAKE_MATCH_4}")
+                if(_deferred_hash)
+                    # One public header may include siblings from another
+                    # declaration sharing the same mmake target (GL/gl.h pulls
+                    # GL/glext.h and KHR/khrplatform.h).  The reference target
+                    # stages its complete declared set, so materialise the
+                    # complete owner rather than trying to parse absent files.
+                    get_property(_all_deferred GLOBAL PROPERTY
+                        AROS_DEFERRED_HEADER_HASHES)
+                    foreach(_candidate IN LISTS _all_deferred)
+                        get_property(_candidate_owner GLOBAL PROPERTY
+                            "AROS_DEFERRED_HEADER_${_candidate}_TARGET")
+                        if(_candidate_owner STREQUAL _owner)
+                            _aros_materialize_deferred_header("${_candidate}")
+                        endif()
+                    endforeach()
+                endif()
+                add_dependencies("${target}" "${_owner}")
+            endif()
+        endforeach()
+    endforeach()
+endfunction()
+
+function(_aros_write_deferred_header_report)
+    get_property(_entries GLOBAL PROPERTY AROS_DEFERRED_HEADER_UNSUPPORTED)
+    get_property(_hashes GLOBAL PROPERTY AROS_DEFERRED_HEADER_HASHES)
+    list(REMOVE_DUPLICATES _hashes)
+    foreach(_hash IN LISTS _hashes)
+        get_property(_done GLOBAL PROPERTY
+            "AROS_DEFERRED_HEADER_${_hash}_MATERIALIZED")
+        if(NOT _done)
+            get_property(_label GLOBAL PROPERTY
+                "AROS_DEFERRED_HEADER_${_hash}_LABEL")
+            list(APPEND _entries "${_label}|no declared genmodule consumer")
+        endif()
+    endforeach()
+    if(_entries)
+        list(SORT _entries)
+        list(REMOVE_DUPLICATES _entries)
+        string(REPLACE ";" "\n" _body "${_entries}")
+        file(WRITE "${_AROS_DEFERRED_HEADER_REPORT}" "${_body}\n")
+        list(LENGTH _entries _count)
+        message(WARNING
+            "${_count} deferred header staging rule(s) remain unsupported or "
+            "unbound -> ${_AROS_DEFERRED_HEADER_REPORT}")
+    else()
+        file(REMOVE "${_AROS_DEFERRED_HEADER_REPORT}")
+    endif()
+endfunction()
+cmake_language(DEFER CALL _aros_write_deferred_header_report)
 
 # aros_stage_header(SOURCE <src-relative file> DEST <root-relative file>)
 #
@@ -1040,14 +1251,16 @@ set_property(GLOBAL PROPERTY AROS_FETCH_TARGETS "")
 #                    PATCH_ORIGINS <po> PATCHES <p>)
 #
 # Declares a fetch target. The recipe mirrors the %fetch macro's invocation of
-# scripts/fetch.sh, including the `.<archive>-fetched` stamp that marks a
-# completed download.
+# scripts/fetch.sh.  The completion stamp lives in the concrete unpack
+# destination rather than the optionally shared archive cache: an archive may
+# be shared by several profiles, but each profile still has to unpack and patch
+# its own Ports tree.
 function(aros_fetch_archive)
     set(oneValueArgs NAME ARCHIVE SUFFIXES ORIGINS LOCATION DESTINATION
         PATCH_ORIGINS PATCHES)
     cmake_parse_arguments(FA "" "${oneValueArgs}" "" ${ARGN})
 
-    if(NOT FA_NAME OR NOT FA_ARCHIVE)
+    if(NOT FA_NAME OR NOT FA_ARCHIVE OR NOT FA_DESTINATION)
         return()
     endif()
     if(NOT AROS_FETCH_SCRIPT)
@@ -1062,7 +1275,7 @@ function(aros_fetch_archive)
     if(NOT _loc)
         set(_loc "${FA_DESTINATION}")
     endif()
-    set(_stamp "${_loc}/.${FA_ARCHIVE}-fetched")
+    set(_stamp "${FA_DESTINATION}/.${FA_ARCHIVE}-fetched")
 
     add_custom_command(
         OUTPUT "${_stamp}"
@@ -1081,6 +1294,8 @@ function(aros_fetch_archive)
         VERBATIM
     )
     add_custom_target(${FA_NAME} DEPENDS "${_stamp}")
+    set_property(TARGET ${FA_NAME} PROPERTY
+        AROS_FETCH_DESTINATION "${FA_DESTINATION}")
 
     get_property(_all GLOBAL PROPERTY AROS_FETCH_TARGETS)
     list(APPEND _all "${FA_NAME}")
@@ -1507,6 +1722,9 @@ function(aros_add_module_abi)
         "${_gm_INCLUDE_DIR}" "${_gm_GEN_DIR}")
     add_dependencies("${ARG_MMAKE_ID}-linklib"
         "${_gm_INCLUDES_TARGET}" "${_gm_FD_TARGET}")
+    _aros_add_genmodule_config_header_dependencies(
+        "${ARG_MMAKE_ID}-linklib"
+        "${ARG_DIRECTORY}/${ARG_TARGET}.conf")
     aros_gate_arch("${ARG_MMAKE_ID}-linklib" "${ARG_DIRECTORY}")
     aros_apply_includes("${ARG_MMAKE_ID}-linklib"
         MODULE_DIR "${ARG_DIRECTORY}"
@@ -1573,6 +1791,9 @@ function(aros_add_library)
             LINKER_LANGUAGE C)
         target_include_directories("${ARG_MMAKE_ID}-linklib" BEFORE PRIVATE
             "${_gm_INCLUDE_DIR}" "${_gm_GEN_DIR}")
+        _aros_add_genmodule_config_header_dependencies(
+            "${ARG_MMAKE_ID}-linklib"
+            "${ARG_DIRECTORY}/${ARG_TARGET}.conf")
         aros_gate_arch("${ARG_MMAKE_ID}-linklib" "${ARG_DIRECTORY}")
         aros_apply_includes("${ARG_MMAKE_ID}-linklib"
             MODULE_DIR "${ARG_DIRECTORY}"
