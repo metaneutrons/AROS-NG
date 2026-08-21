@@ -47,17 +47,44 @@ list(REMOVE_DUPLICATES AROS_ARCH_PACKAGE_DIRS)
 
 include("${CMAKE_SOURCE_DIR}/cmake/BootstrapSDK.cmake")
 
-# Target output directories
+# Target output directories.  These mirror config/make.cfg.in:97-124 and the
+# effective defaults written by genmodule; keeping the complete module layout
+# here prevents individual builders from inventing their own approximation of
+# the system tree.  genmodule deliberately spells DataTypes with a capital T
+# (tools/genmodule/config.c:294-297), despite make.cfg.in's Datatypes spelling.
 set(AROS_BUILD_DIR "${CMAKE_BINARY_DIR}")
-set(AROS_LIBS_DIR "${AROS_BUILD_DIR}/SYS/Libs")
-set(AROS_DEVS_DIR "${AROS_BUILD_DIR}/SYS/Devs")
-set(AROS_C_DIR "${AROS_BUILD_DIR}/SYS/C")
-set(AROS_CLASSES_DIR "${AROS_BUILD_DIR}/SYS/Classes")
+set(AROS_SYS_DIR "${AROS_BUILD_DIR}/SYS")
+set(AROS_BOOT_DIR "${AROS_SYS_DIR}/boot")
+set(AROS_BOOT_ARCH_DIR "${AROS_BOOT_DIR}/${AROS_TARGET_PLATFORM}")
+set(AROS_C_DIR "${AROS_SYS_DIR}/C")
+set(AROS_CLASSES_DIR "${AROS_SYS_DIR}/Classes")
+set(AROS_DATATYPES_DIR "${AROS_CLASSES_DIR}/DataTypes")
+set(AROS_GADGETS_DIR "${AROS_CLASSES_DIR}/Gadgets")
+set(AROS_CLASSIMAGES_DIR "${AROS_CLASSES_DIR}/Images")
+set(AROS_ZUNE_CLASSES_DIR "${AROS_CLASSES_DIR}/Zune")
+set(AROS_USB_CLASSES_DIR "${AROS_CLASSES_DIR}/USB")
+set(AROS_BLUETOOTH_CLASSES_DIR "${AROS_CLASSES_DIR}/Bluetooth")
+set(AROS_DEVS_DIR "${AROS_SYS_DIR}/Devs")
+set(AROS_RESOURCES_DIR "${AROS_DEVS_DIR}")
+set(AROS_DRIVERS_DIR "${AROS_DEVS_DIR}/Drivers")
+set(AROS_PRINTERS_DIR "${AROS_DEVS_DIR}/Printers")
+set(AROS_FS_DIR "${AROS_SYS_DIR}/L")
+set(AROS_LIBS_DIR "${AROS_SYS_DIR}/Libs")
 
-file(MAKE_DIRECTORY "${AROS_LIBS_DIR}")
-file(MAKE_DIRECTORY "${AROS_DEVS_DIR}")
-file(MAKE_DIRECTORY "${AROS_C_DIR}")
-file(MAKE_DIRECTORY "${AROS_CLASSES_DIR}")
+file(MAKE_DIRECTORY
+    "${AROS_BOOT_ARCH_DIR}"
+    "${AROS_C_DIR}"
+    "${AROS_DATATYPES_DIR}"
+    "${AROS_GADGETS_DIR}"
+    "${AROS_CLASSIMAGES_DIR}"
+    "${AROS_ZUNE_CLASSES_DIR}"
+    "${AROS_USB_CLASSES_DIR}"
+    "${AROS_BLUETOOTH_CLASSES_DIR}"
+    "${AROS_RESOURCES_DIR}"
+    "${AROS_DRIVERS_DIR}"
+    "${AROS_PRINTERS_DIR}"
+    "${AROS_FS_DIR}"
+    "${AROS_LIBS_DIR}")
 
 # Bootstrap SDK Includes
 aros_bootstrap_sdk_includes()
@@ -847,10 +874,54 @@ function(aros_resolve_arch_sources out_sources out_dropped module_dir)
     set(${out_dropped} "${DROPPED}" PARENT_SCOPE)
 endfunction()
 
+# _aros_module_install_dir(<out-var> <default-dir> <requested-dir>)
+#
+# Resolves an optional moduledir= override.  build_module_core prefixes a
+# relative moduledir with $(AROSDIR) (make.tmpl:2661), while values derived from
+# variables such as $(AROS_DEVS) are already absolute.  Generated CMake uses the
+# same contract through the public INSTALL_DIR argument on each module builder.
+function(_aros_module_install_dir out_var default_dir requested_dir)
+    if(requested_dir)
+        if(IS_ABSOLUTE "${requested_dir}")
+            set(_result "${requested_dir}")
+        else()
+            set(_result "${AROS_SYS_DIR}/${requested_dir}")
+        endif()
+    else()
+        set(_result "${default_dir}")
+    endif()
+    cmake_path(NORMAL_PATH _result)
+    set(${out_var} "${_result}" PARENT_SCOPE)
+endfunction()
+
+# _aros_module_output_name(<out-var> <base-name> <default-suffix>
+#                          <requested-suffix>)
+#
+# MODSUFFIX in %build_module replaces the module type as the runtime suffix.
+# A handler is the sole dash-separated form. An empty effective suffix is used
+# by %build_module_simple's printer type, whose runtime file has no extension.
+function(_aros_module_output_name out_var base_name default_suffix requested_suffix)
+    if(requested_suffix)
+        set(_suffix "${requested_suffix}")
+    else()
+        set(_suffix "${default_suffix}")
+    endif()
+
+    if(_suffix STREQUAL "handler")
+        set(_result "${base_name}-handler")
+    elseif(_suffix)
+        set(_result "${base_name}.${_suffix}")
+    else()
+        set(_result "${base_name}")
+    endif()
+    set(${out_var} "${_result}" PARENT_SCOPE)
+endfunction()
+
 # Macro: aros_add_library
 function(aros_add_library)
     set(options)
-    set(oneValueArgs TARGET MMAKE_ID DIRECTORY)
+    set(oneValueArgs TARGET MMAKE_ID DIRECTORY INSTALL_DIR
+        MODSUFFIX DEFAULT_INSTALL_DIR DEFAULT_MODSUFFIX)
     set(multiValueArgs SOURCES LIBS USELIBS INCLUDES ARCH_INCLUDES
         DEFINES UNDEFINES COMPILE_OPTIONS ARCH_SOURCES
         ARCH_DEFINES ARCH_COMPILE_OPTIONS)
@@ -874,6 +945,21 @@ function(aros_add_library)
     aros_mark_preprocessed_asm(${RESOLVED_SOURCES})
 
     if(RESOLVED_SOURCES)
+        if(ARG_DEFAULT_INSTALL_DIR)
+            set(_default_install_dir "${ARG_DEFAULT_INSTALL_DIR}")
+        else()
+            set(_default_install_dir "${AROS_LIBS_DIR}")
+        endif()
+        if(ARG_DEFAULT_MODSUFFIX)
+            set(_default_modsuffix "${ARG_DEFAULT_MODSUFFIX}")
+        else()
+            set(_default_modsuffix "library")
+        endif()
+        _aros_module_install_dir(_install_dir
+            "${_default_install_dir}" "${ARG_INSTALL_DIR}")
+        _aros_module_output_name(_output_name "${ARG_MMAKE_ID}"
+            "${_default_modsuffix}" "${ARG_MODSUFFIX}")
+
         add_executable(${ARG_MMAKE_ID} ${RESOLVED_SOURCES})
         target_compile_definitions(${ARG_MMAKE_ID} PRIVATE
             LC_LIBDEFS_FILE="${ARG_TARGET}_libdefs.h"
@@ -881,8 +967,8 @@ function(aros_add_library)
             __AROS_MODNAME__=${ARG_TARGET}
         )
         set_target_properties(${ARG_MMAKE_ID} PROPERTIES
-            OUTPUT_NAME "${ARG_MMAKE_ID}.library"
-            RUNTIME_OUTPUT_DIRECTORY "${AROS_LIBS_DIR}"
+            OUTPUT_NAME "${_output_name}"
+            RUNTIME_OUTPUT_DIRECTORY "${_install_dir}"
             LINKER_LANGUAGE C
         )
         aros_gate_arch(${ARG_MMAKE_ID} "${ARG_DIRECTORY}")
@@ -907,7 +993,7 @@ endfunction()
 # Macro: aros_add_device
 function(aros_add_device)
     set(options)
-    set(oneValueArgs TARGET MMAKE_ID DIRECTORY)
+    set(oneValueArgs TARGET MMAKE_ID DIRECTORY INSTALL_DIR MODSUFFIX)
     set(multiValueArgs SOURCES LIBS USELIBS INCLUDES ARCH_INCLUDES
         DEFINES UNDEFINES COMPILE_OPTIONS ARCH_SOURCES
         ARCH_DEFINES ARCH_COMPILE_OPTIONS)
@@ -931,6 +1017,10 @@ function(aros_add_device)
     aros_mark_preprocessed_asm(${RESOLVED_SOURCES})
 
     if(RESOLVED_SOURCES)
+        _aros_module_install_dir(_install_dir
+            "${AROS_DEVS_DIR}" "${ARG_INSTALL_DIR}")
+        _aros_module_output_name(_output_name "${ARG_MMAKE_ID}"
+            "device" "${ARG_MODSUFFIX}")
         add_executable(${ARG_MMAKE_ID} ${RESOLVED_SOURCES})
         target_compile_definitions(${ARG_MMAKE_ID} PRIVATE
             LC_LIBDEFS_FILE="${ARG_TARGET}_libdefs.h"
@@ -938,8 +1028,8 @@ function(aros_add_device)
             __AROS_MODNAME__=${ARG_TARGET}
         )
         set_target_properties(${ARG_MMAKE_ID} PROPERTIES
-            OUTPUT_NAME "${ARG_MMAKE_ID}.device"
-            RUNTIME_OUTPUT_DIRECTORY "${AROS_DEVS_DIR}"
+            OUTPUT_NAME "${_output_name}"
+            RUNTIME_OUTPUT_DIRECTORY "${_install_dir}"
             LINKER_LANGUAGE C
         )
         aros_gate_arch(${ARG_MMAKE_ID} "${ARG_DIRECTORY}")
@@ -964,7 +1054,7 @@ endfunction()
 # Macro: aros_add_resource
 function(aros_add_resource)
     set(options)
-    set(oneValueArgs TARGET MMAKE_ID DIRECTORY)
+    set(oneValueArgs TARGET MMAKE_ID DIRECTORY INSTALL_DIR MODSUFFIX)
     set(multiValueArgs SOURCES LIBS USELIBS INCLUDES ARCH_INCLUDES
         DEFINES UNDEFINES COMPILE_OPTIONS ARCH_SOURCES
         ARCH_DEFINES ARCH_COMPILE_OPTIONS)
@@ -988,6 +1078,10 @@ function(aros_add_resource)
     aros_mark_preprocessed_asm(${RESOLVED_SOURCES})
 
     if(RESOLVED_SOURCES)
+        _aros_module_install_dir(_install_dir
+            "${AROS_RESOURCES_DIR}" "${ARG_INSTALL_DIR}")
+        _aros_module_output_name(_output_name "${ARG_MMAKE_ID}"
+            "resource" "${ARG_MODSUFFIX}")
         add_executable(${ARG_MMAKE_ID} ${RESOLVED_SOURCES})
         target_compile_definitions(${ARG_MMAKE_ID} PRIVATE
             LC_LIBDEFS_FILE="${ARG_TARGET}_libdefs.h"
@@ -995,8 +1089,8 @@ function(aros_add_resource)
             __AROS_MODNAME__=${ARG_TARGET}
         )
         set_target_properties(${ARG_MMAKE_ID} PROPERTIES
-            OUTPUT_NAME "${ARG_MMAKE_ID}.resource"
-            RUNTIME_OUTPUT_DIRECTORY "${AROS_LIBS_DIR}"
+            OUTPUT_NAME "${_output_name}"
+            RUNTIME_OUTPUT_DIRECTORY "${_install_dir}"
             LINKER_LANGUAGE C
         )
         aros_gate_arch(${ARG_MMAKE_ID} "${ARG_DIRECTORY}")
@@ -1021,7 +1115,7 @@ endfunction()
 # Macro: aros_add_hidd
 function(aros_add_hidd)
     set(options)
-    set(oneValueArgs TARGET MMAKE_ID DIRECTORY)
+    set(oneValueArgs TARGET MMAKE_ID DIRECTORY INSTALL_DIR MODSUFFIX)
     set(multiValueArgs SOURCES LIBS USELIBS INCLUDES ARCH_INCLUDES
         DEFINES UNDEFINES COMPILE_OPTIONS ARCH_SOURCES
         ARCH_DEFINES ARCH_COMPILE_OPTIONS)
@@ -1045,6 +1139,10 @@ function(aros_add_hidd)
     aros_mark_preprocessed_asm(${RESOLVED_SOURCES})
 
     if(RESOLVED_SOURCES)
+        _aros_module_install_dir(_install_dir
+            "${AROS_DRIVERS_DIR}" "${ARG_INSTALL_DIR}")
+        _aros_module_output_name(_output_name "${ARG_MMAKE_ID}"
+            "hidd" "${ARG_MODSUFFIX}")
         add_executable(${ARG_MMAKE_ID} ${RESOLVED_SOURCES})
         target_compile_definitions(${ARG_MMAKE_ID} PRIVATE
             LC_LIBDEFS_FILE="${ARG_TARGET}_libdefs.h"
@@ -1052,8 +1150,8 @@ function(aros_add_hidd)
             __AROS_MODNAME__=${ARG_TARGET}
         )
         set_target_properties(${ARG_MMAKE_ID} PROPERTIES
-            OUTPUT_NAME "${ARG_MMAKE_ID}.hidd"
-            RUNTIME_OUTPUT_DIRECTORY "${AROS_CLASSES_DIR}"
+            OUTPUT_NAME "${_output_name}"
+            RUNTIME_OUTPUT_DIRECTORY "${_install_dir}"
             LINKER_LANGUAGE C
         )
         aros_gate_arch(${ARG_MMAKE_ID} "${ARG_DIRECTORY}")
@@ -1077,17 +1175,23 @@ endfunction()
 
 # Macro: aros_add_datatype
 function(aros_add_datatype)
-    aros_add_library(${ARGN})
+    aros_add_library(${ARGN}
+        DEFAULT_INSTALL_DIR "${AROS_DATATYPES_DIR}"
+        DEFAULT_MODSUFFIX "datatype")
 endfunction()
 
 # Macro: aros_add_gadget
 function(aros_add_gadget)
-    aros_add_library(${ARGN})
+    aros_add_library(${ARGN}
+        DEFAULT_INSTALL_DIR "${AROS_GADGETS_DIR}"
+        DEFAULT_MODSUFFIX "gadget")
 endfunction()
 
 # Macro: aros_add_mcc
 function(aros_add_mcc)
-    aros_add_library(${ARGN})
+    aros_add_library(${ARGN}
+        DEFAULT_INSTALL_DIR "${AROS_ZUNE_CLASSES_DIR}"
+        DEFAULT_MODSUFFIX "mcc")
 endfunction()
 
 # Macro: aros_add_linklib
@@ -1208,12 +1312,12 @@ endfunction()
 # find kernel-fs-con or kernel-fs-ram and kernel-package-fs was missing four of
 # its five members.
 #
-# In the reference, modtype decides only the file suffix and the install
-# directory (config/make.tmpl:2048-2095); the compilation is identical to
-# modtype=library. So this builds like aros_add_library and differs only in
-# where the result lands.
+# In the reference, modtype supplies the default file suffix and install
+# directory (config/make.tmpl:2048-2095), while modsuffix can replace that
+# suffix; the compilation is identical to modtype=library. So this builds like
+# aros_add_library and differs only in its runtime output properties.
 function(aros_add_custom_target)
-    set(oneValueArgs TARGET MMAKE_ID DIRECTORY MODTYPE)
+    set(oneValueArgs TARGET MMAKE_ID DIRECTORY MODTYPE INSTALL_DIR MODSUFFIX)
     set(multiValueArgs SOURCES LIBS USELIBS INCLUDES ARCH_INCLUDES
         DEFINES UNDEFINES COMPILE_OPTIONS ARCH_SOURCES
         ARCH_DEFINES ARCH_COMPILE_OPTIONS)
@@ -1223,34 +1327,50 @@ function(aros_add_custom_target)
         return()
     endif()
 
-    # Install location per modtype, from make.tmpl:2048-2095.
+    # Install location per modtype, from make.tmpl:2048-2095.  `class` is the
+    # Reaction class spelling supplied by genmodule and shares AROS_CLASSES.
     set(_moddir "${AROS_LIBS_DIR}")
     if(ARG_MODTYPE STREQUAL "handler")
-        set(_moddir "${AROS_BUILD_DIR}/SYS/L")
+        set(_moddir "${AROS_FS_DIR}")
+    elseif(ARG_MODTYPE STREQUAL "device")
+        set(_moddir "${AROS_DEVS_DIR}")
+    elseif(ARG_MODTYPE STREQUAL "resource" OR ARG_MODTYPE STREQUAL "hook")
+        set(_moddir "${AROS_RESOURCES_DIR}")
+    elseif(ARG_MODTYPE STREQUAL "hidd")
+        set(_moddir "${AROS_DRIVERS_DIR}")
+    elseif(ARG_MODTYPE STREQUAL "datatype")
+        set(_moddir "${AROS_DATATYPES_DIR}")
+    elseif(ARG_MODTYPE STREQUAL "gadget")
+        set(_moddir "${AROS_GADGETS_DIR}")
+    elseif(ARG_MODTYPE STREQUAL "image")
+        set(_moddir "${AROS_CLASSIMAGES_DIR}")
     elseif(ARG_MODTYPE STREQUAL "mui" OR ARG_MODTYPE STREQUAL "mcc"
            OR ARG_MODTYPE STREQUAL "mcp")
-        set(_moddir "${AROS_CLASSES_DIR}/Zune")
+        set(_moddir "${AROS_ZUNE_CLASSES_DIR}")
     elseif(ARG_MODTYPE STREQUAL "usbclass")
-        set(_moddir "${AROS_CLASSES_DIR}/USB")
+        set(_moddir "${AROS_USB_CLASSES_DIR}")
     elseif(ARG_MODTYPE STREQUAL "btclass")
-        set(_moddir "${AROS_CLASSES_DIR}/Bluetooth")
-    elseif(ARG_MODTYPE STREQUAL "image" OR ARG_MODTYPE STREQUAL "class")
+        set(_moddir "${AROS_BLUETOOTH_CLASSES_DIR}")
+    elseif(ARG_MODTYPE STREQUAL "class")
         set(_moddir "${AROS_CLASSES_DIR}")
-    elseif(ARG_MODTYPE STREQUAL "hook")
-        set(_moddir "${AROS_BUILD_DIR}/SYS/Resources")
+    elseif(ARG_MODTYPE STREQUAL "printer")
+        set(_moddir "${AROS_PRINTERS_DIR}")
     endif()
+    _aros_module_install_dir(_moddir "${_moddir}" "${ARG_INSTALL_DIR}")
 
-    # A handler is named <name>-handler, everything else <name>.<modtype>; the
-    # package declarations spell both out (make.tmpl:3745-3750). The mmake id
-    # rather than the module name, as every module builder here does, since two
-    # declarations can share a modname.
-    if(ARG_MODTYPE STREQUAL "handler")
-        set(_outname "${ARG_MMAKE_ID}-handler")
-    elseif(ARG_MODTYPE)
-        set(_outname "${ARG_MMAKE_ID}.${ARG_MODTYPE}")
+    # genmodule maps usbclass and btclass to the runtime suffix `.class` even
+    # when no explicit modsuffix was supplied. Other full modules default to
+    # their modtype. The mmake id remains the basename until the known duplicate
+    # modname outputs can be represented without generating duplicate rules.
+    if(ARG_MODTYPE STREQUAL "usbclass" OR ARG_MODTYPE STREQUAL "btclass")
+        set(_default_modsuffix "class")
+    elseif(ARG_MODTYPE STREQUAL "printer")
+        set(_default_modsuffix "")
     else()
-        set(_outname "${ARG_MMAKE_ID}.library")
+        set(_default_modsuffix "${ARG_MODTYPE}")
     endif()
+    _aros_module_output_name(_outname "${ARG_MMAKE_ID}"
+        "${_default_modsuffix}" "${ARG_MODSUFFIX}")
 
     aros_resolve_sources(RESOLVED_SOURCES "${ARG_DIRECTORY}" ${ARG_SOURCES})
     if(ARG_ARCH_SOURCES)
@@ -1349,9 +1469,6 @@ find_program(AROS_ROMTOOL_BIN aros-romtool
           "${CMAKE_SOURCE_DIR}/tools/aros-tools/target/debug"
     NO_DEFAULT_PATH
 )
-
-set(AROS_BOOT_DIR "${AROS_BUILD_DIR}/boot")
-set(AROS_BOOT_ARCH_DIR "${AROS_BOOT_DIR}/${AROS_TARGET_PLATFORM}")
 
 # aros_make_package(NAME <target> OUTPUT <file> MODULES <targets...>)
 #
@@ -1562,10 +1679,11 @@ endfunction()
 # no generated libdefs header and no LC_LIBDEFS_FILE. Defining it anyway would
 # point the module at a header that is never generated.
 #
-# The extension follows modtype, which is a required argument there. The 28
-# declarations in the tree use mcc, resource, library, mcp, hook and printer.
+# The extension follows modtype, which is a required argument there, except
+# that printer modules are suffixless. The 28 declarations in the tree use
+# mcc, resource, library, mcp, hook and printer.
 function(aros_add_module_simple)
-    set(oneValueArgs TARGET MMAKE_ID DIRECTORY MODTYPE)
+    set(oneValueArgs TARGET MMAKE_ID DIRECTORY MODTYPE INSTALL_DIR MODSUFFIX)
     set(multiValueArgs SOURCES LIBS USELIBS INCLUDES ARCH_INCLUDES
         DEFINES UNDEFINES COMPILE_OPTIONS ARCH_SOURCES
         ARCH_DEFINES ARCH_COMPILE_OPTIONS)
@@ -1591,21 +1709,57 @@ function(aros_add_module_simple)
     endif()
     aros_mark_preprocessed_asm(${RESOLVED_SOURCES})
 
-    set(_ext "${ARG_MODTYPE}")
-    if(NOT _ext)
-        set(_ext "library")
+    set(_default_modsuffix "${ARG_MODTYPE}")
+    if(NOT _default_modsuffix)
+        set(_default_modsuffix "library")
+    elseif(_default_modsuffix STREQUAL "printer")
+        # Unlike full genmodule modules, simple printer modules have no suffix.
+        set(_default_modsuffix "")
     endif()
+
+    # build_module_simple uses the same default moduledir table as the full
+    # module builder (make.tmpl:2048-2092).
+    set(_default_install_dir "${AROS_LIBS_DIR}")
+    if(ARG_MODTYPE STREQUAL "handler")
+        set(_default_install_dir "${AROS_FS_DIR}")
+    elseif(ARG_MODTYPE STREQUAL "device")
+        set(_default_install_dir "${AROS_DEVS_DIR}")
+    elseif(ARG_MODTYPE STREQUAL "resource" OR ARG_MODTYPE STREQUAL "hook")
+        set(_default_install_dir "${AROS_RESOURCES_DIR}")
+    elseif(ARG_MODTYPE STREQUAL "hidd")
+        set(_default_install_dir "${AROS_DRIVERS_DIR}")
+    elseif(ARG_MODTYPE STREQUAL "datatype")
+        set(_default_install_dir "${AROS_DATATYPES_DIR}")
+    elseif(ARG_MODTYPE STREQUAL "gadget")
+        set(_default_install_dir "${AROS_GADGETS_DIR}")
+    elseif(ARG_MODTYPE STREQUAL "image")
+        set(_default_install_dir "${AROS_CLASSIMAGES_DIR}")
+    elseif(ARG_MODTYPE STREQUAL "mui" OR ARG_MODTYPE STREQUAL "mcc"
+           OR ARG_MODTYPE STREQUAL "mcp")
+        set(_default_install_dir "${AROS_ZUNE_CLASSES_DIR}")
+    elseif(ARG_MODTYPE STREQUAL "usbclass")
+        set(_default_install_dir "${AROS_USB_CLASSES_DIR}")
+    elseif(ARG_MODTYPE STREQUAL "btclass")
+        set(_default_install_dir "${AROS_BLUETOOTH_CLASSES_DIR}")
+    elseif(ARG_MODTYPE STREQUAL "class")
+        set(_default_install_dir "${AROS_CLASSES_DIR}")
+    elseif(ARG_MODTYPE STREQUAL "printer")
+        set(_default_install_dir "${AROS_PRINTERS_DIR}")
+    endif()
+    _aros_module_install_dir(_install_dir
+        "${_default_install_dir}" "${ARG_INSTALL_DIR}")
+    _aros_module_output_name(_output_name "${ARG_MMAKE_ID}"
+        "${_default_modsuffix}" "${ARG_MODSUFFIX}")
 
     add_executable(${ARG_MMAKE_ID} ${RESOLVED_SOURCES})
     target_compile_definitions(${ARG_MMAKE_ID} PRIVATE
         __AROS_MODNAME__=${ARG_TARGET}
     )
     set_target_properties(${ARG_MMAKE_ID} PROPERTIES
-        # Named after the mmake id, as every other module builder here does:
-        # two declarations can share a modname (usbromstartup appears twice)
-        # and would then write the same file.
-        OUTPUT_NAME "${ARG_MMAKE_ID}.${_ext}"
-        RUNTIME_OUTPUT_DIRECTORY "${AROS_LIBS_DIR}"
+        # Named after the mmake id, as every other module builder here does;
+        # known duplicate modnames would otherwise produce duplicate rules.
+        OUTPUT_NAME "${_output_name}"
+        RUNTIME_OUTPUT_DIRECTORY "${_install_dir}"
         LINKER_LANGUAGE C
     )
     aros_gate_arch(${ARG_MMAKE_ID} "${ARG_DIRECTORY}")
