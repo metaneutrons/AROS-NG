@@ -44,6 +44,28 @@ else()
     set(AROS_TARGET_CPU32 "")
 endif()
 
+# Values used by target-dependent MetaMake conditionals. Keep them as named
+# cache settings so the transpiler receives configuration, never Rust-side
+# architecture guesses. Bare-metal pc and raspi use an empty MetaMake FAMILY;
+# hosted targets may later set it to unix. The three current presets are
+# ordinary variants and use LLVM. MMU follows the reference configure default.
+set(AROS_TARGET_VARIANT "" CACHE STRING "MetaMake target variant")
+set(AROS_TARGET_FAMILY "" CACHE STRING
+    "Historic MetaMake target family (empty for bare-metal targets)")
+if(CMAKE_C_COMPILER_ID MATCHES "Clang")
+    set(_aros_default_toolchain "llvm")
+elseif(CMAKE_C_COMPILER_ID STREQUAL "GNU")
+    set(_aros_default_toolchain "gnu")
+else()
+    set(_aros_default_toolchain "")
+endif()
+set(AROS_TOOLCHAIN "${_aros_default_toolchain}" CACHE STRING
+    "MetaMake target toolchain family")
+set_property(CACHE AROS_TOOLCHAIN PROPERTY STRINGS llvm gnu)
+option(AROS_ENABLE_MMU "Include the MetaMake MMU kernel sources" ON)
+set(GCC_CONFIG_FLOAT_ABI "" CACHE STRING
+    "MetaMake ARM floating-point ABI (for example hard or soft)")
+
 # MetaMake calls the compound machine/CPU selector AROS_TARGET_PLATFORM. Keep
 # that legacy spelling distinct from this build's machine-only platform value
 # so generated meta-target names expand unambiguously.
@@ -67,10 +89,23 @@ set(GENERATED_TARGETS_CMAKE "${CMAKE_BINARY_DIR}/generated_targets.cmake")
 
 if(EXISTS "${TRANSPILER_BIN}")
     message(STATUS "⚡ AROS-NG: Running Rust aros-transpiler on mmakefile tree...")
+    if(AROS_ENABLE_MMU)
+        set(_aros_transpiler_use_mmu "1")
+    else()
+        set(_aros_transpiler_use_mmu "0")
+    endif()
     execute_process(
         COMMAND "${TRANSPILER_BIN}"
                 "--source-dir" "${CMAKE_SOURCE_DIR}"
                 "--output" "${GENERATED_TARGETS_CMAKE}"
+                "--cpu" "${AROS_TARGET_CPU}"
+                "--platform" "${AROS_TARGET_PLATFORM}"
+                "--family" "${AROS_TARGET_FAMILY}"
+                "--variant" "${AROS_TARGET_VARIANT}"
+                "--toolchain" "${AROS_TOOLCHAIN}"
+                "--cpu32" "${AROS_TARGET_CPU32}"
+                "--use-mmu" "${_aros_transpiler_use_mmu}"
+                "--float-abi" "${GCC_CONFIG_FLOAT_ABI}"
         RESULT_VARIABLE TRANSPILER_RES
     )
     if(TRANSPILER_RES EQUAL 0 AND EXISTS "${GENERATED_TARGETS_CMAKE}")
@@ -78,11 +113,10 @@ if(EXISTS "${TRANSPILER_BIN}")
     endif()
 endif()
 
-# 4a. Icon generation diagnostics.  The CMake helpers keep missing-input and
-#     missing-host-tool outputs in the graph so an explicitly requested target
-#     still fails at the right point.  Report those conditions at configure
-#     time as well, and remove old reports when their cause has gone away.
-function(_aros_write_icon_report property_name report_name description)
+# 4a. Configure-time diagnostics accumulated by the CMake target helpers. The
+#     report writer sorts and deduplicates stable machine-readable entries and
+#     removes an old report when its cause has gone away.
+function(_aros_write_property_report property_name report_name description)
     get_property(_entries GLOBAL PROPERTY "${property_name}")
     set(_report "${CMAKE_BINARY_DIR}/${report_name}")
     if(_entries)
@@ -98,18 +132,26 @@ function(_aros_write_icon_report property_name report_name description)
     endif()
 endfunction()
 
-_aros_write_icon_report(
+_aros_write_property_report(
     AROS_ICON_OUTPUT_CONFLICTS
     "generated_targets.icon-output-conflicts.txt"
     "icon output conflict(s); the first declaration is used")
-_aros_write_icon_report(
+_aros_write_property_report(
     AROS_ICON_MISSING_INPUTS
     "generated_targets.missing-icon-inputs.txt"
     "missing icon input(s)")
-_aros_write_icon_report(
+_aros_write_property_report(
     AROS_ICON_MISSING_HOST_TOOL
     "generated_targets.missing-icon-host-tool.txt"
     "icon declaration(s) without a usable host ilbmtoicon")
+_aros_write_property_report(
+    AROS_SKIPPED_SOURCE_LANGUAGE_LANES
+    "generated_targets.skipped-source-languages.txt"
+    "source-language lane(s) skipped")
+_aros_write_property_report(
+    AROS_EMPTY_CONCRETE_TARGETS
+    "generated_targets.empty-concrete-targets.txt"
+    "concrete declaration(s) resolved to zero sources")
 
 get_property(_icon_targets GLOBAL PROPERTY AROS_ICON_TARGETS)
 get_property(_icon_outputs GLOBAL PROPERTY AROS_ICON_OUTPUTS)

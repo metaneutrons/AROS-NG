@@ -48,6 +48,7 @@
         "CMAKE_CXX_COMPILER": "/opt/homebrew/opt/llvm/bin/clang++",
         "AROS_TARGET_CPU": "arm",
         "AROS_TARGET_PLATFORM": "raspi",
+        "GCC_CONFIG_FLOAT_ABI": "hard",
         "CMAKE_BUILD_TYPE": "Release",
         "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
       }
