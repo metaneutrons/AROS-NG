@@ -35,6 +35,15 @@ if(DEFINED AROS_TARGET_ARCH)
         "here; pass AROS_TARGET_CPU and AROS_TARGET_PLATFORM instead.")
 endif()
 
+# The reference configure pairs every x86_64 target with i386 for the few
+# bootstrap rules that explicitly build a 32-bit companion (for example the
+# GRUB EFI helper). Other target CPUs have no companion value.
+if(AROS_TARGET_CPU STREQUAL "x86_64")
+    set(AROS_TARGET_CPU32 "i386")
+else()
+    set(AROS_TARGET_CPU32 "")
+endif()
+
 # 1. Compiler Cache Integration (sccache / ccache)
 include("${CMAKE_SOURCE_DIR}/cmake/CompilerCache.cmake")
 
@@ -43,6 +52,7 @@ include("${CMAKE_SOURCE_DIR}/cmake/AROS.cmake")
 
 # 3. Tools that run on the build machine, and the header rules using them.
 include("${CMAKE_SOURCE_DIR}/cmake/HostTools.cmake")
+include("${CMAKE_SOURCE_DIR}/cmake/Icons.cmake")
 include("${CMAKE_SOURCE_DIR}/cmake/GeneratedHeaders.cmake")
 
 # 4. Dynamic Target Transpilation
@@ -60,6 +70,59 @@ if(EXISTS "${TRANSPILER_BIN}")
     if(TRANSPILER_RES EQUAL 0 AND EXISTS "${GENERATED_TARGETS_CMAKE}")
         include("${GENERATED_TARGETS_CMAKE}")
     endif()
+endif()
+
+# 4a. Icon generation diagnostics.  The CMake helpers keep missing-input and
+#     missing-host-tool outputs in the graph so an explicitly requested target
+#     still fails at the right point.  Report those conditions at configure
+#     time as well, and remove old reports when their cause has gone away.
+function(_aros_write_icon_report property_name report_name description)
+    get_property(_entries GLOBAL PROPERTY "${property_name}")
+    set(_report "${CMAKE_BINARY_DIR}/${report_name}")
+    if(_entries)
+        list(SORT _entries)
+        list(REMOVE_DUPLICATES _entries)
+        list(LENGTH _entries _count)
+        string(REPLACE ";" "\n" _body "${_entries}")
+        file(WRITE "${_report}" "${_body}\n")
+        message(WARNING
+            "${_count} ${description} -> ${_report}")
+    else()
+        file(REMOVE "${_report}")
+    endif()
+endfunction()
+
+_aros_write_icon_report(
+    AROS_ICON_OUTPUT_CONFLICTS
+    "generated_targets.icon-output-conflicts.txt"
+    "icon output conflict(s); the first declaration is used")
+_aros_write_icon_report(
+    AROS_ICON_MISSING_INPUTS
+    "generated_targets.missing-icon-inputs.txt"
+    "missing icon input(s)")
+_aros_write_icon_report(
+    AROS_ICON_MISSING_HOST_TOOL
+    "generated_targets.missing-icon-host-tool.txt"
+    "icon declaration(s) without a usable host ilbmtoicon")
+
+get_property(_icon_targets GLOBAL PROPERTY AROS_ICON_TARGETS)
+get_property(_icon_outputs GLOBAL PROPERTY AROS_ICON_OUTPUTS)
+if(_icon_targets)
+    list(REMOVE_DUPLICATES _icon_targets)
+    list(LENGTH _icon_targets _n_icon_targets)
+else()
+    set(_n_icon_targets 0)
+endif()
+if(_icon_outputs)
+    list(REMOVE_DUPLICATES _icon_outputs)
+    list(LENGTH _icon_outputs _n_icon_outputs)
+else()
+    set(_n_icon_outputs 0)
+endif()
+if(_n_icon_targets OR _n_icon_outputs)
+    message(STATUS
+        "🖼️  AROS-NG: ${_n_icon_targets} icon target(s), "
+        "${_n_icon_outputs} unique .info output rule(s)")
 endif()
 
 # 4b. Attach the generated headers recorded in GeneratedHeaders.cmake to the

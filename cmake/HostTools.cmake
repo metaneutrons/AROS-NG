@@ -19,7 +19,8 @@ set(AROS_HOST_TOOL_DIR "${CMAKE_BINARY_DIR}/hosttools")
 file(MAKE_DIRECTORY "${AROS_HOST_TOOL_DIR}")
 
 # aros_host_tool(NAME <name> SOURCES <file>... [DEFINES <d>...]
-#                [INCLUDES <dir>...] [LIBS <l>...])
+#                [INCLUDES <dir>...] [LIBS <l>...]
+#                [RAW_CFLAGS <flag>...] [RAW_LDFLAGS <flag>...])
 #
 # Builds one host executable in a single compiler call and exports its path as
 # AROS_HOST_<NAME> in the caller's scope. Recompiles when a source changes;
@@ -27,7 +28,7 @@ file(MAKE_DIRECTORY "${AROS_HOST_TOOL_DIR}")
 # do not change between builds.
 function(aros_host_tool)
     set(oneValueArgs NAME)
-    set(multiValueArgs SOURCES DEFINES INCLUDES LIBS)
+    set(multiValueArgs SOURCES DEFINES INCLUDES LIBS RAW_CFLAGS RAW_LDFLAGS)
     cmake_parse_arguments(HT "" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
 
     if(NOT HT_NAME OR NOT HT_SOURCES)
@@ -48,9 +49,14 @@ function(aros_host_tool)
         list(APPEND _libs "-l${l}")
     endforeach()
 
+    # RAW_CFLAGS / RAW_LDFLAGS carry what a discovery step produced verbatim --
+    # pkg-config's -I/-L/-l set for libpng, for instance, which cannot be
+    # reduced to a bare library name because the header and the library live
+    # outside the default search paths on a Homebrew host.
     add_custom_command(
         OUTPUT "${_exe}"
-        COMMAND "${AROS_HOST_CC}" -O2 -w ${_flags} ${HT_SOURCES} ${_libs} -o "${_exe}"
+        COMMAND "${AROS_HOST_CC}" -O2 -w ${_flags} ${HT_RAW_CFLAGS} ${HT_SOURCES}
+                ${_libs} ${HT_RAW_LDFLAGS} -o "${_exe}"
         DEPENDS ${HT_SOURCES}
         COMMENT "Building host tool ${HT_NAME}"
         VERBATIM)
@@ -85,6 +91,84 @@ aros_host_tool(NAME flexcat
 
 aros_host_tool(NAME ilbmtoc
     SOURCES "${CMAKE_SOURCE_DIR}/tools/ilbmtoc/ilbmtoc.c")
+
+# -----------------------------------------------------------------------------
+# ilbmtoicon
+# -----------------------------------------------------------------------------
+#
+# Turns an icon description plus a PNG into an Amiga Workbench .info file, which
+# is what %build_icons produces (config/make.tmpl:3117). Unlike the other host
+# tools it has external dependencies: libpng and zlib
+# (tools/ilbmtoicon/Makefile:9,27).
+#
+# Discovery is pkg-config first, because on a Homebrew host neither png.h nor
+# libpng16 is on the default search path, then CMake's FindPNG/FindZLIB modules.
+# The compiler is invoked directly, so imported targets such as PNG::PNG cannot
+# be passed as link flags; the module fallback converts its library variables
+# to actual paths or -l arguments. Without both dependencies, icon output rules
+# stay in the graph and fail with a direct diagnostic when requested.
+find_package(PkgConfig QUIET)
+if(PKG_CONFIG_FOUND)
+    pkg_check_modules(AROS_HOST_PNG QUIET libpng)
+    pkg_check_modules(AROS_HOST_ZLIB QUIET zlib)
+endif()
+
+set(_host_png_ready FALSE)
+if(PKG_CONFIG_FOUND AND AROS_HOST_PNG_FOUND AND AROS_HOST_ZLIB_FOUND)
+    # CFLAGS/LDFLAGS retain non-directory flags advertised by the .pc files;
+    # rebuilding them from INCLUDE_DIRS/LIBRARIES alone would silently lose
+    # those usage requirements.
+    set(_png_cflags ${AROS_HOST_PNG_CFLAGS} ${AROS_HOST_ZLIB_CFLAGS})
+    set(_png_ldflags ${AROS_HOST_PNG_LDFLAGS} ${AROS_HOST_ZLIB_LDFLAGS})
+    set(_host_png_ready TRUE)
+else()
+    # Force module mode: a package config is allowed to expose only PNG::PNG,
+    # which is meaningful to target_link_libraries() but not to our raw `cc`
+    # custom command.
+    find_package(ZLIB QUIET MODULE)
+    find_package(PNG QUIET MODULE)
+    if(PNG_FOUND AND ZLIB_FOUND)
+        set(_png_cflags ${PNG_DEFINITIONS})
+        foreach(d IN LISTS PNG_INCLUDE_DIRS)
+            list(APPEND _png_cflags "-I${d}")
+        endforeach()
+
+        # FindPNG's list may contain absolute paths, bare system libraries
+        # (notably `m` for a static libpng), or optimized/debug selectors.
+        # Host tools are always built -O2, so select the non-debug entries.
+        set(_png_ldflags "")
+        set(_use_library TRUE)
+        foreach(l IN LISTS PNG_LIBRARIES)
+            if(l STREQUAL "optimized" OR l STREQUAL "general")
+                set(_use_library TRUE)
+            elseif(l STREQUAL "debug")
+                set(_use_library FALSE)
+            elseif(_use_library)
+                if(IS_ABSOLUTE "${l}" OR l MATCHES "^-" OR l MATCHES "[/\\\\]")
+                    list(APPEND _png_ldflags "${l}")
+                else()
+                    list(APPEND _png_ldflags "-l${l}")
+                endif()
+            endif()
+        endforeach()
+        set(_host_png_ready TRUE)
+    endif()
+endif()
+
+if(_host_png_ready)
+    list(REMOVE_DUPLICATES _png_cflags)
+    list(REMOVE_DUPLICATES _png_ldflags)
+    aros_host_tool(NAME ilbmtoicon
+        SOURCES "${CMAKE_SOURCE_DIR}/tools/ilbmtoicon/ilbmtoicon.c"
+        RAW_CFLAGS ${_png_cflags}
+        RAW_LDFLAGS ${_png_ldflags})
+    set(AROS_HOST_HAVE_ILBMTOICON TRUE)
+else()
+    set(AROS_HOST_HAVE_ILBMTOICON FALSE)
+    message(STATUS
+        "⏭️  AROS-NG: libpng and/or zlib not found on the build machine; "
+        "unavailable icon rules will be reported after target transpilation")
+endif()
 
 # -----------------------------------------------------------------------------
 # Generated header rules
