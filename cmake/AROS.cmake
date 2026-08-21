@@ -70,6 +70,11 @@ set(AROS_DRIVERS_DIR "${AROS_DEVS_DIR}/Drivers")
 set(AROS_PRINTERS_DIR "${AROS_DEVS_DIR}/Printers")
 set(AROS_FS_DIR "${AROS_SYS_DIR}/L")
 set(AROS_LIBS_DIR "${AROS_SYS_DIR}/Libs")
+set(AROS_DEVELOPER_DIR "${AROS_SYS_DIR}/Developer")
+set(AROS_DEVELOPER_INCLUDE_DIR "${AROS_DEVELOPER_DIR}/include")
+set(AROS_DEVELOPER_LIB_DIR "${AROS_DEVELOPER_DIR}/lib")
+set(AROS_DEVELOPER_SDK_DIR "${AROS_DEVELOPER_DIR}/SDK")
+set(AROS_DEVELOPER_FD_DIR "${AROS_DEVELOPER_SDK_DIR}/fd")
 
 file(MAKE_DIRECTORY
     "${AROS_BOOT_ARCH_DIR}"
@@ -84,7 +89,10 @@ file(MAKE_DIRECTORY
     "${AROS_DRIVERS_DIR}"
     "${AROS_PRINTERS_DIR}"
     "${AROS_FS_DIR}"
-    "${AROS_LIBS_DIR}")
+    "${AROS_LIBS_DIR}"
+    "${AROS_DEVELOPER_INCLUDE_DIR}"
+    "${AROS_DEVELOPER_LIB_DIR}"
+    "${AROS_DEVELOPER_FD_DIR}")
 
 # Bootstrap SDK Includes
 aros_bootstrap_sdk_includes()
@@ -1227,9 +1235,306 @@ function(_aros_module_output_name out_var base_name default_suffix requested_suf
     set(${out_var} "${_result}" PARENT_SCOPE)
 endfunction()
 
+# _aros_attach_genmodule_public_includes()
+#
+# Public genmodule headers live in a shared namespace.  A direct Ninja build of
+# a consumer must not race the declaration which owns that namespace, notably
+# for arosx: the ABI-only library config and the usbclass implementation config
+# describe different APIs under the same name.  Once all generated targets are
+# known, attach the authoritative header barrier to every compiled target.
+function(_aros_attach_genmodule_public_includes)
+    if(NOT TARGET aros-genmodule-public-includes)
+        return()
+    endif()
+
+    get_property(_targets DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
+    foreach(_target IN LISTS _targets)
+        if(_target STREQUAL "aros-genmodule-public-includes")
+            continue()
+        endif()
+        get_target_property(_type "${_target}" TYPE)
+        if(_type MATCHES "^(EXECUTABLE|STATIC_LIBRARY|SHARED_LIBRARY|MODULE_LIBRARY|OBJECT_LIBRARY)$")
+            add_dependencies("${_target}" aros-genmodule-public-includes)
+        endif()
+    endforeach()
+endfunction()
+
+function(_aros_register_genmodule_public_includes include_target)
+    if(NOT TARGET aros-genmodule-public-includes)
+        add_custom_target(aros-genmodule-public-includes)
+    endif()
+    add_dependencies(aros-genmodule-public-includes "${include_target}")
+
+    get_property(_scheduled GLOBAL PROPERTY AROS_GENMODULE_INCLUDE_BARRIER_SCHEDULED)
+    if(NOT _scheduled)
+        set_property(GLOBAL PROPERTY AROS_GENMODULE_INCLUDE_BARRIER_SCHEDULED TRUE)
+        cmake_language(DEFER CALL _aros_attach_genmodule_public_includes)
+    endif()
+endfunction()
+
+function(_aros_genmodule_alias alias_target dependency)
+    if(NOT TARGET "${alias_target}")
+        add_custom_target("${alias_target}")
+    endif()
+    if(NOT "${alias_target}" STREQUAL "${dependency}")
+        add_dependencies("${alias_target}" "${dependency}")
+    endif()
+endfunction()
+
+# _aros_generate_module_support(<prefix>
+#     TARGET <module-name> MMAKE_ID <target-id> DIRECTORY <source-dir>
+#     MODTYPE <type> [MODSUFFIX <suffix>] [ABI])
+#
+# Runs the reference tools/genmodule against one exact .conf.  All generation is
+# declaration-private first.  Public headers are then copied into the three
+# include roots the CMake build and the system image expose.  Keeping the
+# private root is essential for duplicate config stems: the global Rust scan is
+# intentionally broad and currently lets rom/usb/classes/arosx/arosx.conf race
+# rom/usb/classes/arosx/include/arosx.conf for the same SDK files.
+function(_aros_generate_module_support out_prefix)
+    set(options ABI)
+    set(oneValueArgs TARGET MMAKE_ID DIRECTORY MODTYPE MODSUFFIX)
+    cmake_parse_arguments(GM "${options}" "${oneValueArgs}" "" ${ARGN})
+
+    if(NOT GM_TARGET OR NOT GM_MMAKE_ID OR NOT GM_DIRECTORY OR NOT GM_MODTYPE)
+        message(FATAL_ERROR
+            "_aros_generate_module_support: TARGET, MMAKE_ID, DIRECTORY and MODTYPE are required")
+    endif()
+    if(NOT GM_MODTYPE STREQUAL "library")
+        message(FATAL_ERROR
+            "${GM_MMAKE_ID}: the initial genmodule CMake path supports modtype=library only")
+    endif()
+    if(NOT AROS_HOST_GENMODULE)
+        message(FATAL_ERROR
+            "${GM_MMAKE_ID}: legacy genmodule host tool was not registered")
+    endif()
+
+    cmake_path(ABSOLUTE_PATH GM_DIRECTORY NORMALIZE OUTPUT_VARIABLE _module_dir)
+    set(_conf "${_module_dir}/${GM_TARGET}.conf")
+    if(NOT EXISTS "${_conf}")
+        message(FATAL_ERROR "${GM_MMAKE_ID}: missing genmodule config ${_conf}")
+    endif()
+
+    file(RELATIVE_PATH _module_rel "${CMAKE_SOURCE_DIR}" "${_module_dir}")
+    if(_module_rel MATCHES "^\\.\\." OR IS_ABSOLUTE "${_module_rel}")
+        string(SHA256 _module_rel "${_module_dir}")
+    endif()
+    string(MAKE_C_IDENTIFIER "${GM_MMAKE_ID}" _safe_id)
+    set(_root "${CMAKE_BINARY_DIR}/genmodule/${_module_rel}/${_safe_id}")
+    set(_gen_dir "${_root}/gen")
+    set(_include_dir "${_root}/include")
+    set(_stub_dir "${_root}/linklib")
+    set(_fd_dir "${_root}/fd")
+
+    set(_opts -c "${_conf}")
+    if(GM_MODSUFFIX)
+        list(APPEND _opts -s "${GM_MODSUFFIX}")
+    endif()
+
+    set(_include_rel
+        "clib/${GM_TARGET}_protos.h"
+        "inline/${GM_TARGET}.h"
+        "defines/${GM_TARGET}.h"
+        "defines/${GM_TARGET}_LVO.h"
+        "proto/${GM_TARGET}.h")
+    set(_private_headers "")
+    set(_published_headers "")
+    set(_publish_commands "")
+    set(_private_include_dirs
+        "${_include_dir}/clib" "${_include_dir}/inline"
+        "${_include_dir}/defines" "${_include_dir}/proto"
+        "${_include_dir}/interface")
+    set(_publish_dirs
+        "${AROS_SDK_INCLUDE_DIR}/clib" "${AROS_SDK_INCLUDE_DIR}/inline"
+        "${AROS_SDK_INCLUDE_DIR}/defines" "${AROS_SDK_INCLUDE_DIR}/proto"
+        "${AROS_GENINC_DIR}/clib" "${AROS_GENINC_DIR}/inline"
+        "${AROS_GENINC_DIR}/defines" "${AROS_GENINC_DIR}/proto"
+        "${AROS_DEVELOPER_INCLUDE_DIR}/clib" "${AROS_DEVELOPER_INCLUDE_DIR}/inline"
+        "${AROS_DEVELOPER_INCLUDE_DIR}/defines" "${AROS_DEVELOPER_INCLUDE_DIR}/proto")
+    foreach(_rel IN LISTS _include_rel)
+        set(_private "${_include_dir}/${_rel}")
+        list(APPEND _private_headers "${_private}")
+        foreach(_public_root
+                "${AROS_SDK_INCLUDE_DIR}"
+                "${AROS_GENINC_DIR}"
+                "${AROS_DEVELOPER_INCLUDE_DIR}")
+            set(_public "${_public_root}/${_rel}")
+            list(APPEND _published_headers "${_public}")
+            list(APPEND _publish_commands
+                COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+                    "${_private}" "${_public}")
+        endforeach()
+    endforeach()
+
+    # BootstrapSDK's broad configure-time scan may just have written one of
+    # these paths from a same-named, non-ABI config.  Remove only the outputs
+    # this exact declaration owns; Ninja will now require the rule below and
+    # cannot consume the transient wrong arosx headers.
+    file(REMOVE ${_published_headers})
+    add_custom_command(
+        OUTPUT ${_private_headers} ${_published_headers}
+        COMMAND "${CMAKE_COMMAND}" -E make_directory
+            "${_include_dir}" ${_private_include_dirs} ${_publish_dirs}
+        COMMAND "${AROS_HOST_GENMODULE}" ${_opts} -d "${_include_dir}"
+            writeincludes "${GM_TARGET}" "${GM_MODTYPE}"
+        ${_publish_commands}
+        DEPENDS "${AROS_HOST_GENMODULE}" "${_conf}"
+        COMMENT "Generating exact ${GM_TARGET}.${GM_MODTYPE} ABI headers"
+        VERBATIM)
+    set(_includes_target "${GM_MMAKE_ID}-includes-generated")
+    add_custom_target("${_includes_target}" DEPENDS ${_published_headers})
+
+    set(_libdefs "${_gen_dir}/${GM_TARGET}_libdefs.h")
+    add_custom_command(
+        OUTPUT "${_libdefs}"
+        COMMAND "${CMAKE_COMMAND}" -E make_directory "${_gen_dir}"
+        COMMAND "${AROS_HOST_GENMODULE}" ${_opts} -d "${_gen_dir}"
+            writelibdefs "${GM_TARGET}" "${GM_MODTYPE}"
+        DEPENDS "${AROS_HOST_GENMODULE}" "${_conf}"
+        COMMENT "Generating exact ${GM_TARGET}.${GM_MODTYPE} libdefs"
+        VERBATIM)
+
+    set(_start "${_gen_dir}/${GM_TARGET}_start.c")
+    set(_end "${_gen_dir}/${GM_TARGET}_end.c")
+    set(_entrypoints "${_gen_dir}/${GM_TARGET}${GM_MODTYPE}.entrypoints")
+    set(_stub_sources "")
+    if(GM_ABI)
+        list(APPEND _stub_sources
+            "${_stub_dir}/${GM_TARGET}_regcall_stubs.c"
+            "${_stub_dir}/${GM_TARGET}_autoinit.c")
+    endif()
+    # writefiles always emits getlibbase for a library, including version's
+    # noautoinit/noautolib config.
+    list(APPEND _stub_sources "${_stub_dir}/${GM_TARGET}_getlibbase.c")
+
+    add_custom_command(
+        OUTPUT "${_start}" "${_end}" "${_entrypoints}" ${_stub_sources}
+        COMMAND "${CMAKE_COMMAND}" -E make_directory "${_gen_dir}" "${_stub_dir}"
+        COMMAND "${AROS_HOST_GENMODULE}" ${_opts}
+            -d "${_gen_dir}" -l "${_stub_dir}"
+            writefiles "${GM_TARGET}" "${GM_MODTYPE}"
+        DEPENDS "${AROS_HOST_GENMODULE}" "${_conf}" "${_libdefs}"
+        COMMENT "Generating ${GM_TARGET}.${GM_MODTYPE} module support sources"
+        VERBATIM)
+
+    # The MetaMake graph names <mmake>-genmodfiles directly.  Bind that public
+    # identity to the real writefiles outputs here; the transpiler's later
+    # guarded meta-target declaration then reuses it and may add genmakefile
+    # ordering without turning the generation step back into an empty phony.
+    set(_genmodfiles_target "${GM_MMAKE_ID}-genmodfiles-generated")
+    add_custom_target("${_genmodfiles_target}"
+        DEPENDS "${_start}" "${_end}" "${_entrypoints}" ${_stub_sources})
+    _aros_genmodule_alias("${GM_MMAKE_ID}-genmodfiles"
+        "${_genmodfiles_target}")
+
+    set(_fd "")
+    set(_fd_target "")
+    if(GM_ABI)
+        set(_private_fd "${_fd_dir}/${GM_TARGET}_lib.fd")
+        set(_fd "${AROS_DEVELOPER_FD_DIR}/${GM_TARGET}_lib.fd")
+        file(REMOVE "${_fd}")
+        add_custom_command(
+            OUTPUT "${_private_fd}" "${_fd}"
+            COMMAND "${CMAKE_COMMAND}" -E make_directory
+                "${_fd_dir}" "${AROS_DEVELOPER_FD_DIR}"
+            COMMAND "${AROS_HOST_GENMODULE}" ${_opts} -d "${_fd_dir}"
+                writefd "${GM_TARGET}" "${GM_MODTYPE}"
+            COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+                "${_private_fd}" "${_fd}"
+            DEPENDS "${AROS_HOST_GENMODULE}" "${_conf}"
+            COMMENT "Generating ${GM_TARGET}.${GM_MODTYPE} FD"
+            VERBATIM)
+        set(_fd_target "${GM_MMAKE_ID}-fd-generated")
+        add_custom_target("${_fd_target}" DEPENDS "${_fd}")
+    endif()
+
+    set(${out_prefix}_ROOT "${_root}" PARENT_SCOPE)
+    set(${out_prefix}_GEN_DIR "${_gen_dir}" PARENT_SCOPE)
+    set(${out_prefix}_INCLUDE_DIR "${_include_dir}" PARENT_SCOPE)
+    set(${out_prefix}_HEADERS "${_published_headers}" PARENT_SCOPE)
+    set(${out_prefix}_INCLUDES_TARGET "${_includes_target}" PARENT_SCOPE)
+    set(${out_prefix}_LIBDEFS "${_libdefs}" PARENT_SCOPE)
+    set(${out_prefix}_START "${_start}" PARENT_SCOPE)
+    set(${out_prefix}_END "${_end}" PARENT_SCOPE)
+    set(${out_prefix}_ENTRYPOINTS "${_entrypoints}" PARENT_SCOPE)
+    set(${out_prefix}_STUB_SOURCES "${_stub_sources}" PARENT_SCOPE)
+    set(${out_prefix}_GENMODFILES_TARGET "${_genmodfiles_target}" PARENT_SCOPE)
+    set(${out_prefix}_FD "${_fd}" PARENT_SCOPE)
+    set(${out_prefix}_FD_TARGET "${_fd_target}" PARENT_SCOPE)
+endfunction()
+
+# aros_add_module_abi(TARGET <name> MMAKE_ID <id> DIRECTORY <dir>
+#                     MODTYPE <type> [MODSUFFIX <suffix>] ...)
+#
+# %build_module_abi has no runtime module.  Its concrete product is the static
+# client link library, accompanied by public headers and an FD.  Keep the main
+# mmake identity as its aggregate: graph-wide dependencies such as
+# core-linklibs belong there, while linklibs-<name> must reach the archive
+# without inheriting that main-target closure.
+function(aros_add_module_abi)
+    set(oneValueArgs TARGET MMAKE_ID DIRECTORY MODTYPE MODSUFFIX)
+    set(multiValueArgs LIBS USELIBS INCLUDES ARCH_INCLUDES
+        DEFINES UNDEFINES COMPILE_OPTIONS
+        ARCH_DEFINES ARCH_COMPILE_OPTIONS)
+    cmake_parse_arguments(ARG "" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
+
+    if(NOT ARG_TARGET OR NOT ARG_MMAKE_ID OR NOT ARG_DIRECTORY OR NOT ARG_MODTYPE)
+        message(FATAL_ERROR
+            "aros_add_module_abi: TARGET, MMAKE_ID, DIRECTORY and MODTYPE are required")
+    endif()
+    if(TARGET "${ARG_MMAKE_ID}")
+        message(FATAL_ERROR "aros_add_module_abi: duplicate target ${ARG_MMAKE_ID}")
+    endif()
+
+    _aros_generate_module_support(_gm ABI
+        TARGET "${ARG_TARGET}"
+        MMAKE_ID "${ARG_MMAKE_ID}"
+        DIRECTORY "${ARG_DIRECTORY}"
+        MODTYPE "${ARG_MODTYPE}"
+        MODSUFFIX "${ARG_MODSUFFIX}")
+
+    _aros_genmodule_alias("${ARG_MMAKE_ID}-includes"
+        "${_gm_INCLUDES_TARGET}")
+    _aros_genmodule_alias("${ARG_MMAKE_ID}-fd" "${_gm_FD_TARGET}")
+
+    add_library("${ARG_MMAKE_ID}-linklib" STATIC EXCLUDE_FROM_ALL
+        ${_gm_STUB_SOURCES})
+    set_target_properties("${ARG_MMAKE_ID}-linklib" PROPERTIES
+        OUTPUT_NAME "${ARG_TARGET}"
+        ARCHIVE_OUTPUT_DIRECTORY "${AROS_DEVELOPER_LIB_DIR}"
+        LINKER_LANGUAGE C)
+    target_include_directories("${ARG_MMAKE_ID}-linklib" BEFORE PRIVATE
+        "${_gm_INCLUDE_DIR}" "${_gm_GEN_DIR}")
+    add_dependencies("${ARG_MMAKE_ID}-linklib"
+        "${_gm_INCLUDES_TARGET}" "${_gm_FD_TARGET}")
+    aros_gate_arch("${ARG_MMAKE_ID}-linklib" "${ARG_DIRECTORY}")
+    aros_apply_includes("${ARG_MMAKE_ID}-linklib"
+        MODULE_DIR "${ARG_DIRECTORY}"
+        INCLUDES ${ARG_INCLUDES}
+        ARCH_INCLUDES ${ARG_ARCH_INCLUDES})
+    aros_apply_flags("${ARG_MMAKE_ID}-linklib"
+        DEFINES ${ARG_DEFINES}
+        UNDEFINES ${ARG_UNDEFINES}
+        COMPILE_OPTIONS ${ARG_COMPILE_OPTIONS}
+        ARCH_DEFINES ${ARG_ARCH_DEFINES}
+        ARCH_COMPILE_OPTIONS ${ARG_ARCH_COMPILE_OPTIONS})
+
+    add_custom_target("${ARG_MMAKE_ID}")
+    add_dependencies("${ARG_MMAKE_ID}"
+        "${ARG_MMAKE_ID}-includes"
+        "${ARG_MMAKE_ID}-fd"
+        "${ARG_MMAKE_ID}-linklib")
+    _aros_genmodule_alias("includes-${ARG_TARGET}" "${ARG_MMAKE_ID}-includes")
+    _aros_genmodule_alias("includes-${ARG_TARGET}_rel" "${ARG_MMAKE_ID}-includes")
+    _aros_genmodule_alias("linklibs-${ARG_TARGET}" "${ARG_MMAKE_ID}-linklib")
+    _aros_genmodule_alias("linklibs-${ARG_TARGET}_rel" "${ARG_MMAKE_ID}-linklib")
+    _aros_genmodule_alias(includes-all "${ARG_MMAKE_ID}-includes")
+    _aros_register_genmodule_public_includes("${_gm_INCLUDES_TARGET}")
+endfunction()
+
 # Macro: aros_add_library
 function(aros_add_library)
-    set(options)
+    set(options GENMODULE_ONLY)
     set(oneValueArgs TARGET MMAKE_ID DIRECTORY INSTALL_DIR
         MODSUFFIX DEFAULT_INSTALL_DIR DEFAULT_MODSUFFIX)
     set(multiValueArgs SOURCES CXX_SOURCES OBJC_SOURCES ASM_SOURCES
@@ -1237,6 +1542,106 @@ function(aros_add_library)
         DEFINES UNDEFINES COMPILE_OPTIONS ARCH_SOURCES
         ARCH_DEFINES ARCH_COMPILE_OPTIONS)
     cmake_parse_arguments(ARG "${options}" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
+
+    if(ARG_GENMODULE_ONLY)
+        if(NOT ARG_TARGET OR NOT ARG_MMAKE_ID OR NOT ARG_DIRECTORY)
+            message(FATAL_ERROR
+                "aros_add_library(GENMODULE_ONLY): TARGET, MMAKE_ID and DIRECTORY are required")
+        endif()
+        if(ARG_SOURCES OR ARG_CXX_SOURCES OR ARG_OBJC_SOURCES OR
+           ARG_ASM_SOURCES OR ARG_ARCH_SOURCES)
+            message(FATAL_ERROR
+                "${ARG_MMAKE_ID}: GENMODULE_ONLY is only valid for an explicitly source-free module")
+        endif()
+        if(TARGET "${ARG_MMAKE_ID}")
+            message(FATAL_ERROR "aros_add_library: duplicate target ${ARG_MMAKE_ID}")
+        endif()
+
+        _aros_generate_module_support(_gm
+            TARGET "${ARG_TARGET}"
+            MMAKE_ID "${ARG_MMAKE_ID}"
+            DIRECTORY "${ARG_DIRECTORY}"
+            MODTYPE library
+            MODSUFFIX "${ARG_MODSUFFIX}")
+
+        _aros_genmodule_alias("${ARG_MMAKE_ID}-includes"
+            "${_gm_INCLUDES_TARGET}")
+        add_library("${ARG_MMAKE_ID}-linklib" STATIC ${_gm_STUB_SOURCES})
+        set_target_properties("${ARG_MMAKE_ID}-linklib" PROPERTIES
+            OUTPUT_NAME "${ARG_TARGET}"
+            ARCHIVE_OUTPUT_DIRECTORY "${AROS_DEVELOPER_LIB_DIR}"
+            LINKER_LANGUAGE C)
+        target_include_directories("${ARG_MMAKE_ID}-linklib" BEFORE PRIVATE
+            "${_gm_INCLUDE_DIR}" "${_gm_GEN_DIR}")
+        aros_gate_arch("${ARG_MMAKE_ID}-linklib" "${ARG_DIRECTORY}")
+        aros_apply_includes("${ARG_MMAKE_ID}-linklib"
+            MODULE_DIR "${ARG_DIRECTORY}"
+            INCLUDES ${ARG_INCLUDES}
+            ARCH_INCLUDES ${ARG_ARCH_INCLUDES})
+        aros_apply_flags("${ARG_MMAKE_ID}-linklib"
+            DEFINES ${ARG_DEFINES}
+            UNDEFINES ${ARG_UNDEFINES}
+            COMPILE_OPTIONS ${ARG_COMPILE_OPTIONS}
+            ARCH_DEFINES ${ARG_ARCH_DEFINES}
+            ARCH_COMPILE_OPTIONS ${ARG_ARCH_COMPILE_OPTIONS})
+        add_dependencies("${ARG_MMAKE_ID}-linklib" "${ARG_MMAKE_ID}-includes")
+
+        if(ARG_DEFAULT_INSTALL_DIR)
+            set(_default_install_dir "${ARG_DEFAULT_INSTALL_DIR}")
+        else()
+            set(_default_install_dir "${AROS_LIBS_DIR}")
+        endif()
+        if(ARG_DEFAULT_MODSUFFIX)
+            set(_default_modsuffix "${ARG_DEFAULT_MODSUFFIX}")
+        else()
+            set(_default_modsuffix "library")
+        endif()
+        _aros_module_install_dir(_install_dir
+            "${_default_install_dir}" "${ARG_INSTALL_DIR}")
+        _aros_module_output_name(_output_name "${ARG_TARGET}"
+            "${_default_modsuffix}" "${ARG_MODSUFFIX}")
+
+        # nostartup=yes adds compiler/libinit/libentry.o in make.tmpl:2684-2688;
+        # compile its source into this otherwise generator-only module.
+        add_executable("${ARG_MMAKE_ID}"
+            "${CMAKE_SOURCE_DIR}/compiler/libinit/libentry.c"
+            "${_gm_START}"
+            "${_gm_END}")
+        target_compile_definitions("${ARG_MMAKE_ID}" PRIVATE
+            LC_LIBDEFS_FILE="${ARG_TARGET}_libdefs.h"
+            __AROS_LIBNAME__=${ARG_TARGET}
+            __AROS_MODNAME__=${ARG_TARGET})
+        target_include_directories("${ARG_MMAKE_ID}" BEFORE PRIVATE
+            "${_gm_INCLUDE_DIR}" "${_gm_GEN_DIR}")
+        set_target_properties("${ARG_MMAKE_ID}" PROPERTIES
+            OUTPUT_NAME "${_output_name}"
+            RUNTIME_OUTPUT_DIRECTORY "${_install_dir}"
+            LINKER_LANGUAGE C)
+        add_dependencies("${ARG_MMAKE_ID}"
+            "${ARG_MMAKE_ID}-includes" "${ARG_MMAKE_ID}-linklib")
+        aros_gate_arch("${ARG_MMAKE_ID}" "${ARG_DIRECTORY}")
+        aros_apply_includes("${ARG_MMAKE_ID}"
+            MODULE_DIR "${ARG_DIRECTORY}"
+            INCLUDES ${ARG_INCLUDES}
+            ARCH_INCLUDES ${ARG_ARCH_INCLUDES})
+        aros_apply_flags("${ARG_MMAKE_ID}"
+            DEFINES ${ARG_DEFINES}
+            UNDEFINES ${ARG_UNDEFINES}
+            COMPILE_OPTIONS ${ARG_COMPILE_OPTIONS}
+            ARCH_DEFINES ${ARG_ARCH_DEFINES}
+            ARCH_COMPILE_OPTIONS ${ARG_ARCH_COMPILE_OPTIONS})
+        if(ARG_LIBS)
+            aros_link_libraries("${ARG_MMAKE_ID}" ${ARG_LIBS})
+        endif()
+
+        _aros_genmodule_alias("includes-${ARG_TARGET}" "${ARG_MMAKE_ID}-includes")
+        _aros_genmodule_alias("includes-${ARG_TARGET}_rel" "${ARG_MMAKE_ID}-includes")
+        _aros_genmodule_alias("linklibs-${ARG_TARGET}" "${ARG_MMAKE_ID}-linklib")
+        _aros_genmodule_alias("linklibs-${ARG_TARGET}_rel" "${ARG_MMAKE_ID}-linklib")
+        _aros_genmodule_alias(includes-all "${ARG_MMAKE_ID}-includes")
+        _aros_register_genmodule_public_includes("${_gm_INCLUDES_TARGET}")
+        return()
+    endif()
 
     if((NOT ARG_SOURCES AND NOT ARG_CXX_SOURCES AND
         NOT ARG_OBJC_SOURCES AND NOT ARG_ASM_SOURCES AND

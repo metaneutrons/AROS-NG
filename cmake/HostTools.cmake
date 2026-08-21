@@ -18,17 +18,18 @@ set(AROS_HOST_CC "cc" CACHE STRING "C compiler for tools that run on the build m
 set(AROS_HOST_TOOL_DIR "${CMAKE_BINARY_DIR}/hosttools")
 file(MAKE_DIRECTORY "${AROS_HOST_TOOL_DIR}")
 
-# aros_host_tool(NAME <name> SOURCES <file>... [DEFINES <d>...]
+# aros_host_tool(NAME <name> SOURCES <file>... [DEPENDS <file>...]
+#                [DEFINES <d>...]
 #                [INCLUDES <dir>...] [LIBS <l>...]
 #                [RAW_CFLAGS <flag>...] [RAW_LDFLAGS <flag>...])
 #
 # Builds one host executable in a single compiler call and exports its path as
 # AROS_HOST_<NAME> in the caller's scope. Recompiles when a source changes;
-# header changes are not tracked, which is acceptable for vendored tools that
-# do not change between builds.
+# DEPENDS is for headers and other non-compilation inputs which must rebuild the
+# executable without being passed to the compiler as translation units.
 function(aros_host_tool)
     set(oneValueArgs NAME)
-    set(multiValueArgs SOURCES DEFINES INCLUDES LIBS RAW_CFLAGS RAW_LDFLAGS)
+    set(multiValueArgs SOURCES DEPENDS DEFINES INCLUDES LIBS RAW_CFLAGS RAW_LDFLAGS)
     cmake_parse_arguments(HT "" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
 
     if(NOT HT_NAME OR NOT HT_SOURCES)
@@ -57,7 +58,7 @@ function(aros_host_tool)
         OUTPUT "${_exe}"
         COMMAND "${AROS_HOST_CC}" -O2 -w ${_flags} ${HT_RAW_CFLAGS} ${HT_SOURCES}
                 ${_libs} ${HT_RAW_LDFLAGS} -o "${_exe}"
-        DEPENDS ${HT_SOURCES}
+        DEPENDS ${HT_SOURCES} ${HT_DEPENDS}
         COMMENT "Building host tool ${HT_NAME}"
         VERBATIM)
 
@@ -91,6 +92,27 @@ aros_host_tool(NAME flexcat
 
 aros_host_tool(NAME ilbmtoc
     SOURCES "${CMAKE_SOURCE_DIR}/tools/ilbmtoc/ilbmtoc.c")
+
+# -----------------------------------------------------------------------------
+# genmodule
+# -----------------------------------------------------------------------------
+#
+# The Rust SDK scan currently emits only a subset of genmodule's products. Full
+# modules additionally need their generated start/end sources, while ABI-only
+# declarations need the exact config's inline/proto headers, FD and link stubs.
+# Build the reference generator as a host executable so those products retain
+# the semantics of config/make.tmpl without inheriting the target toolchain.
+file(GLOB _genmodule_srcs CONFIGURE_DEPENDS
+    "${CMAKE_SOURCE_DIR}/tools/genmodule/*.c")
+file(GLOB _genmodule_headers CONFIGURE_DEPENDS
+    "${CMAKE_SOURCE_DIR}/tools/genmodule/*.h")
+list(SORT _genmodule_srcs)
+list(SORT _genmodule_headers)
+
+aros_host_tool(NAME genmodule
+    SOURCES ${_genmodule_srcs}
+    DEPENDS ${_genmodule_headers}
+    INCLUDES "${CMAKE_SOURCE_DIR}/tools/genmodule")
 
 # -----------------------------------------------------------------------------
 # ilbmtoicon
