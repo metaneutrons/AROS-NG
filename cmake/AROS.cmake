@@ -1470,12 +1470,16 @@ find_program(AROS_ROMTOOL_BIN aros-romtool
     NO_DEFAULT_PATH
 )
 
-# aros_make_package(NAME <target> OUTPUT <file> MODULES <targets...>)
+# aros_make_package(NAME <target> OUTPUT <file>
+#                   MODULES <targets...> MEMBER_NAMES <runtime names...>)
 #
 # Packs the build products of the given CMake targets into a PKG container, in
-# the order given. Targets that do not exist in this configuration are skipped
-# and reported, so a partial module tree still produces a usable package rather
-# than a configure-time error.
+# the order given. MEMBER_NAMES is positionally aligned with MODULES and gives
+# each member's canonical runtime basename; target output names are deliberately
+# not used because CMake target ids still disambiguate some duplicate modules.
+# Targets that do not exist in this configuration are skipped together with
+# their aligned name and reported, so a partial module tree still produces a
+# usable package rather than a configure-time error.
 
 # aros_package_arch_matches(<arch-dir>)
 #
@@ -1497,7 +1501,7 @@ endfunction()
 
 function(aros_make_package)
     set(oneValueArgs NAME OUTPUT ARCH)
-    set(multiValueArgs MODULES)
+    set(multiValueArgs MODULES MEMBER_NAMES)
     cmake_parse_arguments(ARG "" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
 
     aros_package_arch_matches(_arch_ok "${ARG_ARCH}")
@@ -1507,6 +1511,14 @@ function(aros_make_package)
 
     if(NOT ARG_NAME OR NOT ARG_OUTPUT)
         message(FATAL_ERROR "aros_make_package: NAME and OUTPUT are required")
+    endif()
+
+    list(LENGTH ARG_MODULES _module_count)
+    list(LENGTH ARG_MEMBER_NAMES _member_name_count)
+    if(NOT _module_count EQUAL _member_name_count)
+        message(FATAL_ERROR
+            "aros_make_package(${ARG_NAME}): MODULES has ${_module_count} item(s), "
+            "but MEMBER_NAMES has ${_member_name_count}; the lists must be positionally aligned")
     endif()
 
     if(NOT AROS_ROMTOOL_BIN)
@@ -1519,24 +1531,44 @@ function(aros_make_package)
     # TARGET_FILE, so they are reported as not configured rather than breaking
     # the generate step.
     set(PRESENT "")
+    set(PRESENT_NAMES "")
+    set(PRESENT_INDICES "")
     set(MISSING "")
-    foreach(mod IN LISTS ARG_MODULES)
-        set(has_file FALSE)
-        if(TARGET ${mod})
-            get_target_property(mod_type ${mod} TYPE)
-            if(mod_type STREQUAL "EXECUTABLE"
-               OR mod_type STREQUAL "STATIC_LIBRARY"
-               OR mod_type STREQUAL "SHARED_LIBRARY"
-               OR mod_type STREQUAL "MODULE_LIBRARY")
-                set(has_file TRUE)
+    if(_module_count GREATER 0)
+        math(EXPR _module_last "${_module_count} - 1")
+        foreach(_index RANGE 0 ${_module_last})
+            list(GET ARG_MODULES ${_index} mod)
+            list(GET ARG_MEMBER_NAMES ${_index} member_name)
+
+            # A member name becomes a path below the private staging root. It
+            # must remain one basename; per-index subdirectories allow repeated
+            # canonical names without two producers writing the same file.
+            if(NOT member_name MATCHES "^[-A-Za-z0-9_.+]+$"
+               OR member_name STREQUAL "." OR member_name STREQUAL "..")
+                message(FATAL_ERROR
+                    "aros_make_package(${ARG_NAME}): unsafe MEMBER_NAMES item "
+                    "at index ${_index}: '${member_name}'")
             endif()
-        endif()
-        if(has_file)
-            list(APPEND PRESENT ${mod})
-        else()
-            list(APPEND MISSING ${mod})
-        endif()
-    endforeach()
+
+            set(has_file FALSE)
+            if(TARGET "${mod}")
+                get_target_property(mod_type "${mod}" TYPE)
+                if(mod_type STREQUAL "EXECUTABLE"
+                   OR mod_type STREQUAL "STATIC_LIBRARY"
+                   OR mod_type STREQUAL "SHARED_LIBRARY"
+                   OR mod_type STREQUAL "MODULE_LIBRARY")
+                    set(has_file TRUE)
+                endif()
+            endif()
+            if(has_file)
+                list(APPEND PRESENT "${mod}")
+                list(APPEND PRESENT_NAMES "${member_name}")
+                list(APPEND PRESENT_INDICES "${_index}")
+            else()
+                list(APPEND MISSING "${mod}")
+            endif()
+        endforeach()
+    endif()
 
     if(NOT PRESENT)
         message(STATUS "📦 ${ARG_NAME}: skipped, none of its modules are configured")
@@ -1552,18 +1584,39 @@ function(aros_make_package)
             "📦 ${ARG_NAME}: ${n_present} module(s) packaged, ${n_missing} not configured: ${MISSING}")
     endif()
 
-    set(MODULE_FILES "")
-    foreach(mod IN LISTS PRESENT)
-        list(APPEND MODULE_FILES "$<TARGET_FILE:${mod}>")
-    endforeach()
-
     get_filename_component(OUT_DIR "${ARG_OUTPUT}" DIRECTORY)
+
+    # Stage each target under the runtime name the package declaration uses.
+    # The hashed, package-private root cannot be redirected by NAME or OUTPUT;
+    # an index directory keeps duplicate canonical names distinct while
+    # --basename records only MEMBER_NAMES in the container.
+    string(SHA256 _stage_key "${ARG_NAME}|${ARG_OUTPUT}")
+    set(_stage_root
+        "${CMAKE_CURRENT_BINARY_DIR}/CMakeFiles/aros-package-stage/${_stage_key}")
+    set(STAGED_FILES "")
+    set(STAGE_COMMANDS "")
+    list(LENGTH PRESENT _present_count)
+    math(EXPR _present_last "${_present_count} - 1")
+    foreach(_present_index RANGE 0 ${_present_last})
+        list(GET PRESENT ${_present_index} mod)
+        list(GET PRESENT_NAMES ${_present_index} member_name)
+        list(GET PRESENT_INDICES ${_present_index} original_index)
+        set(_member_stage_dir "${_stage_root}/${original_index}")
+        set(_staged_file "${_member_stage_dir}/${member_name}")
+        list(APPEND STAGED_FILES "${_staged_file}")
+        list(APPEND STAGE_COMMANDS
+            COMMAND ${CMAKE_COMMAND} -E make_directory "${_member_stage_dir}"
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "$<TARGET_FILE:${mod}>" "${_staged_file}")
+    endforeach()
 
     add_custom_command(
         OUTPUT "${ARG_OUTPUT}"
+        BYPRODUCTS ${STAGED_FILES}
         COMMAND ${CMAKE_COMMAND} -E make_directory "${OUT_DIR}"
+        ${STAGE_COMMANDS}
         COMMAND "${AROS_ROMTOOL_BIN}" pkg create --basename
-                -o "${ARG_OUTPUT}" ${MODULE_FILES}
+                -o "${ARG_OUTPUT}" ${STAGED_FILES}
         DEPENDS ${PRESENT}
         COMMENT "📦 Packing kickstart package ${ARG_NAME}"
         VERBATIM
