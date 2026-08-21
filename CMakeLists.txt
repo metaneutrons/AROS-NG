@@ -17,6 +17,24 @@ project(AROS-NG
 message(STATUS "🚀 Initializing AROS-NG (v0.1.0) Build Engine...")
 message(STATUS "Target: ${AROS_TARGET_CPU}-${AROS_TARGET_PLATFORM}")
 
+# A target is described by two variables. AROS_TARGET_CPU is the instruction
+# set (x86_64, aarch64, arm, m68k), AROS_TARGET_PLATFORM the machine (pc,
+# raspi, amiga, darwin). Together they name the arch/ directories that
+# AROS_ARCH_SOURCE_DIRS accepts.
+#
+# The historic build calls the second one AROS_TARGET_ARCH, which reads like a
+# CPU name and is not one, so the transpiler maps an mmakefile's
+# $(AROS_TARGET_ARCH) onto AROS_TARGET_PLATFORM (packages.rs:98). A cache entry
+# of that name is therefore ambiguous, and nothing here reads it. It used to be
+# in the presets holding a CPU value, where CMake reported it as unused and
+# nobody noticed.
+if(DEFINED AROS_TARGET_ARCH)
+    message(WARNING
+        "AROS_TARGET_ARCH is not read by this build and has been ignored. "
+        "The historic build uses that name for what is AROS_TARGET_PLATFORM "
+        "here; pass AROS_TARGET_CPU and AROS_TARGET_PLATFORM instead.")
+endif()
+
 # 1. Compiler Cache Integration (sccache / ccache)
 include("${CMAKE_SOURCE_DIR}/cmake/CompilerCache.cmake")
 
