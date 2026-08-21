@@ -44,6 +44,12 @@ else()
     set(AROS_TARGET_CPU32 "")
 endif()
 
+# MetaMake calls the compound machine/CPU selector AROS_TARGET_PLATFORM. Keep
+# that legacy spelling distinct from this build's machine-only platform value
+# so generated meta-target names expand unambiguously.
+set(AROS_TARGET_LEGACY_PLATFORM
+    "${AROS_TARGET_PLATFORM}-${AROS_TARGET_CPU}")
+
 # 1. Compiler Cache Integration (sccache / ccache)
 include("${CMAKE_SOURCE_DIR}/cmake/CompilerCache.cmake")
 
@@ -261,6 +267,8 @@ if(AROS_PYTHON3 AND EXISTS "${AROS_VERIFY_BIN}")
                 --generated "${GENERATED_TARGETS_CMAKE}"
                 --work "${CMAKE_BINARY_DIR}/verify"
                 --build-dir "${CMAKE_BINARY_DIR}"
+                --cpu "${AROS_TARGET_CPU}"
+                --platform "${AROS_TARGET_PLATFORM}"
         COMMENT "Comparing transpiled targets against the genmf expansion"
         USES_TERMINAL
         VERBATIM)
@@ -270,6 +278,8 @@ if(AROS_PYTHON3 AND EXISTS "${AROS_VERIFY_BIN}")
                 --generated "${GENERATED_TARGETS_CMAKE}"
                 --work "${CMAKE_BINARY_DIR}/verify"
                 --build-dir "${CMAKE_BINARY_DIR}"
+                --cpu "${AROS_TARGET_CPU}"
+                --platform "${AROS_TARGET_PLATFORM}"
                 --no-gate
         COMMENT "Same comparison, reporting only"
         USES_TERMINAL
@@ -288,5 +298,10 @@ endif()
 # 7. Kickstart packages. Must come after generated_targets.cmake, because the
 #    package definitions reference the transpiled module targets.
 include("${CMAKE_SOURCE_DIR}/cmake/Kickstart.cmake")
+
+# 8. Explicit, opt-in roots for the boot core and distribution closure. These
+#    are deliberately separate from `all`: broadening the default build would
+#    hide rather than expose the remaining direct-recipe/output gaps.
+include("${CMAKE_SOURCE_DIR}/cmake/RootTargets.cmake")
 
 message(STATUS "✅ AROS-NG (v0.1.0) Configuration Complete.")
