@@ -128,6 +128,8 @@ _test_manifest(gl
     "${_source_root}/workbench/libs/gl/gl.conf" gl 935 463 1)
 _test_manifest(posixc_lfa
     "${_source_root}/compiler/crt/posixc/posixc_lfa.conf" posixc 35 13 1)
+_test_manifest(zstd
+    "${_source_root}/workbench/libs/zstd/zstd.conf" zstd 143 67 1)
 
 aros_genmodule_writefiles_manifest(_z1
     CONFIG "${_source_root}/workbench/libs/z/z1.conf"
@@ -150,6 +152,40 @@ if(NOT _z1_LINKLIB_DEFINES STREQUAL
    "__POSIXC_RELLIBBASE__;__STDC_RELLIBBASE__")
     message(FATAL_ERROR
         "z1: unexpected client definitions ${_z1_LINKLIB_DEFINES}")
+endif()
+
+aros_genmodule_writefiles_manifest(_zstd
+    CONFIG "${_source_root}/workbench/libs/zstd/zstd.conf"
+    MODULE zstd
+    MODTYPE library
+    GEN_DIR "${CMAKE_CURRENT_BINARY_DIR}/CMakeFiles/genmodule-manifest-zstd/gen"
+    STUB_DIR "${CMAKE_CURRENT_BINARY_DIR}/CMakeFiles/genmodule-manifest-zstd/stubs")
+set(_zstd_normal_archive
+    ${_zstd_NORMAL_STUBS}
+    ${_zstd_NORMAL_AUTOINIT}
+    ${_zstd_NORMAL_GETLIBBASE})
+set(_zstd_relative_archive
+    ${_zstd_REL_STUBS}
+    ${_zstd_REL_AUTOINIT}
+    ${_zstd_REL_GETLIBBASE})
+_assert_list_length(_zstd_normal_archive 70 "zstd normal client archive")
+_assert_list_length(_zstd_relative_archive 70 "zstd relative client archive")
+if(NOT _zstd_HAS_REL_LINKLIB)
+    message(FATAL_ERROR "zstd: rellinklib option was not preserved")
+endif()
+if(NOT _zstd_RELLIBS STREQUAL "posixc;stdc")
+    message(FATAL_ERROR
+        "zstd: expected posixc;stdc rellibs, got ${_zstd_RELLIBS}")
+endif()
+if(NOT _zstd_RUNTIME_DEFINES STREQUAL
+   "__POSIXC_RELLIBBASE__;__STDC_RELLIBBASE__;__ZSTD_NOLIBBASE__")
+    message(FATAL_ERROR
+        "zstd: unexpected runtime definitions ${_zstd_RUNTIME_DEFINES}")
+endif()
+if(NOT _zstd_LINKLIB_DEFINES STREQUAL
+   "__POSIXC_RELLIBBASE__;__STDC_RELLIBBASE__")
+    message(FATAL_ERROR
+        "zstd: unexpected client definitions ${_zstd_LINKLIB_DEFINES}")
 endif()
 
 message(STATUS "genmodule writefiles manifest test passed")

@@ -3,6 +3,7 @@
 
 include(CMakeParseArguments)
 include("${CMAKE_CURRENT_LIST_DIR}/GenmoduleManifest.cmake")
+include("${CMAKE_CURRENT_LIST_DIR}/GenmoduleTargets.cmake")
 include("${CMAKE_CURRENT_LIST_DIR}/TransitiveHeaderBindings.cmake")
 # The arch/ subdirectories this configuration may build from. Directory names
 # there are <cpu>-<platform> with "all" as a wildcard, plus "native" as a
@@ -1632,15 +1633,6 @@ function(_aros_register_genmodule_public_includes include_target)
     endif()
 endfunction()
 
-function(_aros_genmodule_alias alias_target dependency)
-    if(NOT TARGET "${alias_target}")
-        add_custom_target("${alias_target}")
-    endif()
-    if(NOT "${alias_target}" STREQUAL "${dependency}")
-        add_dependencies("${alias_target}" "${dependency}")
-    endif()
-endfunction()
-
 # _aros_generate_module_support(<prefix>
 #     TARGET <module-name> MMAKE_ID <target-id> DIRECTORY <source-dir>
 #     MODTYPE <type> [MODSUFFIX <suffix>] [ABI])
@@ -1871,9 +1863,8 @@ function(aros_add_module_abi)
         MODTYPE "${ARG_MODTYPE}"
         MODSUFFIX "${ARG_MODSUFFIX}")
 
-    _aros_genmodule_alias("${ARG_MMAKE_ID}-includes"
-        "${_gm_INCLUDES_TARGET}")
-    _aros_genmodule_alias("${ARG_MMAKE_ID}-fd" "${_gm_FD_TARGET}")
+    _aros_bind_genmodule_abi_targets("${ARG_MMAKE_ID}"
+        "${_gm_INCLUDES_TARGET}" "${_gm_FD_TARGET}")
 
     add_library("${ARG_MMAKE_ID}-linklib" STATIC EXCLUDE_FROM_ALL
         ${_gm_STUB_SOURCES})
@@ -1941,6 +1932,10 @@ function(aros_add_library)
             message(FATAL_ERROR "aros_add_library: duplicate target ${ARG_MMAKE_ID}")
         endif()
 
+        # A source-free full module may also have no exported functions (the
+        # version.library skeleton is the only current case).  genmodule then
+        # deliberately emits no FD file, so keep this path on its historical
+        # headers/linklib contract instead of declaring a nonexistent output.
         _aros_generate_module_support(_gm
             TARGET "${ARG_TARGET}"
             MMAKE_ID "${ARG_MMAKE_ID}"
@@ -2009,7 +2004,8 @@ function(aros_add_library)
             RUNTIME_OUTPUT_DIRECTORY "${_install_dir}"
             LINKER_LANGUAGE C)
         add_dependencies("${ARG_MMAKE_ID}"
-            "${ARG_MMAKE_ID}-includes" "${ARG_MMAKE_ID}-linklib")
+            "${ARG_MMAKE_ID}-includes"
+            "${ARG_MMAKE_ID}-linklib")
         aros_gate_arch("${ARG_MMAKE_ID}" "${ARG_DIRECTORY}")
         aros_apply_includes("${ARG_MMAKE_ID}"
             MODULE_DIR "${ARG_DIRECTORY}"
@@ -2049,7 +2045,7 @@ function(aros_add_library)
     # ordinary runtime-only path.
     set(_has_genmodule FALSE)
     if(ARG_GENMODULE_LINKLIBS OR ARG_LINKLIB_NAME)
-        _aros_generate_module_support(_gm
+        _aros_generate_module_support(_gm ABI
             TARGET "${ARG_TARGET}"
             MMAKE_ID "${ARG_MMAKE_ID}"
             DIRECTORY "${ARG_DIRECTORY}"
@@ -2057,8 +2053,8 @@ function(aros_add_library)
             MODSUFFIX "${ARG_MODSUFFIX}")
         set(_has_genmodule TRUE)
 
-        _aros_genmodule_alias("${ARG_MMAKE_ID}-includes"
-            "${_gm_INCLUDES_TARGET}")
+        _aros_bind_genmodule_abi_targets("${ARG_MMAKE_ID}"
+            "${_gm_INCLUDES_TARGET}" "${_gm_FD_TARGET}")
 
         aros_resolve_source_lanes(_linklib_sources "${ARG_DIRECTORY}"
             MMAKE_ID "${ARG_MMAKE_ID}-linklib-inputs"
@@ -2323,6 +2319,7 @@ function(aros_add_library)
                 "${ARG_DIRECTORY}/${ARG_TARGET}.conf")
             add_dependencies(${ARG_MMAKE_ID}
                 "${ARG_MMAKE_ID}-includes"
+                "${ARG_MMAKE_ID}-fd"
                 "${ARG_MMAKE_ID}-linklib")
             if(_gm_HAS_REL_LINKLIB)
                 add_dependencies(${ARG_MMAKE_ID}
