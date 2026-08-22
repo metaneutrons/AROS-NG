@@ -81,7 +81,8 @@ function(aros_bootstrap_sdk_includes)
          DESTINATION "${SDK_INC}"
     )
     if(EXISTS "${SDK_INC}/exec/execbase.inc")
-        file(COPY_FILE "${SDK_INC}/exec/execbase.inc" "${SDK_INC}/exec/execbase.h")
+        file(COPY_FILE "${SDK_INC}/exec/execbase.inc"
+            "${SDK_INC}/exec/execbase.h" ONLY_IF_DIFFERENT)
     endif()
 
     # 2. Copy AROS support headers into aros/
@@ -89,7 +90,8 @@ function(aros_bootstrap_sdk_includes)
          DESTINATION "${SDK_INC}/aros"
     )
     if(EXISTS "${CMAKE_SOURCE_DIR}/compiler/autoinit/autoinit.h")
-        file(COPY_FILE "${CMAKE_SOURCE_DIR}/compiler/autoinit/autoinit.h" "${SDK_INC}/aros/autoinit.h")
+        file(COPY_FILE "${CMAKE_SOURCE_DIR}/compiler/autoinit/autoinit.h"
+            "${SDK_INC}/aros/autoinit.h" ONLY_IF_DIFFERENT)
     endif()
 
     # 3. Copy CRT and POSIX headers (stdio.h, stdlib.h, string.h, alloca.h, unistd.h, etc.)
@@ -146,7 +148,9 @@ function(aros_bootstrap_sdk_includes)
     # IRQ types header
     if(AROS_TARGET_CPU STREQUAL "x86_64" OR AROS_TARGET_CPU STREQUAL "i386")
         if(EXISTS "${CMAKE_SOURCE_DIR}/arch/i386-all/include/irqtypes.h")
-            file(COPY_FILE "${CMAKE_SOURCE_DIR}/arch/i386-all/include/irqtypes.h" "${SDK_INC}/aros/irqtypes.h")
+            file(COPY_FILE
+                "${CMAKE_SOURCE_DIR}/arch/i386-all/include/irqtypes.h"
+                "${SDK_INC}/aros/irqtypes.h" ONLY_IF_DIFFERENT)
         endif()
     else()
         file(WRITE "${SDK_INC}/aros/irqtypes.h"
@@ -165,7 +169,7 @@ function(aros_bootstrap_sdk_includes)
 
     # 6. Generate aros/config.h
     set(CONFIG_H "${SDK_INC}/aros/config.h")
-    file(WRITE "${CONFIG_H}"
+    file(GENERATE OUTPUT "${CONFIG_H}" CONTENT
 "/* AROS-NG v0.1.0: Auto-generated aros/config.h */
 #ifndef AROS_CONFIG_H
 #define AROS_CONFIG_H
