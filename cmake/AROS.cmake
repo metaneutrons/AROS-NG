@@ -81,6 +81,12 @@ set(AROS_DEVELOPER_LIB_DIR "${AROS_DEVELOPER_DIR}/lib")
 set(AROS_DEVELOPER_SDK_DIR "${AROS_DEVELOPER_DIR}/SDK")
 set(AROS_DEVELOPER_FD_DIR "${AROS_DEVELOPER_SDK_DIR}/fd")
 
+# Release compilers intentionally have no producer build directory embedded as
+# DEFAULT_SYSROOT.  Match config/features.in's external-toolchain contract:
+# every consumer supplies its own Developer tree explicitly.  This path also
+# provides cxx-startup.o to the patched AROS clang++ partial-link driver.
+set(AROS_TARGET_SYSROOT "${AROS_DEVELOPER_DIR}")
+
 file(MAKE_DIRECTORY
     "${AROS_BOOT_ARCH_DIR}"
     "${AROS_C_DIR}"
@@ -102,21 +108,101 @@ file(MAKE_DIRECTORY
 # Bootstrap SDK Includes
 aros_bootstrap_sdk_includes()
 
-# Canonical AROS ELF Linker Rules using ld.lld
-find_program(AROS_LLD_BIN ld.lld HINTS "$ENV{HOME}/.aros/toolchain/bin" "/opt/homebrew/bin" "/usr/bin")
+# AppleClang does not ship the ELF utilities needed by target archives, AHI
+# and GRUB. Direct preset builds may discover a complete LLVM installation;
+# locked builds never enter this path because every tool was fixed by the
+# release toolchain before project(). Prefer PATH everywhere, with Homebrew's
+# queryable LLVM prefix as the macOS fallback (no host-specific absolute path).
+if(NOT AROS_CROSS_TOOLCHAIN_ROOT AND
+   CMAKE_C_COMPILER_ID MATCHES "Clang")
+    find_program(_aros_development_objcopy NAMES llvm-objcopy NO_CACHE)
+    if(_aros_development_objcopy)
+        cmake_path(GET _aros_development_objcopy PARENT_PATH
+            _aros_development_llvm_bin)
+    elseif(CMAKE_HOST_SYSTEM_NAME STREQUAL "Darwin")
+        find_program(_aros_homebrew NAMES brew NO_CACHE)
+        if(_aros_homebrew)
+            execute_process(
+                COMMAND "${_aros_homebrew}" --prefix llvm
+                RESULT_VARIABLE _aros_brew_llvm_result
+                OUTPUT_VARIABLE _aros_brew_llvm_prefix
+                ERROR_QUIET
+                OUTPUT_STRIP_TRAILING_WHITESPACE)
+            if(_aros_brew_llvm_result EQUAL 0 AND
+               IS_DIRECTORY "${_aros_brew_llvm_prefix}/bin" AND
+               EXISTS "${_aros_brew_llvm_prefix}/bin/llvm-objcopy")
+                set(_aros_development_llvm_bin
+                    "${_aros_brew_llvm_prefix}/bin")
+            endif()
+        endif()
+    endif()
+    if(_aros_development_llvm_bin)
+        foreach(_aros_tool_pair IN ITEMS
+                "CMAKE_AR|llvm-ar"
+                "CMAKE_RANLIB|llvm-ranlib"
+                "CMAKE_NM|llvm-nm"
+                "CMAKE_STRIP|llvm-strip"
+                "CMAKE_OBJCOPY|llvm-objcopy"
+                "CMAKE_OBJDUMP|llvm-objdump")
+            string(REPLACE "|" ";" _aros_tool_fields "${_aros_tool_pair}")
+            list(GET _aros_tool_fields 0 _aros_cmake_tool)
+            list(GET _aros_tool_fields 1 _aros_llvm_tool)
+            set(_aros_tool_path
+                "${_aros_development_llvm_bin}/${_aros_llvm_tool}")
+            if(EXISTS "${_aros_tool_path}" AND
+               NOT IS_DIRECTORY "${_aros_tool_path}")
+                set(${_aros_cmake_tool} "${_aros_tool_path}"
+                    CACHE FILEPATH "LLVM target utility" FORCE)
+            endif()
+        endforeach()
+        message(STATUS
+            "AROS-NG direct build uses LLVM target utilities from "
+            "${_aros_development_llvm_bin}")
+    endif()
+endif()
+
+# Canonical AROS ELF linker rules. A locked release toolchain defines the
+# linker before project() and must stay entirely inside its immutable prefix.
+# The direct-CMake development path may discover an ld.lld from PATH.
+if(AROS_CROSS_TOOLCHAIN_ROOT)
+    if(NOT AROS_LLD_BIN STREQUAL
+            "${AROS_CROSS_TOOLCHAIN_ROOT}/bin/ld.lld")
+        message(FATAL_ERROR
+            "Locked AROS build must use its prefix-owned ld.lld")
+    endif()
+else()
+    find_program(AROS_LLD_BIN NAMES ld.lld)
+endif()
 if(AROS_LLD_BIN)
     set(CMAKE_C_LINK_EXECUTABLE
-        "${AROS_LLD_BIN} -r <OBJECTS> -o <TARGET> <LINK_LIBRARIES>")
-    set(CMAKE_CXX_LINK_EXECUTABLE
-        "${AROS_LLD_BIN} -r <OBJECTS> -o <TARGET> <LINK_LIBRARIES>")
+        "${AROS_LLD_BIN} -r --sysroot=\"${AROS_TARGET_SYSROOT}\" <LINK_FLAGS> <OBJECTS> -o <TARGET> <LINK_LIBRARIES>")
     set(CMAKE_C_CREATE_SHARED_MODULE
-        "${AROS_LLD_BIN} -r <OBJECTS> -o <TARGET> <LINK_LIBRARIES>")
-    set(CMAKE_CXX_CREATE_SHARED_MODULE
-        "${AROS_LLD_BIN} -r <OBJECTS> -o <TARGET> <LINK_LIBRARIES>")
+        "${AROS_LLD_BIN} -r --sysroot=\"${AROS_TARGET_SYSROOT}\" <LINK_FLAGS> <OBJECTS> -o <TARGET> <LINK_LIBRARIES>")
+    if(AROS_CROSS_TOOLCHAIN_ROOT)
+        # `alwayscxxlink=yes` is a real upstream ABI contract. Route those
+        # partial links through the patched AROS clang++ driver so it selects
+        # libc++, libc++abi and libunwind from the release prefix.
+        set(_aros_cxx_partial_link
+            "<CMAKE_CXX_COMPILER> --target=${AROS_TARGET_TRIPLE} --sysroot=\"${AROS_TARGET_SYSROOT}\" <FLAGS> <CMAKE_CXX_LINK_FLAGS> <LINK_FLAGS> -nostartfiles -r <OBJECTS> -o <TARGET> <LINK_LIBRARIES>")
+        set(CMAKE_CXX_LINK_EXECUTABLE "${_aros_cxx_partial_link}")
+        set(CMAKE_CXX_CREATE_SHARED_MODULE "${_aros_cxx_partial_link}")
+    else()
+        set(CMAKE_CXX_LINK_EXECUTABLE
+            "${AROS_LLD_BIN} -r <LINK_FLAGS> <OBJECTS> -o <TARGET> <LINK_LIBRARIES>")
+        set(CMAKE_CXX_CREATE_SHARED_MODULE
+            "${AROS_LLD_BIN} -r <LINK_FLAGS> <OBJECTS> -o <TARGET> <LINK_LIBRARIES>")
+    endif()
 endif()
 
 # Target architecture compilation options
-if(AROS_TARGET_CPU STREQUAL "x86_64")
+if(AROS_CROSS_TOOLCHAIN_ROOT)
+    if(NOT AROS_TARGET_TRIPLE)
+        message(FATAL_ERROR "Locked AROS build lacks AROS_TARGET_TRIPLE")
+    endif()
+    add_compile_options(
+        "--target=${AROS_TARGET_TRIPLE}"
+        "--sysroot=${AROS_TARGET_SYSROOT}")
+elseif(AROS_TARGET_CPU STREQUAL "x86_64")
     add_compile_options(-target x86_64-unknown-elf)
 elseif(AROS_TARGET_CPU STREQUAL "aarch64")
     add_compile_options(-target aarch64-unknown-elf)
@@ -130,12 +216,20 @@ elseif(AROS_TARGET_CPU STREQUAL "arm")
     # Pi 1, whose ARMv6 core cannot run this code; covering it would need
     # per-BSP flags and three source sites reworked. Anything from Pi 3 on runs
     # the rpi-aarch64 target instead, so no supported board is lost.
-    add_compile_options(-target arm-none-eabi -mcpu=cortex-a7 -mfpu=neon-vfpv4)
+    add_compile_options(-target arm-none-eabi -mcpu=cortex-a7 -mfpu=neon-vfpv4
+        -mfloat-abi=hard)
 endif()
 
 add_compile_definitions(
     __AROS__=1
     __AROS_VERSION__=1
+    # config/specs.in injects these into every target-compiler invocation.
+    # The bare LLVM driver does not read the installed AROS specs, so retain
+    # the historic Amiga-compatibility branch selection explicitly. Network
+    # sources such as lineread.c use this to choose bsdsocket's recv() over
+    # an undeclared hosted POSIX read().
+    AMIGA=1
+    _AMIGA=1
 )
 
 # Build-date stamps. 52 mmakefiles put the current date into a define via
@@ -155,14 +249,25 @@ add_compile_options(
     -Wno-unused-parameter
 )
 
-# The generated trees come first. The historic build has no -I into the source
-# tree at all: compiler/include is staged into the SDK by %copy_includes, and
-# genmodule then writes over what it supersedes, so the generated header is the
-# one that gets found. Keeping compiler/include ahead of the SDK inverted that,
-# and the hand-written clib/input_protos.h -- which predates genmodule and
-# still declares PeekQualifier through AROS_LP0 -- shadowed the generated one.
+# The generated trees come first. The target compiler's legacy specs search
+# the POSIX and standard-C namespaces before the shared SDK root. LLVM is a
+# bare driver here and has no installed AROS specs, so repeat that order for
+# every target rather than only the handful of genmodule callers which used to
+# carry it locally. Otherwise <errno.h> and <stdlib.h> resolve to the smaller
+# C99 namespace and POSIX declarations such as ESRCH, EMFILE and random() are
+# silently lost. Keep these as ordinary includes: a later -isystem path would
+# still lose to the shared SDK's -I path in the compiler's search order.
+#
+# The historic build has no -I into the source tree at all: compiler/include
+# is staged into the SDK by %copy_includes, and genmodule then writes over what
+# it supersedes, so the generated header is the one that gets found. Keeping
+# compiler/include ahead of the SDK inverted that, and the hand-written
+# clib/input_protos.h -- which predates genmodule and still declares
+# PeekQualifier through AROS_LP0 -- shadowed the generated one.
 include_directories(
     "${CMAKE_BINARY_DIR}/GENINCDIR"
+    "${CMAKE_BINARY_DIR}/SDK/include/aros/posixc"
+    "${CMAKE_BINARY_DIR}/SDK/include/aros/stdc"
     "${CMAKE_BINARY_DIR}/SDK/include"
     "${CMAKE_SOURCE_DIR}/compiler/include"
     "${CMAKE_SOURCE_DIR}/arch/all-native/include"

@@ -1,18 +1,21 @@
 cmake_minimum_required(VERSION 3.22)
 
-# Detect and configure hermetic or modern LLVM toolchain if present
-if(EXISTS "$ENV{HOME}/.aros/toolchain/bin/clang" AND NOT DEFINED CMAKE_C_COMPILER)
-    set(CMAKE_C_COMPILER "$ENV{HOME}/.aros/toolchain/bin/clang")
-    set(CMAKE_CXX_COMPILER "$ENV{HOME}/.aros/toolchain/bin/clang++")
-elseif(EXISTS "/opt/homebrew/opt/llvm/bin/clang" AND NOT DEFINED CMAKE_C_COMPILER)
-    set(CMAKE_C_COMPILER "/opt/homebrew/opt/llvm/bin/clang")
-    set(CMAKE_CXX_COMPILER "/opt/homebrew/opt/llvm/bin/clang++")
+# The supported top-level targets are bare-metal.  If a caller does not
+# provide a toolchain/system explicitly, select CMake's generic platform
+# before compiler detection so an Apple-Silicon host cannot inject its native
+# `-arch arm64` flag into the target compiler invocation.  Keep an explicit
+# caller choice intact for future hosted targets.
+if(NOT DEFINED CMAKE_SYSTEM_NAME)
+    set(CMAKE_SYSTEM_NAME Generic)
 endif()
 
 project(AROS-NG
     VERSION 0.1.0
     LANGUAGES C CXX ASM
 )
+
+include("${CMAKE_SOURCE_DIR}/cmake/ToolchainIdentity.cmake")
+aros_lock_build_tree_toolchain()
 
 include("${CMAKE_SOURCE_DIR}/cmake/EnableLLVMObjectiveC.cmake")
 

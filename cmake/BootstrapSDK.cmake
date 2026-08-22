@@ -32,9 +32,14 @@ function(aros_generate_asm_header sdk_inc geninc)
         endforeach()
     endforeach()
 
+    if(AROS_CROSS_TOOLCHAIN_ROOT AND AROS_TARGET_TRIPLE)
+        set(_compiler_target "${AROS_TARGET_TRIPLE}")
+    else()
+        set(_compiler_target "${AROS_TARGET_CPU}-unknown-elf")
+    endif()
     execute_process(
         COMMAND "${CMAKE_C_COMPILER}"
-                -target "${AROS_TARGET_CPU}-unknown-elf"
+                -target "${_compiler_target}"
                 -ffreestanding -fno-builtin
                 ${_incs}
                 -S "${_src}" -o "${_asm}"
