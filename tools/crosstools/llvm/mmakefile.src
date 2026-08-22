@@ -174,6 +174,20 @@ LLVM_CONFIG_OPT         :=-DLLVM_CONFIG_PATH=$(LLVM_BUILD_BINDIR)/llvm-config
 endif
 LLVM_CONFIG_OPT         += -Wno-dev
 
+# sancov and sanstats are host-side sanitizer post-processing tools. Neither
+# is part of the toolchain contract: producer.py:41 and
+# cmake/toolchains/AROS.cmake:119 both require exactly clang, clang++,
+# ld.lld, llvm-ar, llvm-ranlib, llvm-nm, llvm-strip, llvm-objcopy and
+# llvm-objdump.
+#
+# They are excluded because sancov no longer compiles. LLVM 11.0.0 writes
+# `SpecialCaseList::createOrDie({{ClBlacklist}}, ...)` (sancov.cpp:514), and
+# current libc++ made the basic_string constructor taking a string-view-like
+# type explicit, so the inner brace cannot copy-initialize a std::string
+# inside an initializer_list any more. On a current Xcode SDK that one file
+# ends the whole LLVM build at 64 per cent, for a tool nothing here uses.
+# With both excluded the stage builds to completion and produces all nine
+# required tools.
 LLVM_CMAKEOPTIONS       := -Wno-dev                                                                                                     \
     -DDEFAULT_SYSROOT="$(AROS_TOOLCHAIN_DEFAULT_SYSROOT)"                                                                               \
     -DCMAKE_INSTALL_BINDIR="$(LLVM_BIN_DIR)"                                                                                           \
@@ -182,6 +196,8 @@ LLVM_CMAKEOPTIONS       := -Wno-dev                                             
     -DLLVM_ENABLE_PROJECTS=""                                                                                                           \
     -DLLVM_EXTERNAL_PROJECTS="clang;lld"                                                                                                \
     -DLLVM_BUILD_TOOLS=ON                                                                                                               \
+    -DLLVM_TOOL_SANCOV_BUILD=OFF                                                                                                        \
+    -DLLVM_TOOL_SANSTATS_BUILD=OFF                                                                                                      \
     -DLLVM_ENABLE_RUNTIMES=""                                                                                                           \
     -DLLVM_ENABLE_DOXYGEN=OFF                                                                                                           \
     -DLLVM_ENABLE_ASSERTIONS=OFF                                                                                                        \
