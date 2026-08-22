@@ -91,6 +91,11 @@ crosstools-libunwind-installflag := $(CROSSTOOLSDIR)/.installflag-libunwind-$(LL
 
 LLVM_BUILD_BINDIR:=$(CROSSTOOLSDIR)/bin
 
+# Keep the historical in-tree default, while allowing release producers to
+# build a relocatable compiler whose consumer supplies --sysroot explicitly.
+# An empty command-line assignment is intentional and must not fall back.
+AROS_TOOLCHAIN_DEFAULT_SYSROOT ?= $(AROS_DEVELOPER)
+
 LLVM_REPOSITORY         :=https://github.com/llvm/llvm-project/releases/download/llvmorg-$(LLVM_VERSION)$(LLVM_REPO)
 
 LLVM_CMAKE_ARCHBASE     :=cmake-$(LLVM_VERSION)$(LLVM_RELEASE).src
@@ -141,7 +146,7 @@ endif
 LLVM_CONFIG_OPT         += -Wno-dev
 
 LLVM_CMAKEOPTIONS       := -Wno-dev                                                                                                     \
-    -DDEFAULT_SYSROOT="$(AROS_DEVELOPER)"                                                                                               \
+    -DDEFAULT_SYSROOT="$(AROS_TOOLCHAIN_DEFAULT_SYSROOT)"                                                                               \
     -DCMAKE_INSTALL_BINDIR="$(LLVM_BIN_DIR)"                                                                                           \
     -DLLVM_TARGETS_TO_BUILD=$(LLVM_TARGETS)                                                                                             \
     -DLLVM_DEFAULT_TARGET_TRIPLE=$(AROS_TARGET_CPU)-unknown-aros                                                                        \
