@@ -64,6 +64,8 @@ GALLIUM_NOUVEAU_CXX_SOURCES := \
 ###############################################
 
 USER_INCLUDES := \
+            -I$(AROS_INCLUDES)/aros/posixc \
+            -I$(AROS_INCLUDES)/aros/stdc \
             -I$(SRCDIR)/$(CURDIR)/include \
             -I$(SRCDIR)/$(CURDIR)/include/uapi \
             -I$(SRCDIR)/$(CURDIR)/drm/nouveau/include \
@@ -71,9 +73,9 @@ USER_INCLUDES := \
             -iquote $(SRCDIR)/$(CURDIR)/include/libdrm/nouveau \
             -iquote $(SRCDIR)/$(CURDIR)/libdrm
 
-LIBDRM_C_SOURCES := \
-            $(AROS_LIBDRM_CORE_SOURCES) \
-            $(AROS_LIBDRM_NVIDIA_SOURCES)
+# Keep the small userspace libdrm inventory independently modelable even while
+# the much larger DRM and Gallium source fragments remain legacy-only.
+include $(SRCDIR)/$(CURDIR)/nouveau-libdrm.sources
 
 %build_linklib mmake=hidd-nouveau-libdrm libname=libdrm_nouveau \
     files="$(LIBDRM_C_SOURCES)" srcdir="$(SRCDIR)/$(CURDIR)" usetree=yes
