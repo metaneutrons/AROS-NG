@@ -14,6 +14,8 @@ project(AROS-NG
     LANGUAGES C CXX ASM
 )
 
+include("${CMAKE_SOURCE_DIR}/cmake/EnableLLVMObjectiveC.cmake")
+
 message(STATUS "🚀 Initializing AROS-NG (v0.1.0) Build Engine...")
 message(STATUS "Target: ${AROS_TARGET_CPU}-${AROS_TARGET_PLATFORM}")
 
