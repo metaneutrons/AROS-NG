@@ -67,6 +67,8 @@ endfunction()
 #   <prefix>_NORMAL_STUBS / <prefix>_REL_STUBS (the union of both)
 #   <prefix>_NORMAL_AUTOINIT / <prefix>_REL_AUTOINIT
 #   <prefix>_NORMAL_GETLIBBASE / <prefix>_REL_GETLIBBASE
+#   <prefix>_HAS_REL_LINKLIB / <prefix>_RELLIBS
+#   <prefix>_RUNTIME_DEFINES / <prefix>_LINKLIB_DEFINES
 #   <prefix>_ALL_OUTPUTS
 #
 # The parser intentionally covers the writefiles naming grammar, not the full
@@ -104,6 +106,7 @@ function(aros_genmodule_writefiles_manifest prefix)
     set(_stubs AUTO)
     set(_autoinit AUTO)
     set(_rellinklib FALSE)
+    set(_rellibs "")
 
     foreach(_line IN LISTS _lines)
         string(STRIP "${_line}" _trimmed)
@@ -162,6 +165,14 @@ function(aros_genmodule_writefiles_manifest prefix)
                     set(_rellinklib TRUE)
                 endif()
             endforeach()
+            continue()
+        endif()
+        if("${_section}" STREQUAL "config" AND
+           "${_trimmed}" MATCHES "^rellib[ \\t]+")
+            string(REGEX REPLACE "^rellib[ \\t]+" "" _rellib "${_trimmed}")
+            string(REPLACE "\t" " " _rellib "${_rellib}")
+            string(REGEX REPLACE "[ #].*$" "" _rellib "${_rellib}")
+            list(APPEND _rellibs "${_rellib}")
             continue()
         endif()
 
@@ -294,6 +305,22 @@ function(aros_genmodule_writefiles_manifest prefix)
         ${_normal_autoinit} ${_rel_autoinit}
         ${_normal_getlibbase} ${_rel_getlibbase})
 
+    # Match tools/genmodule/writemakefile.c: relative-library base selection
+    # applies to both the runtime implementation and the generated client
+    # archives. A module with its own relative link library additionally
+    # suppresses the runtime's ordinary global base.
+    set(_runtime_defines "")
+    set(_linklib_defines "")
+    foreach(_rellib IN LISTS _rellibs)
+        string(TOUPPER "${_rellib}" _rellib_upper)
+        list(APPEND _runtime_defines "__${_rellib_upper}_RELLIBBASE__")
+        list(APPEND _linklib_defines "__${_rellib_upper}_RELLIBBASE__")
+    endforeach()
+    if(_rellinklib)
+        string(TOUPPER "${GM_MODULE}" _module_upper)
+        list(APPEND _runtime_defines "__${_module_upper}_NOLIBBASE__")
+    endif()
+
     set(${prefix}_NORMAL_STACK_STUBS "${_normal_stack_stubs}" PARENT_SCOPE)
     set(${prefix}_REL_STACK_STUBS "${_rel_stack_stubs}" PARENT_SCOPE)
     set(${prefix}_NORMAL_REGCALL_STUBS "${_normal_regcall_stubs}" PARENT_SCOPE)
@@ -304,5 +331,9 @@ function(aros_genmodule_writefiles_manifest prefix)
     set(${prefix}_REL_AUTOINIT "${_rel_autoinit}" PARENT_SCOPE)
     set(${prefix}_NORMAL_GETLIBBASE "${_normal_getlibbase}" PARENT_SCOPE)
     set(${prefix}_REL_GETLIBBASE "${_rel_getlibbase}" PARENT_SCOPE)
+    set(${prefix}_HAS_REL_LINKLIB "${_rellinklib}" PARENT_SCOPE)
+    set(${prefix}_RELLIBS "${_rellibs}" PARENT_SCOPE)
+    set(${prefix}_RUNTIME_DEFINES "${_runtime_defines}" PARENT_SCOPE)
+    set(${prefix}_LINKLIB_DEFINES "${_linklib_defines}" PARENT_SCOPE)
     set(${prefix}_ALL_OUTPUTS "${_all_outputs}" PARENT_SCOPE)
 endfunction()

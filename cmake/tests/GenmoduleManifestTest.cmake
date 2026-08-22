@@ -129,4 +129,27 @@ _test_manifest(gl
 _test_manifest(posixc_lfa
     "${_source_root}/compiler/crt/posixc/posixc_lfa.conf" posixc 35 13 1)
 
+aros_genmodule_writefiles_manifest(_z1
+    CONFIG "${_source_root}/workbench/libs/z/z1.conf"
+    MODULE z1
+    MODTYPE library
+    GEN_DIR "${CMAKE_CURRENT_BINARY_DIR}/CMakeFiles/genmodule-manifest-z1/gen"
+    STUB_DIR "${CMAKE_CURRENT_BINARY_DIR}/CMakeFiles/genmodule-manifest-z1/stubs")
+if(NOT _z1_HAS_REL_LINKLIB)
+    message(FATAL_ERROR "z1: rellinklib option was not preserved")
+endif()
+if(NOT _z1_RELLIBS STREQUAL "posixc;stdc")
+    message(FATAL_ERROR "z1: expected posixc;stdc rellibs, got ${_z1_RELLIBS}")
+endif()
+if(NOT _z1_RUNTIME_DEFINES STREQUAL
+   "__POSIXC_RELLIBBASE__;__STDC_RELLIBBASE__;__Z1_NOLIBBASE__")
+    message(FATAL_ERROR
+        "z1: unexpected runtime definitions ${_z1_RUNTIME_DEFINES}")
+endif()
+if(NOT _z1_LINKLIB_DEFINES STREQUAL
+   "__POSIXC_RELLIBBASE__;__STDC_RELLIBBASE__")
+    message(FATAL_ERROR
+        "z1: unexpected client definitions ${_z1_LINKLIB_DEFINES}")
+endif()
+
 message(STATUS "genmodule writefiles manifest test passed")
