@@ -9,6 +9,11 @@ CUR_MESADIR := src/mesa
 include $(SRCDIR)/$(CURDIR)/../mesa.cfg
 -include $(GENDIR)/$(CURDIR)/../mesa3dgl/mesa3dgllibrary.entrypoints
 include $(top_srcdir)/$(CUR_MESADIR)/Makefile.sources
+ifeq ($(MESAGLVERSION),20.0.8)
+# Pin the SSE4.1 subset separately: the fetched Makefile.sources is absent on
+# a clean configure, while this small inventory is architecture-independent.
+include $(SRCDIR)/$(CURDIR)/mesa-sse41-20.0.8.sources
+endif
 
 #MM- mesa3dgl-linklibs : mesa3d-linklib-mesa mesa3d-linklib-mesa-sse41
 
@@ -297,8 +302,10 @@ TARGET_ISA_CXXFLAGS += -msse4.1
 endif
 
 MESA3DGL_MESA_SSE41_SOURCES := \
-            $(wildcard $(addprefix $(top_srcdir)/$(CUR_MESADIR)/, $(MESA3D_GALLIUM_SSE41_SOURCES)))
+            $(addprefix $(top_srcdir)/$(CUR_MESADIR)/, $(MESA3D_GALLIUM_SSE41_SOURCES))
 MESA3DGL_MESA_SOURCES_SSE41 := $(MESA3DGL_MESA_SSE41_SOURCES:.c=)
+
+#MM mesa3d-linklib-mesa-sse41 : mesa3d-fetch
 
 %build_linklib mmake=mesa3d-linklib-mesa-sse41 libname=mesa-sse41 libdir="$(top_libdir)" objdir="$(top_builddir)/$(CUR_MESADIR)" files="$(MESA3DGL_MESA_SOURCES_SSE41)"
 

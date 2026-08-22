@@ -3604,7 +3604,7 @@ endfunction()
 
 # Macro: aros_add_linklib
 function(aros_add_linklib)
-    set(options CANONICAL_OUTPUT)
+    set(options CANONICAL_OUTPUT EMPTY_ARCHIVE)
     set(oneValueArgs TARGET MMAKE_ID DIRECTORY OUTPUT_DIR)
     set(multiValueArgs SOURCES CXX_SOURCES OBJC_SOURCES ASM_SOURCES
         LIBS USELIBS INCLUDES ARCH_INCLUDES
@@ -3628,6 +3628,16 @@ function(aros_add_linklib)
     if(ARG_CANONICAL_OUTPUT AND ARG_OUTPUT_DIR)
         message(FATAL_ERROR
             "${ARG_MMAKE_ID}: CANONICAL_OUTPUT and OUTPUT_DIR are mutually exclusive")
+    endif()
+    if(ARG_EMPTY_ARCHIVE AND
+       (ARG_SOURCES OR ARG_CXX_SOURCES OR ARG_OBJC_SOURCES OR
+        ARG_ASM_SOURCES OR ARG_ARCH_SOURCES))
+        message(FATAL_ERROR
+            "${ARG_MMAKE_ID}: EMPTY_ARCHIVE cannot carry source inputs")
+    endif()
+    if(ARG_EMPTY_ARCHIVE AND NOT ARG_OUTPUT_DIR)
+        message(FATAL_ERROR
+            "${ARG_MMAKE_ID}: EMPTY_ARCHIVE requires an explicit private OUTPUT_DIR")
     endif()
     set(_private_output_dir "")
     if(ARG_OUTPUT_DIR)
@@ -3662,7 +3672,8 @@ function(aros_add_linklib)
     list(REMOVE_DUPLICATES _genmodule_include_dirs)
     list(REMOVE_DUPLICATES _genmodule_configs)
 
-    if((NOT _ordinary_c_sources AND NOT _genmodule_sources AND
+    if((NOT ARG_EMPTY_ARCHIVE AND
+        NOT _ordinary_c_sources AND NOT _genmodule_sources AND
         NOT ARG_CXX_SOURCES AND
         NOT ARG_OBJC_SOURCES AND NOT ARG_ASM_SOURCES AND
         NOT ARG_ARCH_SOURCES) OR
@@ -3670,21 +3681,39 @@ function(aros_add_linklib)
         return()
     endif()
 
-    aros_resolve_source_lanes(RESOLVED_SOURCES "${ARG_DIRECTORY}"
-        MMAKE_ID "${ARG_MMAKE_ID}"
-        SOURCES ${_ordinary_c_sources}
-        CXX_SOURCES ${ARG_CXX_SOURCES}
-        OBJC_SOURCES ${ARG_OBJC_SOURCES}
-        ASM_SOURCES ${ARG_ASM_SOURCES})
-    list(APPEND RESOLVED_SOURCES ${_genmodule_sources})
-    if(ARG_ARCH_SOURCES)
-        aros_resolve_arch_sources(_ARCH_RESOLVED _ARCH_DROPPED "${ARG_DIRECTORY}"
-            SOURCES ${RESOLVED_SOURCES}
-            ARCH_SOURCES ${ARG_ARCH_SOURCES}
-        )
-        if(_ARCH_RESOLVED)
-            set(RESOLVED_SOURCES "${_ARCH_RESOLVED}")
-            list(REMOVE_ITEM RESOLVED_SOURCES "")
+    if(ARG_EMPTY_ARCHIVE)
+        # A HEADER_FILE_ONLY source makes this a normal, linkable CMake static
+        # library while contributing no object to its archiver invocation.
+        # file(GENERATE) keeps the anchor stable across reconfiguration and the
+        # hashed name cannot collide with another MetaMake owner.
+        string(SHA256 _empty_anchor_key "${ARG_MMAKE_ID}")
+        set(_empty_anchor_dir
+            "${CMAKE_CURRENT_BINARY_DIR}/CMakeFiles/aros-empty-linklibs")
+        file(MAKE_DIRECTORY "${_empty_anchor_dir}")
+        set(_empty_anchor "${_empty_anchor_dir}/${_empty_anchor_key}.h")
+        file(GENERATE OUTPUT "${_empty_anchor}"
+            CONTENT "/* Intentionally empty archive: ${ARG_MMAKE_ID}. */\n")
+        set_source_files_properties("${_empty_anchor}" PROPERTIES
+            GENERATED TRUE
+            HEADER_FILE_ONLY TRUE)
+        set(RESOLVED_SOURCES "${_empty_anchor}")
+    else()
+        aros_resolve_source_lanes(RESOLVED_SOURCES "${ARG_DIRECTORY}"
+            MMAKE_ID "${ARG_MMAKE_ID}"
+            SOURCES ${_ordinary_c_sources}
+            CXX_SOURCES ${ARG_CXX_SOURCES}
+            OBJC_SOURCES ${ARG_OBJC_SOURCES}
+            ASM_SOURCES ${ARG_ASM_SOURCES})
+        list(APPEND RESOLVED_SOURCES ${_genmodule_sources})
+        if(ARG_ARCH_SOURCES)
+            aros_resolve_arch_sources(_ARCH_RESOLVED _ARCH_DROPPED "${ARG_DIRECTORY}"
+                SOURCES ${RESOLVED_SOURCES}
+                ARCH_SOURCES ${ARG_ARCH_SOURCES}
+            )
+            if(_ARCH_RESOLVED)
+                set(RESOLVED_SOURCES "${_ARCH_RESOLVED}")
+                list(REMOVE_ITEM RESOLVED_SOURCES "")
+            endif()
         endif()
     endif()
     aros_report_empty_concrete_target(

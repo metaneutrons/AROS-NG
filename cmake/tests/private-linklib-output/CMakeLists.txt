@@ -26,6 +26,26 @@ if(PRIVATE_LINKLIB_CASE STREQUAL "conflicting-modes")
     return()
 endif()
 
+if(PRIVATE_LINKLIB_CASE STREQUAL "empty-with-sources")
+    aros_add_linklib(
+        TARGET mesa-sse41
+        MMAKE_ID invalid-empty-provider
+        DIRECTORY "${CMAKE_CURRENT_LIST_DIR}"
+        EMPTY_ARCHIVE
+        OUTPUT_DIR "${CMAKE_BINARY_DIR}/private/mesa20.0.8"
+        SOURCES unit)
+    return()
+endif()
+
+if(PRIVATE_LINKLIB_CASE STREQUAL "empty-without-output")
+    aros_add_linklib(
+        TARGET mesa-sse41
+        MMAKE_ID unowned-empty-provider
+        DIRECTORY "${CMAKE_CURRENT_LIST_DIR}"
+        EMPTY_ARCHIVE)
+    return()
+endif()
+
 if(PRIVATE_LINKLIB_CASE STREQUAL "unsafe-dollar")
     set(_unsafe_output "${CMAKE_BINARY_DIR}/private/$<CONFIG>")
 elseif(PRIVATE_LINKLIB_CASE STREQUAL "unsafe-semicolon")
@@ -50,6 +70,15 @@ aros_add_linklib(
     DIRECTORY "${CMAKE_CURRENT_LIST_DIR}"
     OUTPUT_DIR "${_private_dir}"
     SOURCES unit)
+
+aros_add_linklib(
+    TARGET mesa-sse41
+    MMAKE_ID empty-provider
+    DIRECTORY "${CMAKE_CURRENT_LIST_DIR}"
+    EMPTY_ARCHIVE
+    OUTPUT_DIR "${_private_dir}")
+add_executable(empty-consumer "${CMAKE_CURRENT_LIST_DIR}/empty_consumer.c")
+aros_link_libraries(empty-consumer empty-provider)
 
 get_target_property(_output_name first-provider OUTPUT_NAME)
 get_target_property(_archive_dir first-provider ARCHIVE_OUTPUT_DIRECTORY)
