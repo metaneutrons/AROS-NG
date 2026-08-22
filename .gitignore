@@ -1,3 +1,12 @@
+# Editor and interpreter by-products, anywhere in the tree.
+#
+# producer.py refuses a dirty checkout for a release recipe and counts
+# untracked files while doing it (--untracked-files=all, producer.py:451),
+# where verify-checkout ignores them (--untracked-files=no, :498). One stray
+# `configure~` from an editor, or a `.pyc` left by running the toolchain tests,
+# was therefore enough to block a recipe on an otherwise committed tree.
+*~
+__pycache__/
 
 # /
 /config.log
