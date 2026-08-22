@@ -40,9 +40,6 @@
       "cacheVariables": {
         "CMAKE_SYSTEM_NAME": "Generic",
         "CMAKE_SYSTEM_PROCESSOR": "aarch64",
-        "CMAKE_C_COMPILER": "/opt/homebrew/opt/llvm/bin/clang",
-        "CMAKE_CXX_COMPILER": "/opt/homebrew/opt/llvm/bin/clang++",
-        "AROS_TARGET_ARCH": "arm",
         "AROS_TARGET_CPU": "aarch64",
         "AROS_TARGET_PLATFORM": "raspi",
         "CMAKE_BUILD_TYPE": "Debug",
