@@ -5,16 +5,6 @@
 
 AROS_TARGET_SUFFIX        = @aros_target_suffix@
 
-# Whether this tree was configured with --enable-toolchain-release, i.e. for the
-# relocatable toolchain producer rather than for a full AROS build.
-#
-# configure has always computed this (configure.in:2574) and AC_SUBSTed it
-# (configure.in:4448), but nothing consumed it, so the release mode could not be
-# seen from an mmakefile. That is why the "producer-only linklib closure" in
-# tools/crosstools/mmakefile.src:17 could describe an intent its graph did not
-# enforce.
-AROS_TOOLCHAIN_RELEASE        := @aros_toolchain_release@
-
 # All files corresponding to a specific host go here.
 DIR_HOST                      := bin/$(AROS_HOST_ARCH)-$(AROS_HOST_CPU)
 HOSTDIR                       := $(TOP)/$(DIR_HOST)
