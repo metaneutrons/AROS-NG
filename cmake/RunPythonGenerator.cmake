@@ -2,13 +2,14 @@ cmake_minimum_required(VERSION 3.22)
 
 foreach(_required IN ITEMS OWNER PYTHON_EXECUTABLE SOURCE_ROOT BUILD_ROOT
         SOURCE_ARCHIVE SOURCE_SHA256 GENERATOR_SCRIPT OUTPUT SOURCE_INPUT_COUNT
-        GENERATOR_ARGUMENT_COUNT)
+        PACKAGE_COUNT GENERATOR_ARGUMENT_COUNT)
     if(NOT DEFINED ${_required} OR "${${_required}}" STREQUAL "")
         message(FATAL_ERROR
             "RunPythonGenerator.cmake requires ${_required}")
     endif()
 endforeach()
 if(NOT SOURCE_INPUT_COUNT MATCHES "^[0-9]+$" OR
+   NOT PACKAGE_COUNT MATCHES "^[0-9]+$" OR
    NOT GENERATOR_ARGUMENT_COUNT MATCHES "^[0-9]+$")
     message(FATAL_ERROR
         "${OWNER}: invalid Python-generator input/argument count")
@@ -56,6 +57,94 @@ if(NOT EXISTS "${_script}" OR IS_DIRECTORY "${_script}")
         "${OWNER}: Python generator script is missing after fetch: ${_script}")
 endif()
 
+set(_driver "")
+if((DEFINED DRIVER_SCRIPT AND NOT "${DRIVER_SCRIPT}" STREQUAL "") OR
+   (DEFINED DRIVER_SHA256 AND NOT "${DRIVER_SHA256}" STREQUAL ""))
+    if(NOT DEFINED DRIVER_SCRIPT OR "${DRIVER_SCRIPT}" STREQUAL "" OR
+       NOT DEFINED DRIVER_SHA256 OR "${DRIVER_SHA256}" STREQUAL "")
+        message(FATAL_ERROR
+            "${OWNER}: generator driver path and SHA-256 must be declared together")
+    endif()
+    string(LENGTH "${DRIVER_SHA256}" _driver_sha256_length)
+    if(NOT _driver_sha256_length EQUAL 64 OR
+       NOT DRIVER_SHA256 MATCHES "^[0-9A-Fa-f]+$")
+        message(FATAL_ERROR
+            "${OWNER}: invalid generator driver SHA-256")
+    endif()
+    string(TOLOWER "${DRIVER_SHA256}" _expected_driver_sha256)
+    cmake_path(ABSOLUTE_PATH DRIVER_SCRIPT NORMALIZE OUTPUT_VARIABLE _driver)
+    if(NOT EXISTS "${_driver}" OR IS_DIRECTORY "${_driver}")
+        message(FATAL_ERROR
+            "${OWNER}: pinned generator driver is missing: ${_driver}")
+    endif()
+    file(SHA256 "${_driver}" _actual_driver_sha256)
+    if(NOT _actual_driver_sha256 STREQUAL _expected_driver_sha256)
+        message(FATAL_ERROR
+            "${OWNER}: generator driver SHA-256 mismatch: expected ${_expected_driver_sha256}, got ${_actual_driver_sha256}")
+    endif()
+    foreach(_tool IN ITEMS FLEX_EXECUTABLE BISON_EXECUTABLE)
+        if(NOT DEFINED ${_tool} OR "${${_tool}}" STREQUAL "" OR
+           NOT EXISTS "${${_tool}}" OR IS_DIRECTORY "${${_tool}}")
+            message(FATAL_ERROR
+                "${OWNER}: pinned host tool ${_tool} is missing")
+        endif()
+    endforeach()
+endif()
+
+set(_package_python_paths "")
+if(PACKAGE_COUNT GREATER 0)
+    math(EXPR _last_package "${PACKAGE_COUNT} - 1")
+    foreach(_index RANGE 0 ${_last_package})
+        foreach(_field IN ITEMS SOURCE_ROOT SOURCE_ARCHIVE SOURCE_SHA256
+                PYTHON_PATH)
+            set(_field_name "PACKAGE_${_field}_${_index}")
+            if(NOT DEFINED ${_field_name} OR "${${_field_name}}" STREQUAL "")
+                message(FATAL_ERROR
+                    "${OWNER}: missing Python package ${_field} declaration ${_index}")
+            endif()
+        endforeach()
+        set(_package_root_name "PACKAGE_SOURCE_ROOT_${_index}")
+        set(_package_archive_name "PACKAGE_SOURCE_ARCHIVE_${_index}")
+        set(_package_sha256_name "PACKAGE_SOURCE_SHA256_${_index}")
+        set(_python_path_name "PACKAGE_PYTHON_PATH_${_index}")
+        set(_package_root "${${_package_root_name}}")
+        set(_package_archive "${${_package_archive_name}}")
+        set(_package_sha256 "${${_package_sha256_name}}")
+        set(_python_path "${${_python_path_name}}")
+        cmake_path(ABSOLUTE_PATH _package_root NORMALIZE
+            OUTPUT_VARIABLE _package_root)
+        cmake_path(ABSOLUTE_PATH _package_archive NORMALIZE
+            OUTPUT_VARIABLE _package_archive)
+        cmake_path(ABSOLUTE_PATH _python_path NORMALIZE
+            OUTPUT_VARIABLE _python_path)
+        cmake_path(IS_PREFIX _package_root "${_python_path}" NORMALIZE
+            _python_path_is_owned)
+        if(NOT EXISTS "${_package_root}" OR NOT IS_DIRECTORY "${_package_root}" OR
+           NOT _python_path_is_owned OR NOT EXISTS "${_python_path}" OR
+           NOT IS_DIRECTORY "${_python_path}")
+            message(FATAL_ERROR
+                "${OWNER}: Python package or import root is missing after fetch: ${_package_root} / ${_python_path}")
+        endif()
+        if(NOT EXISTS "${_package_archive}" OR IS_DIRECTORY "${_package_archive}")
+            message(FATAL_ERROR
+                "${OWNER}: pinned Python package archive is missing: ${_package_archive}")
+        endif()
+        string(LENGTH "${_package_sha256}" _package_sha256_length)
+        if(NOT _package_sha256_length EQUAL 64 OR
+           NOT _package_sha256 MATCHES "^[0-9A-Fa-f]+$")
+            message(FATAL_ERROR
+                "${OWNER}: invalid Python package SHA-256 at index ${_index}")
+        endif()
+        string(TOLOWER "${_package_sha256}" _expected_package_sha256)
+        file(SHA256 "${_package_archive}" _actual_package_sha256)
+        if(NOT _actual_package_sha256 STREQUAL _expected_package_sha256)
+            message(FATAL_ERROR
+                "${OWNER}: Python package archive SHA-256 mismatch at index ${_index}: expected ${_expected_package_sha256}, got ${_actual_package_sha256}")
+        endif()
+        list(APPEND _package_python_paths "${_python_path}")
+    endforeach()
+endif()
+
 if(SOURCE_INPUT_COUNT GREATER 0)
     math(EXPR _last_source_input "${SOURCE_INPUT_COUNT} - 1")
     foreach(_index RANGE 0 ${_last_source_input})
@@ -100,10 +189,31 @@ if(IS_DIRECTORY "${_temporary}")
 endif()
 file(REMOVE "${_temporary}")
 
+cmake_path(CONVERT "${_package_python_paths}" TO_NATIVE_PATH_LIST
+    _native_python_path)
+set(_generator_environment
+    "PYTHONDONTWRITEBYTECODE=1"
+    "PYTHONHASHSEED=0"
+    "PYTHONNOUSERSITE=1"
+    "PYTHONPATH=${_native_python_path}")
+if(_driver)
+    list(APPEND _generator_environment
+        "AROS_FLEX_EXECUTABLE=${FLEX_EXECUTABLE}"
+        "AROS_BISON_EXECUTABLE=${BISON_EXECUTABLE}")
+    set(_generator_command
+        "${PYTHON_EXECUTABLE}" -s -B "${_driver}"
+        "${_source_root}" "${_build_root}" "${_script}" "${_output}"
+        ${_generator_arguments})
+else()
+    set(_generator_command
+        "${PYTHON_EXECUTABLE}" -s -B "${_script}" ${_generator_arguments})
+endif()
+
 execute_process(
     # Fetched source trees are immutable build inputs.  In particular, imports
     # from beside the generator must not leave __pycache__ files behind there.
-    COMMAND "${PYTHON_EXECUTABLE}" -B "${_script}" ${_generator_arguments}
+    COMMAND "${CMAKE_COMMAND}" -E env ${_generator_environment}
+        ${_generator_command}
     RESULT_VARIABLE _generator_result
     OUTPUT_FILE "${_temporary}"
     ERROR_VARIABLE _generator_stderr)

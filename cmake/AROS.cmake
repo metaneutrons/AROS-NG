@@ -167,6 +167,16 @@ include_directories(
     "${CMAKE_SOURCE_DIR}/arch/all-native/include"
 )
 
+# Closed local-source runners for the audited `%build_with_configure`
+# capabilities.  Kept in a separate module because the implementation also
+# serves focused repair/no-op regression fixtures.
+include("${CMAKE_CURRENT_LIST_DIR}/ConfigureBuild.cmake")
+
+# Closed GRUB 2.12 host-tool lanes selected by the transpiler.  Like the
+# configure helper, its implementation carries the complete audited runner
+# contract and is also exercised by focused repair/no-op fixtures.
+include("${CMAKE_CURRENT_LIST_DIR}/GrubBuild.cmake")
+
 # =============================================================================
 # SDK header staging
 # =============================================================================

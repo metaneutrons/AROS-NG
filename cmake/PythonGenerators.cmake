@@ -52,6 +52,13 @@ endfunction()
 #     FETCH_TARGET <fetch-owner>
 #     SOURCE_ARCHIVE <downloaded-archive>
 #     SOURCE_SHA256 <digest>
+#     [DRIVER_SCRIPT <repository-owned-adapter>
+#      DRIVER_SHA256 <digest>]
+#     [PACKAGE_FETCH_TARGETS <fetch-owners...>
+#      PACKAGE_SOURCE_ROOTS <unpacked-roots...>
+#      PACKAGE_SOURCE_ARCHIVES <downloaded-archives...>
+#      PACKAGE_SOURCE_SHA256 <digests...>
+#      PACKAGE_PYTHON_PATHS <root-relative-import-paths...>]
 #     [SOURCE_INPUTS <source-relative-files...>]
 #     [CONSUMERS <compile-targets...>]
 #     JOB
@@ -76,8 +83,10 @@ function(aros_generate_python_outputs)
 
     list(SUBLIST _raw_arguments 0 ${_first_job} _common_arguments)
     set(oneValueArgs OWNER SOURCE_ROOT BUILD_ROOT FETCH_TARGET
-        SOURCE_ARCHIVE SOURCE_SHA256)
-    set(multiValueArgs SOURCE_INPUTS CONSUMERS)
+        SOURCE_ARCHIVE SOURCE_SHA256 DRIVER_SCRIPT DRIVER_SHA256)
+    set(multiValueArgs SOURCE_INPUTS CONSUMERS PACKAGE_FETCH_TARGETS
+        PACKAGE_SOURCE_ROOTS PACKAGE_SOURCE_ARCHIVES PACKAGE_SOURCE_SHA256
+        PACKAGE_PYTHON_PATHS)
     cmake_parse_arguments(PG "" "${oneValueArgs}" "${multiValueArgs}"
         ${_common_arguments})
     if(PG_UNPARSED_ARGUMENTS OR PG_KEYWORDS_MISSING_VALUES)
@@ -113,6 +122,44 @@ function(aros_generate_python_outputs)
             "${PG_OWNER}: invalid Python-generator source SHA-256")
     endif()
     string(TOLOWER "${PG_SOURCE_SHA256}" _source_sha256)
+
+    if(PG_DRIVER_SCRIPT OR PG_DRIVER_SHA256)
+        if(NOT PG_DRIVER_SCRIPT OR NOT PG_DRIVER_SHA256)
+            message(FATAL_ERROR
+                "${PG_OWNER}: DRIVER_SCRIPT and DRIVER_SHA256 must be declared together")
+        endif()
+        string(LENGTH "${PG_DRIVER_SHA256}" _driver_sha256_length)
+        if(NOT _driver_sha256_length EQUAL 64 OR
+           NOT PG_DRIVER_SHA256 MATCHES "^[0-9A-Fa-f]+$")
+            message(FATAL_ERROR
+                "${PG_OWNER}: invalid Python-generator driver SHA-256")
+        endif()
+        string(TOLOWER "${PG_DRIVER_SHA256}" _driver_sha256)
+        if("${PG_DRIVER_SCRIPT}" MATCHES "[;\"$\\\r\n]")
+            message(FATAL_ERROR
+                "${PG_OWNER}: unsafe Python-generator driver path '${PG_DRIVER_SCRIPT}'")
+        endif()
+        cmake_path(ABSOLUTE_PATH CMAKE_SOURCE_DIR NORMALIZE
+            OUTPUT_VARIABLE _repository_root)
+        cmake_path(ABSOLUTE_PATH PG_DRIVER_SCRIPT
+            BASE_DIRECTORY "${_repository_root}" NORMALIZE
+            OUTPUT_VARIABLE _driver)
+        cmake_path(IS_PREFIX _repository_root "${_driver}" NORMALIZE
+            _driver_is_owned)
+        if(NOT _driver_is_owned OR _driver STREQUAL _repository_root OR
+           NOT EXISTS "${_driver}" OR IS_DIRECTORY "${_driver}")
+            message(FATAL_ERROR
+                "${PG_OWNER}: driver is missing or outside the source tree: ${_driver}")
+        endif()
+        file(SHA256 "${_driver}" _actual_driver_sha256)
+        if(NOT _actual_driver_sha256 STREQUAL _driver_sha256)
+            message(FATAL_ERROR
+                "${PG_OWNER}: driver SHA-256 mismatch: expected ${_driver_sha256}, got ${_actual_driver_sha256}")
+        endif()
+    else()
+        set(_driver "")
+        set(_driver_sha256 "")
+    endif()
 
     get_property(_fetch_destination TARGET "${PG_FETCH_TARGET}"
         PROPERTY AROS_FETCH_DESTINATION)
@@ -197,6 +244,143 @@ function(aros_generate_python_outputs)
             "${PG_OWNER}: SOURCE_ROOT and BUILD_ROOT must not overlap")
     endif()
 
+    # Optional pure-Python dependencies remain fetched, content-addressed
+    # inputs. They are never installed into or resolved from the host Python.
+    list(LENGTH PG_PACKAGE_FETCH_TARGETS _package_count)
+    foreach(_package_list IN ITEMS PG_PACKAGE_SOURCE_ROOTS
+            PG_PACKAGE_SOURCE_ARCHIVES PG_PACKAGE_SOURCE_SHA256
+            PG_PACKAGE_PYTHON_PATHS)
+        list(LENGTH ${_package_list} _package_list_length)
+        if(NOT _package_list_length EQUAL _package_count)
+            message(FATAL_ERROR
+                "${PG_OWNER}: Python package declaration lists differ in length")
+        endif()
+        set(_package_count ${_package_list_length})
+    endforeach()
+
+    set(_package_fetch_targets "")
+    set(_package_fetch_stamps "")
+    set(_package_source_roots "")
+    set(_package_source_archives "")
+    set(_package_source_sha256 "")
+    set(_package_python_paths "")
+    if(_package_count GREATER 0)
+        math(EXPR _last_package "${_package_count} - 1")
+        foreach(_index RANGE 0 ${_last_package})
+            list(GET PG_PACKAGE_FETCH_TARGETS ${_index} _package_fetch_target)
+            list(GET PG_PACKAGE_SOURCE_ROOTS ${_index} _raw_package_root)
+            list(GET PG_PACKAGE_SOURCE_ARCHIVES ${_index} _raw_package_archive)
+            list(GET PG_PACKAGE_SOURCE_SHA256 ${_index} _package_sha256)
+            list(GET PG_PACKAGE_PYTHON_PATHS ${_index} _raw_python_path)
+            if(NOT _package_fetch_target MATCHES "^[A-Za-z0-9_.+-]+$" OR
+               NOT TARGET "${_package_fetch_target}")
+                message(FATAL_ERROR
+                    "${PG_OWNER}: missing Python package fetch target ${_package_fetch_target}")
+            endif()
+            get_property(_package_destination TARGET "${_package_fetch_target}"
+                PROPERTY AROS_FETCH_DESTINATION)
+            get_property(_package_stamp TARGET "${_package_fetch_target}"
+                PROPERTY AROS_FETCH_COMPLETION_STAMP)
+            if(NOT _package_destination OR NOT _package_stamp)
+                message(FATAL_ERROR
+                    "${PG_OWNER}: ${_package_fetch_target} is not a complete fetch owner")
+            endif()
+            foreach(_package_path IN ITEMS _raw_package_root
+                    _raw_package_archive _raw_python_path _package_destination
+                    _package_stamp)
+                if("${${_package_path}}" MATCHES "[;\"$\\\r\n]")
+                    message(FATAL_ERROR
+                        "${PG_OWNER}: unsafe Python package path '${${_package_path}}'")
+                endif()
+            endforeach()
+            string(LENGTH "${_package_sha256}" _package_sha256_length)
+            if(NOT _package_sha256_length EQUAL 64 OR
+               NOT _package_sha256 MATCHES "^[0-9A-Fa-f]+$")
+                message(FATAL_ERROR
+                    "${PG_OWNER}: invalid Python package SHA-256 '${_package_sha256}'")
+            endif()
+            string(TOLOWER "${_package_sha256}" _package_sha256)
+
+            cmake_path(ABSOLUTE_PATH _package_destination
+                BASE_DIRECTORY "${CMAKE_BINARY_DIR}" NORMALIZE
+                OUTPUT_VARIABLE _package_destination)
+            cmake_path(ABSOLUTE_PATH _raw_package_root
+                BASE_DIRECTORY "${_package_destination}" NORMALIZE
+                OUTPUT_VARIABLE _package_root)
+            cmake_path(IS_PREFIX _package_destination "${_package_root}" NORMALIZE
+                _package_root_is_fetched)
+            if(NOT _package_root_is_fetched OR
+               _package_root STREQUAL _package_destination)
+                message(FATAL_ERROR
+                    "${PG_OWNER}: Python package root escapes its fetch destination: ${_package_root}")
+            endif()
+            cmake_path(ABSOLUTE_PATH _raw_package_archive
+                BASE_DIRECTORY "${_archive_root}" NORMALIZE
+                OUTPUT_VARIABLE _package_archive)
+            cmake_path(IS_PREFIX _archive_root "${_package_archive}" NORMALIZE
+                _package_archive_is_cached)
+            if(NOT _package_archive_is_cached OR
+               _package_archive STREQUAL _archive_root)
+                message(FATAL_ERROR
+                    "${PG_OWNER}: Python package archive escapes AROS_PORTS_SOURCE_DIR: ${_package_archive}")
+            endif()
+            cmake_path(ABSOLUTE_PATH _raw_python_path
+                BASE_DIRECTORY "${_package_root}" NORMALIZE
+                OUTPUT_VARIABLE _python_path)
+            cmake_path(IS_PREFIX _package_root "${_python_path}" NORMALIZE
+                _python_path_is_owned)
+            if(NOT _python_path_is_owned)
+                message(FATAL_ERROR
+                    "${PG_OWNER}: Python import path escapes its package root: ${_python_path}")
+            endif()
+
+            list(APPEND _package_fetch_targets "${_package_fetch_target}")
+            list(APPEND _package_fetch_stamps "${_package_stamp}")
+            list(APPEND _package_source_roots "${_package_root}")
+            list(APPEND _package_source_archives "${_package_archive}")
+            list(APPEND _package_source_sha256 "${_package_sha256}")
+            list(APPEND _package_python_paths "${_python_path}")
+        endforeach()
+    endif()
+
+    # The Mesa adapter's Flex/Bison lanes are pinned to the exact host tool
+    # versions used to audit their generated translation units.
+    if(_driver)
+        find_program(_python_generator_flex NAMES flex
+            PATHS /opt/homebrew/opt/flex/bin /usr/local/opt/flex/bin
+            NO_DEFAULT_PATH)
+        if(NOT _python_generator_flex)
+            find_program(_python_generator_flex NAMES flex)
+        endif()
+        find_program(_python_generator_bison NAMES bison
+            PATHS /opt/homebrew/opt/bison/bin /usr/local/opt/bison/bin
+            NO_DEFAULT_PATH)
+        if(NOT _python_generator_bison)
+            find_program(_python_generator_bison NAMES bison)
+        endif()
+        if(NOT _python_generator_flex OR NOT _python_generator_bison)
+            message(FATAL_ERROR
+                "${PG_OWNER}: pinned Flex 2.6.4 and Bison 3.8.2 host tools are required")
+        endif()
+        execute_process(COMMAND "${_python_generator_flex}" --version
+            OUTPUT_VARIABLE _flex_version ERROR_VARIABLE _flex_version_error
+            RESULT_VARIABLE _flex_version_result OUTPUT_STRIP_TRAILING_WHITESPACE
+            TIMEOUT 10)
+        execute_process(COMMAND "${_python_generator_bison}" --version
+            OUTPUT_VARIABLE _bison_version ERROR_VARIABLE _bison_version_error
+            RESULT_VARIABLE _bison_version_result OUTPUT_STRIP_TRAILING_WHITESPACE
+            TIMEOUT 10)
+        string(REGEX MATCH "^[^\r\n]*" _bison_version_first_line
+            "${_bison_version}")
+        if(NOT "${_flex_version_result}" STREQUAL "0" OR
+           NOT _flex_version MATCHES "^flex 2\\.6\\.4($| )" OR
+           NOT "${_bison_version_result}" STREQUAL "0" OR
+           NOT _bison_version_first_line STREQUAL "bison (GNU Bison) 3.8.2")
+            message(FATAL_ERROR
+                "${PG_OWNER}: host generator versions differ from Flex 2.6.4 / Bison 3.8.2 (got '${_flex_version}' and '${_bison_version}')")
+        endif()
+    endif()
+
     # Keep fetched compile sources stable across cold and warm configures. On a
     # cold configure they need proxy translation units because the archive is
     # still absent; after fetch, resolving the same stems directly would change
@@ -238,6 +422,21 @@ function(aros_generate_python_outputs)
             list(GET _source_inputs ${_index} _source_input)
             list(APPEND _source_input_definitions
                 "-DSOURCE_INPUT_${_index}=${_source_input}")
+        endforeach()
+    endif()
+    set(_package_definitions "-DPACKAGE_COUNT=${_package_count}")
+    if(_package_count GREATER 0)
+        math(EXPR _last_package "${_package_count} - 1")
+        foreach(_index RANGE 0 ${_last_package})
+            list(GET _package_source_roots ${_index} _package_root)
+            list(GET _package_source_archives ${_index} _package_archive)
+            list(GET _package_source_sha256 ${_index} _package_sha256)
+            list(GET _package_python_paths ${_index} _python_path)
+            list(APPEND _package_definitions
+                "-DPACKAGE_SOURCE_ROOT_${_index}=${_package_root}"
+                "-DPACKAGE_SOURCE_ARCHIVE_${_index}=${_package_archive}"
+                "-DPACKAGE_SOURCE_SHA256_${_index}=${_package_sha256}"
+                "-DPACKAGE_PYTHON_PATH_${_index}=${_python_path}")
         endforeach()
     endif()
 
@@ -341,13 +540,19 @@ function(aros_generate_python_outputs)
                 "-DBUILD_ROOT=${_build_root}"
                 "-DSOURCE_ARCHIVE=${_source_archive}"
                 "-DSOURCE_SHA256=${_source_sha256}"
+                "-DDRIVER_SCRIPT=${_driver}"
+                "-DDRIVER_SHA256=${_driver_sha256}"
+                "-DFLEX_EXECUTABLE=${_python_generator_flex}"
+                "-DBISON_EXECUTABLE=${_python_generator_bison}"
                 "-DGENERATOR_SCRIPT=${_script}"
                 "-DOUTPUT=${_output}"
                 ${_source_input_definitions}
+                ${_package_definitions}
                 ${_generator_argument_definitions}
                 -P "${_runner}"
-            DEPENDS "${_fetch_stamp}" "${_runner}"
-            COMMENT "Generating ${_output} with Python"
+            DEPENDS "${_fetch_stamp}" ${_package_fetch_stamps}
+                "${_runner}" ${_driver}
+            COMMENT "Generating ${_output} with a pinned host generator"
             VERBATIM)
 
         list(APPEND _outputs "${_output}")
@@ -358,6 +563,9 @@ function(aros_generate_python_outputs)
 
     add_custom_target("${PG_OWNER}" DEPENDS ${_outputs})
     add_dependencies("${PG_OWNER}" "${PG_FETCH_TARGET}")
+    if(_package_fetch_targets)
+        add_dependencies("${PG_OWNER}" ${_package_fetch_targets})
+    endif()
     set_property(TARGET "${PG_OWNER}" PROPERTY
         AROS_PYTHON_OUTPUT_OWNER TRUE)
     set_property(TARGET "${PG_OWNER}" PROPERTY
