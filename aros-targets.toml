@@ -1,20 +1,20 @@
 # AROS-NG Declarative Target Profiles & Toolchain Configuration
 # Modify versions, hardware targets, or download sources here without editing Rust code.
 
-[toolchain]
+[host_compiler]
 llvm_version = "18.1.8"
 base_url = "https://github.com/llvm/llvm-project/releases/download/llvmorg-{version}"
 
-[toolchain.hosts.macos-aarch64]
+[host_compiler.hosts.macos-aarch64]
 asset = "clang+llvm-{version}-arm64-apple-macos11.tar.xz"
 
-[toolchain.hosts.macos-x86_64]
+[host_compiler.hosts.macos-x86_64]
 asset = "clang+llvm-{version}-x86_64-apple-darwin.tar.xz"
 
-[toolchain.hosts.linux-x86_64]
+[host_compiler.hosts.linux-x86_64]
 asset = "clang+llvm-{version}-x86_64-linux-gnu-ubuntu-18.04.tar.xz"
 
-[toolchain.hosts.linux-aarch64]
+[host_compiler.hosts.linux-aarch64]
 asset = "clang+llvm-{version}-aarch64-linux-gnu.tar.xz"
 
 [[targets]]
@@ -37,3 +37,4 @@ arch = "arm"
 platform = "raspi"
 bsp = "bcm2835"
 features = ["pwm-audio", "sdhost"]
+float_abi = "hard"
