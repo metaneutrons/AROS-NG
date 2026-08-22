@@ -7,8 +7,31 @@ include $(SRCDIR)/config/aros.cfg
 
 #MM- core-linklibs : linklibs-startup linklibs-startup-$(AROS_TARGET_CPU)
 #MM- linklibs: linklibs-startup
+# The startup link library needs a populated SDK. In an ordinary build that is
+# the whole tree's `includes` and `includes-copy`, and asking for both is the
+# cheapest way to say so.
+#
+# The toolchain producer cannot afford them. `includes` reaches every module's
+# header step and through those the optional Ports, so a release run that only
+# wants compiler-rt, libc++, libc++abi and libunwind ended up at
+# `workbench-libs-expat-fetch`, where the offline source guard stopped it: expat
+# is not in toolchains/llvm-11.0.0.sources.json and must not be. The path was
+#
+#   toolchain-linklibs-release -> toolchain-linklibs-llvm-release-x86_64
+#     -> crosstools-compiler-rt32-release -> tools-crosstools-runtime-linklibs32
+#     -> linklibs-startup -> includes
+#
+# tools/crosstools/mmakefile.src:17 already states that this closure must not
+# pull optional Ports. This is where that intent is enforced: in release mode
+# only the three header sets the minimal SDK actually needs are required, which
+# is what the comment at tools/crosstools/mmakefile.src:28 describes.
+ifeq ($(AROS_TOOLCHAIN_RELEASE),1)
+#MM linklibs-startup : linklibs-startup-setup \
+#MM     compiler-stdc-includes compiler-posixc-includes kernel-task-includes
+else
 #MM linklibs-startup : linklibs-startup-setup includes includes-copy \
 #MM     compiler-stdc-includes compiler-posixc-includes kernel-task-includes
+endif
 
 STARTUP_DIRS := $(GENDIR)/$(CURDIR) $(GENDIR)/$(CURDIR)/nix $(GENDIR)/$(CURDIR)/cxx $(AROS_LIB)
 
