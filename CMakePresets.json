@@ -32,6 +32,24 @@
       }
     },
     {
+      "name": "rpi4-aarch64-debug",
+      "displayName": "AROS Raspberry Pi 4 (AArch64 debug payload)",
+      "description": "Pi 4 AArch64 debug build with reproducible boot/raspi payload artifacts",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/rpi4-aarch64-debug",
+      "cacheVariables": {
+        "CMAKE_SYSTEM_NAME": "Generic",
+        "CMAKE_SYSTEM_PROCESSOR": "aarch64",
+        "CMAKE_C_COMPILER": "/opt/homebrew/opt/llvm/bin/clang",
+        "CMAKE_CXX_COMPILER": "/opt/homebrew/opt/llvm/bin/clang++",
+        "AROS_TARGET_ARCH": "arm",
+        "AROS_TARGET_CPU": "aarch64",
+        "AROS_TARGET_PLATFORM": "raspi",
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+      }
+    },
+    {
       "name": "arm-raspi",
       "displayName": "AROS Raspberry Pi (ARM 32-bit)",
       "description": "32-bit ARM target for Raspberry Pi 1, 2, 3",

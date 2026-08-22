@@ -555,4 +555,9 @@ include("${CMAKE_SOURCE_DIR}/cmake/Kickstart.cmake")
 #    hide rather than expose the remaining direct-recipe/output gaps.
 include("${CMAKE_SOURCE_DIR}/cmake/RootTargets.cmake")
 
+# 9. Raspberry Pi boot payload. This is deliberately after Kickstart: the
+#    Pi image embeds the core ELF and the Pi BSP package generated from the
+#    transpiled target graph.
+include("${CMAKE_SOURCE_DIR}/cmake/RaspberryPi.cmake")
+
 message(STATUS "✅ AROS-NG (v0.1.0) Configuration Complete.")
