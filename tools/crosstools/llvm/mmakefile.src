@@ -33,6 +33,14 @@ $(eval -include $(SRCDIR)/tools/crosstools/$(AROS_TOOLCHAIN).cfg)
 #MM crosstools-compiler-rt32-cmake : crosstools-compiler-rt-setup tools-crosstools-autolibs32
 #MM- crosstools-compiler-rt32-quick : crosstools-compiler-rt-setup tools-crosstools-llvm-toolchain-quick
 
+# The release producer uses separate runtime targets so normal crosstools
+# retains its historical broad Ports/core-linklibs closure. These targets use
+# only the explicitly declared temporary SDK linklibs from the parent file.
+#MM crosstools-compiler-rt-release : crosstools-compiler-rt-setup tools-crosstools-llvm-toolchain tools-crosstools-runtime-linklibs
+#MM crosstools-compiler-rt-release-cmake : crosstools-compiler-rt-setup tools-crosstools-llvm-toolchain tools-crosstools-runtime-linklibs
+#MM crosstools-compiler-rt32-release : crosstools-compiler-rt-setup tools-crosstools-llvm-toolchain tools-crosstools-runtime-linklibs32
+#MM crosstools-compiler-rt32-release-cmake : crosstools-compiler-rt-setup tools-crosstools-llvm-toolchain tools-crosstools-runtime-linklibs32
+
 #MM- crosstools-llvm-libcxx-setup : tools-crosstools-llvm-libcxx-setup tools-crosstools-llvm-libcxxabi-setup
 #MM crosstools-llvm-libcxx : crosstools-llvm-libcxx-setup tools-crosstools-llvm-toolchain
 #MM- crosstools-llvm-libcxx-quick : \
@@ -43,9 +51,17 @@ $(eval -include $(SRCDIR)/tools/crosstools/$(AROS_TOOLCHAIN).cfg)
 #MM crosstools-libunwind-cmake : tools-crosstools-libunwind-setup
 #MM- crosstools-libunwind-quick : crosstools-libunwind-setup tools-crosstools-llvm-toolchain-quick
 
+#MM tools-crosstools-llvm-libcxx-release : tools-crosstools-llvm-setup tools-crosstools-llvm-libcxx-setup tools-crosstools-llvm-libcxxabi-setup crosstools-compiler-rt-release-fixup
+#MM tools-crosstools-llvm-libcxxabi-release : tools-crosstools-llvm-setup crosstools-compiler-rt-release-fixup tools-crosstools-llvm-libcxx-release
+#MM crosstools-libunwind-release : crosstools-libunwind-setup tools-crosstools-llvm-toolchain tools-crosstools-llvm-libcxx-release tools-crosstools-llvm-libcxxabi-release
+#MM crosstools-libunwind-release-cmake : crosstools-libunwind-setup tools-crosstools-llvm-toolchain tools-crosstools-llvm-libcxx-release tools-crosstools-llvm-libcxxabi-release
+
 #MM- crosstools-llvm : \
 #MM           tools-crosstools-llvm-toolchain crosstools-compiler-rt-fixup \
 #MM           crosstools-libunwind tools-crosstools-llvm-libcxx tools-crosstools-llvm-libcxxabi
+#MM- crosstools-llvm-release : \
+#MM           tools-crosstools-llvm-toolchain crosstools-compiler-rt-release-fixup \
+#MM           crosstools-libunwind-release tools-crosstools-llvm-libcxx-release tools-crosstools-llvm-libcxxabi-release
 #MM- crosstools-llvm-quick : \
 #MM           tools-crosstools-llvm-toolchain-quick \
 #MM           crosstools-compiler-rt-quick \
@@ -60,13 +76,21 @@ $(eval -include $(SRCDIR)/tools/crosstools/$(AROS_TOOLCHAIN).cfg)
 #MM- tools-crosstools-llvm-i386     : tools-crosstools-llvm-toolchain
 #MM- tools-crosstools-llvm-x86_64   : tools-crosstools-llvm-toolchain
 #MM- toolchain-linklibs-llvm-x86_64 : crosstools-compiler-rt32
+#MM- toolchain-linklibs-llvm-release-x86_64 : crosstools-compiler-rt32-release
 #MM- tools-crosstools-llvm-ppc      : tools-crosstools-llvm-toolchain
 #MM- tools-crosstools-llvm-arm      : tools-crosstools-llvm-toolchain
 #MM- toolchain-linklibs-llvm-arm    : linklibs-arm
 #MM- toolchain-linklibs-llvm-armeb  : linklibs-armeb
+# Compiler-rt builds the ARM/AArch64 builtins itself. Do not pull linklibs-arm
+# here: that is an AROS SDK consumer concern and would fetch SoftFloat into
+# the producer's intentionally source-locked minimal runtime closure.
+#MM- toolchain-linklibs-llvm-release-arm :
+#MM- toolchain-linklibs-llvm-release-armeb :
 #MM- tools-crosstools-llvm-riscv    : tools-crosstools-llvm-toolchain
 #MM- tools-crosstools-llvm-aarch64  : tools-crosstools-llvm-toolchain
+#MM- toolchain-linklibs-llvm-release-aarch64 :
 #MM- tools-crosstools-llvm-m68k    : tools-crosstools-llvm-toolchain
+#MM- toolchain-linklibs-llvm-release : crosstools-llvm-release
 
 # Flags used for stages of the build
 
@@ -86,6 +110,11 @@ llvm-libcxxabi-installflag := $(CROSSTOOLSDIR)/.installflag-llvm-libcxxabi-$(LLV
 crosstools-compiler-rt-installflag := $(CROSSTOOLSDIR)/.installflag-compiler_rt-$(LLVM_VERSION)-$(AROS_TARGET_CPU)
 crosstools-compiler-rt32-installflag := $(CROSSTOOLSDIR)/.installflag-compiler_rt32-$(LLVM_VERSION)-$(AROS_TARGET_CPU)
 crosstools-libunwind-installflag := $(CROSSTOOLSDIR)/.installflag-libunwind-$(LLVM_VERSION)-$(AROS_TARGET_CPU)
+llvm-libcxx-release-installflag := $(CROSSTOOLSDIR)/.installflag-llvm-libcxx-release-$(LLVM_VERSION)-$(AROS_TARGET_CPU)
+llvm-libcxxabi-release-installflag := $(CROSSTOOLSDIR)/.installflag-llvm-libcxxabi-release-$(LLVM_VERSION)-$(AROS_TARGET_CPU)
+crosstools-compiler-rt-release-installflag := $(CROSSTOOLSDIR)/.installflag-compiler_rt-release-$(LLVM_VERSION)-$(AROS_TARGET_CPU)
+crosstools-compiler-rt32-release-installflag := $(CROSSTOOLSDIR)/.installflag-compiler_rt32-release-$(LLVM_VERSION)-$(AROS_TARGET_CPU)
+crosstools-libunwind-release-installflag := $(CROSSTOOLSDIR)/.installflag-libunwind-release-$(LLVM_VERSION)-$(AROS_TARGET_CPU)
 
 # Variables used to configure/build Clang and co.
 
@@ -193,8 +222,16 @@ LLVM_CMAKEOPTIONS +=                                                            
 else
 LLVM_CMAKEOPTIONS +=                                                                                                                    \
     -DLLVM_BUILD_LLVM_DYLIB=ON                                                                                                          \
-    -DBUILD_SHARED_LIBS=ON                                                                                                              \
-    -DLLVM_ENABLE_LTO=ON
+    -DBUILD_SHARED_LIBS=ON
+# LLVM 11's shared-library LTO path is not reliable on current Darwin hosts:
+# the arm64 link of LLVMTransformUtils loses a required LLVMCore symbol. Keep
+# both macOS release lanes on the known-good non-LTO host path. This does not
+# affect the AROS target compiler or its target ABI.
+ifeq (darwin,$(AROS_HOST_ARCH))
+LLVM_CMAKEOPTIONS += -DLLVM_ENABLE_LTO=OFF
+else
+LLVM_CMAKEOPTIONS += -DLLVM_ENABLE_LTO=ON
+endif
 endif
 endif
 
@@ -231,6 +268,7 @@ LLVM_LIBCXXABI_CMAKEOPTIONS :=                                                  
   -DCMAKE_CXX_COMPILER=$(LLVM_BUILD_BINDIR)/clang++                                                                                     \
   -DCMAKE_SYSROOT=$(AROS_DEVELOPER)                                                                                                     \
   -DCMAKE_INSTALL_PREFIX=$(CROSSTOOLSDIR)                                                                                               \
+  -DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY                                                                                        \
   -DCMAKE_C_FLAGS="$(LLVM_CXX_CFLAGS)"                                                                                                  \
   -DCMAKE_CXX_FLAGS="$(LLVM_CXX_CXXFLAGS) $(LLVM_LIBCXXABI_FLAG)"                                                                      \
   -DCMAKE_EXE_LINKER_FLAGS="$(LLVM_CXX_EXEFLAGS) -nostdlib++ -L$(CROSSTOOLSDIR)/lib -lc++ -Wl,--allow-multiple-definition"              \
@@ -306,7 +344,25 @@ tools-crosstools-llvm-libcxx : | $(HOSTGENDIR)/$(CURDIR)/libcxx
             -S $(LIBCXX_BUILDBASE)                                                                                                      \
         && $(CMAKE) --build   .                                                                                                         \
         && $(CMAKE) --install . --strip                                                                                                 \
-        && $(TOUCH) $(llvm-libcxx-installflag) ;                                                                                        \
+	        && $(TOUCH) $(llvm-libcxx-installflag) ;                                                                                        \
+	fi
+
+$(HOSTGENDIR)/$(CURDIR)/libcxx-release:
+	%mkdir_q dir="$@"
+
+#MM
+tools-crosstools-llvm-libcxx-release : | $(HOSTGENDIR)/$(CURDIR)/libcxx-release
+	$(Q)$(IF) ! $(TEST) -f $(llvm-libcxx-release-installflag) ; then                                                                    \
+        cd $(HOSTGENDIR)/$(CURDIR)/libcxx-release                                                                                       \
+        && $(CMAKE)                                                                                                                      \
+            -DCMAKE_TOOLCHAIN_FILE=$(GENDIR)/config/conf.cmake                                                                         \
+            -DCMAKE_BUILD_TYPE=$(LLVM_RELEASE)                                                                                         \
+            -DCMAKE_INSTALL_PREFIX=$(CROSSTOOLSDIR)                                                                                    \
+            $(LLVM_LIBCXX_CMAKEOPTIONS)                                                                                                \
+            -S $(LIBCXX_BUILDBASE)                                                                                                     \
+        && $(CMAKE) --build   .                                                                                                        \
+        && $(CMAKE) --install . --strip                                                                                                \
+        && $(TOUCH) $(llvm-libcxx-release-installflag) ;                                                                               \
 	fi
 
 $(HOSTGENDIR)/$(CURDIR)/libcxxabi:
@@ -324,7 +380,25 @@ tools-crosstools-llvm-libcxxabi : | $(HOSTGENDIR)/$(CURDIR)/libcxxabi
             -S $(LIBCXXABI_BUILDBASE)                                                                                                   \
         && $(CMAKE) --build   .                                                                                                         \
         && $(CMAKE) --install . --strip                                                                                                 \
-        && $(TOUCH) $(llvm-libcxxabi-installflag) ;                                                                                     \
+	        && $(TOUCH) $(llvm-libcxxabi-installflag) ;                                                                                     \
+	fi
+
+$(HOSTGENDIR)/$(CURDIR)/libcxxabi-release:
+	%mkdir_q dir="$@"
+
+#MM
+tools-crosstools-llvm-libcxxabi-release : | $(HOSTGENDIR)/$(CURDIR)/libcxxabi-release
+	$(Q)$(IF) ! $(TEST) -f $(llvm-libcxxabi-release-installflag) ; then                                                                 \
+        cd $(HOSTGENDIR)/$(CURDIR)/libcxxabi-release                                                                                    \
+        && $(CMAKE)                                                                                                                     \
+            -DCMAKE_TOOLCHAIN_FILE=$(GENDIR)/config/conf.cmake                                                                        \
+            -DCMAKE_BUILD_TYPE=$(LLVM_RELEASE)                                                                                        \
+            -DCMAKE_INSTALL_PREFIX=$(CROSSTOOLSDIR)                                                                                   \
+            $(LLVM_LIBCXXABI_CMAKEOPTIONS)                                                                                            \
+            -S $(LIBCXXABI_BUILDBASE)                                                                                                  \
+        && $(CMAKE) --build   .                                                                                                        \
+        && $(CMAKE) --install . --strip                                                                                                \
+        && $(TOUCH) $(llvm-libcxxabi-release-installflag) ;                                                                            \
 	fi
 
 LLVM_LIBUNWIND_CMAKEOPTIONS :=                                                                                                          \
@@ -349,6 +423,9 @@ LLVM_LIBUNWIND_CMAKEOPTIONS :=                                                  
 
 %build_with_cmake mmake=crosstools-libunwind package=libunwind srcdir=$(LIBUNWIND_BUILDBASE)                                            \
     prefix="$(CROSSTOOLSDIR)" extraoptions="$(LLVM_LIBUNWIND_CMAKEOPTIONS)" compiler=host usecppflags=no
+
+%build_with_cmake mmake=crosstools-libunwind-release package=libunwind-release srcdir=$(LIBUNWIND_BUILDBASE)                            \
+    prefix="$(CROSSTOOLSDIR)" extraoptions="$(LLVM_LIBUNWIND_CMAKEOPTIONS)" compiler=host usecppflags=no metadeps="setup includes"
 
 LLVM_COMPILER_RT_CMAKEBASE :=                                                                                                           \
   $(LLVM_CONFIG_OPT)                                                                                                                    \
@@ -403,6 +480,9 @@ LLVM_COMPILER_RT_CMAKEOPTIONS :=                                                
 %build_with_cmake mmake=crosstools-compiler-rt package=compiler-rt srcdir=$(COMPILER_RT_BUILDBASE)                                      \
     prefix="$(CROSSTOOLSDIR)" extraoptions="$(LLVM_COMPILER_RT_CMAKEOPTIONS)" compiler=host usecppflags=no
 
+%build_with_cmake mmake=crosstools-compiler-rt-release package=compiler-rt-release srcdir=$(COMPILER_RT_BUILDBASE)                      \
+    prefix="$(CROSSTOOLSDIR)" extraoptions="$(LLVM_COMPILER_RT_CMAKEOPTIONS)" compiler=host usecppflags=no metadeps="setup includes"
+
 # Clang's driver looks for libclang_rt.builtins-armhf.a on hard-float targets,
 # but compiler-rt builds it as builtins-arm.a. Provide it under both names
 # (copied, not symlinked, as AROS' build tools define no $(LN)).
@@ -410,6 +490,13 @@ COMPILER_RT_CLANG_LIBDIR := $(CROSSTOOLSDIR)/lib/clang/$(LLVM_VERSION)/lib/aros
 
 #MM crosstools-compiler-rt-fixup : crosstools-compiler-rt
 crosstools-compiler-rt-fixup :
+	$(Q)$(IF) $(TEST) -f $(COMPILER_RT_CLANG_LIBDIR)/libclang_rt.builtins-arm.a -a \
+	    ! -e $(COMPILER_RT_CLANG_LIBDIR)/libclang_rt.builtins-armhf.a ; then \
+	    $(CP) $(COMPILER_RT_CLANG_LIBDIR)/libclang_rt.builtins-arm.a $(COMPILER_RT_CLANG_LIBDIR)/libclang_rt.builtins-armhf.a ; \
+	fi
+
+#MM crosstools-compiler-rt-release-fixup : crosstools-compiler-rt-release
+crosstools-compiler-rt-release-fixup :
 	$(Q)$(IF) $(TEST) -f $(COMPILER_RT_CLANG_LIBDIR)/libclang_rt.builtins-arm.a -a \
 	    ! -e $(COMPILER_RT_CLANG_LIBDIR)/libclang_rt.builtins-armhf.a ; then \
 	    $(CP) $(COMPILER_RT_CLANG_LIBDIR)/libclang_rt.builtins-arm.a $(COMPILER_RT_CLANG_LIBDIR)/libclang_rt.builtins-armhf.a ; \
@@ -430,6 +517,9 @@ LLVM_COMPILER_RT32_CMAKEOPTIONS :=                                              
 
 %build_with_cmake mmake=crosstools-compiler-rt32 package=compiler-rt32 srcdir=$(COMPILER_RT_BUILDBASE)                                  \
     prefix="$(CROSSTOOLSDIR)" extraoptions="$(LLVM_COMPILER_RT32_CMAKEOPTIONS)" compiler=host usecppflags=no
+
+%build_with_cmake mmake=crosstools-compiler-rt32-release package=compiler-rt32-release srcdir=$(COMPILER_RT_BUILDBASE)                  \
+    prefix="$(CROSSTOOLSDIR)" extraoptions="$(LLVM_COMPILER_RT32_CMAKEOPTIONS)" compiler=host usecppflags=no metadeps="setup includes"
 endif
 
 %fetch mmake=crosstools-clang-fetch archive=$(CLANG_ARCHBASE)                                                                           \
