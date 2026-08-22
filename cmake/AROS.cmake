@@ -4,6 +4,7 @@
 include(CMakeParseArguments)
 include("${CMAKE_CURRENT_LIST_DIR}/GenmoduleManifest.cmake")
 include("${CMAKE_CURRENT_LIST_DIR}/GenmoduleTargets.cmake")
+include("${CMAKE_CURRENT_LIST_DIR}/PythonGenerators.cmake")
 include("${CMAKE_CURRENT_LIST_DIR}/TransitiveHeaderBindings.cmake")
 # The arch/ subdirectories this configuration may build from. Directory names
 # there are <cpu>-<platform> with "all" as a wildcard, plus "native" as a
@@ -1115,7 +1116,16 @@ function(_aros_port_source_proxy out_var source_stem language explicit_suffix)
             "/* Expected one of:\n${_candidate_comments} */\n"
             "# error Fetched AROS port source was not found; check the fetch dependency\n"
             "#endif\n")
-        file(WRITE "${_proxy}" "${_content}")
+        set(_write_proxy TRUE)
+        if(EXISTS "${_proxy}" AND NOT IS_DIRECTORY "${_proxy}")
+            file(READ "${_proxy}" _existing_content)
+            if(_existing_content STREQUAL _content)
+                set(_write_proxy FALSE)
+            endif()
+        endif()
+        if(_write_proxy)
+            file(WRITE "${_proxy}" "${_content}")
+        endif()
         set_property(GLOBAL PROPERTY
             "AROS_PORT_SOURCE_PROXY_${_source_hash}" TRUE)
     endif()
@@ -1200,12 +1210,54 @@ function(aros_resolve_sources out_var dir)
         endforeach()
 
         set(_resolved "")
+        # Exact registered generator products take precedence over filesystem
+        # probes. On a case-insensitive host a generated lowercase `.s` also
+        # satisfies EXISTS for the earlier `.S` candidate, but those spellings
+        # have different preprocessing semantics and CMake object identities.
         foreach(_candidate IN LISTS _candidates)
-            if(EXISTS "${_candidate}" AND NOT IS_DIRECTORY "${_candidate}")
-                set(_resolved "${_candidate}")
+            string(SHA256 _generated_output_key "${_candidate}")
+            get_property(_generated_output_owner GLOBAL PROPERTY
+                "AROS_PYTHON_OUTPUT_OWNER_${_generated_output_key}")
+            if(NOT _generated_output_owner)
+                continue()
+            endif()
+            set(_resolved "${_candidate}")
+            set_source_files_properties("${_resolved}" PROPERTIES GENERATED TRUE)
+            if(RS_LANGUAGE AND NOT RS_LANGUAGE STREQUAL "C")
+                set_source_files_properties("${_resolved}" PROPERTIES
+                    LANGUAGE "${RS_LANGUAGE}")
+            endif()
+            list(APPEND RESOLVED "${_resolved}")
+            break()
+        endforeach()
+        if(_resolved)
+            continue()
+        endif()
+
+        # Sources below an audited generator's fetched source root stay behind
+        # their cold-configure proxies after fetch as well. This prevents a
+        # normal reconfigure from replacing every object node with a differently
+        # named direct source path.
+        set(_stable_port_source FALSE)
+        get_property(_stable_source_roots GLOBAL PROPERTY
+            AROS_STABLE_PORT_SOURCE_ROOTS)
+        foreach(_stable_source_root IN LISTS _stable_source_roots)
+            cmake_path(IS_PREFIX _stable_source_root "${_source_stem}"
+                NORMALIZE _inside_stable_source_root)
+            if(_inside_stable_source_root)
+                set(_stable_port_source TRUE)
                 break()
             endif()
         endforeach()
+
+        if(NOT _stable_port_source)
+            foreach(_candidate IN LISTS _candidates)
+                if(EXISTS "${_candidate}" AND NOT IS_DIRECTORY "${_candidate}")
+                    set(_resolved "${_candidate}")
+                    break()
+                endif()
+            endforeach()
+        endif()
         if(_resolved)
             # Explicit non-C lanes are authoritative even when an upstream
             # project gives the file an unusual or extensionless name.
@@ -2203,7 +2255,7 @@ endfunction()
 # be compiled as `assembler-with-cpp` explicitly. `.S` already implies it.
 function(aros_mark_preprocessed_asm)
     foreach(src ${ARGN})
-        if(src MATCHES "\\.s$")
+        if(src MATCHES "\\.[sS]$")
             set_source_files_properties("${src}" PROPERTIES
                 LANGUAGE ASM
                 COMPILE_OPTIONS "-x;assembler-with-cpp"
