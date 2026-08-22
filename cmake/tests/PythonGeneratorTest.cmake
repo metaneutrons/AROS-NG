@@ -18,6 +18,7 @@ set(_generator [=[
 import argparse
 import pathlib
 import sys
+import fixture_helper
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--input", required=True)
@@ -30,10 +31,14 @@ if value == "FAIL":
     sys.stderr.write("intentional fixture failure\n")
     raise SystemExit(7)
 sys.stdout.write(
-    f'#define {arguments.name} "{value}-{arguments.suffix}"\n'
+    f'#define {arguments.name} "{fixture_helper.decorate(value)}-{arguments.suffix}"\n'
 )
 ]=])
 file(WRITE "${_archive}/generator.py" "${_generator}")
+file(WRITE "${_archive}/fixture_helper.py" [=[
+def decorate(value):
+    return value
+]=])
 file(WRITE "${_archive}/input.txt" "first\n")
 file(WRITE "${_source}/consumer.c" [=[
 #include "generated/first.h"
@@ -66,11 +71,15 @@ add_custom_command(
         "${CMAKE_CURRENT_SOURCE_DIR}/archive/generator.py"
         "${_source_root}/generator.py"
     COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+        "${CMAKE_CURRENT_SOURCE_DIR}/archive/fixture_helper.py"
+        "${_source_root}/fixture_helper.py"
+    COMMAND "${CMAKE_COMMAND}" -E copy_if_different
         "${CMAKE_CURRENT_SOURCE_DIR}/archive/input.txt"
         "${_source_root}/input.txt"
     COMMAND "${CMAKE_COMMAND}" -E touch "${_fetch_stamp}"
     DEPENDS
         "${CMAKE_CURRENT_SOURCE_DIR}/archive/generator.py"
+        "${CMAKE_CURRENT_SOURCE_DIR}/archive/fixture_helper.py"
         "${CMAKE_CURRENT_SOURCE_DIR}/archive/input.txt"
         "${CMAKE_CURRENT_SOURCE_DIR}/fixture.tar.xz"
     VERBATIM)
@@ -83,7 +92,7 @@ set_property(TARGET fixture-fetch PROPERTY
 set(_build_root "${CMAKE_BINARY_DIR}/gen/python-fixture")
 
 set(_script "generator.py")
-set(_source_inputs "input.txt")
+set(_source_inputs "input.txt" "fixture_helper.py")
 set(_first_output "generated/first.h")
 if(PYTHON_GENERATOR_CASE STREQUAL "script-escape")
     set(_script "../generator.py")
@@ -225,6 +234,13 @@ _assert_contents("${_first_output}"
     "#define FIRST_VALUE \"first-one\"\n" "first generated output")
 _assert_contents("${_second_output}"
     "#define SECOND_VALUE \"first-two\"\n" "second generated output")
+file(GLOB_RECURSE _python_bytecode
+    "${_success_build}/fetched/package/__pycache__/*"
+    "${_success_build}/fetched/package/*.pyc")
+if(_python_bytecode)
+    message(FATAL_ERROR
+        "Python generator modified its fetched source tree: ${_python_bytecode}")
+endif()
 
 _build("${_success_build}" fixture-consumer TRUE noop)
 string(FIND "${noop_LOG}" "ninja: no work to do." _noop_found)

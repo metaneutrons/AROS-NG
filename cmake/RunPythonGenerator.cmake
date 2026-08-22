@@ -101,7 +101,9 @@ endif()
 file(REMOVE "${_temporary}")
 
 execute_process(
-    COMMAND "${PYTHON_EXECUTABLE}" "${_script}" ${_generator_arguments}
+    # Fetched source trees are immutable build inputs.  In particular, imports
+    # from beside the generator must not leave __pycache__ files behind there.
+    COMMAND "${PYTHON_EXECUTABLE}" -B "${_script}" ${_generator_arguments}
     RESULT_VARIABLE _generator_result
     OUTPUT_FILE "${_temporary}"
     ERROR_VARIABLE _generator_stderr)
