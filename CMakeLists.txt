@@ -85,6 +85,42 @@ include("${CMAKE_SOURCE_DIR}/cmake/AROS.cmake")
 
 # 3. Tools that run on the build machine, and the header rules using them.
 include("${CMAKE_SOURCE_DIR}/cmake/HostTools.cmake")
+
+# AHI is admitted only for the three audited LLVM target profiles.  Its
+# configure-style build needs the historical Perl SFD compiler, which is
+# materialised as a private host product rather than discovered through PATH.
+# Keep the interpreter identity explicit so generated targets cannot silently
+# select a different host implementation.
+set(_aros_ahi_supported_profile FALSE)
+if(AROS_ENABLE_MMU AND AROS_TOOLCHAIN STREQUAL "llvm")
+    if(AROS_TARGET_CPU STREQUAL "x86_64" AND
+       AROS_TARGET_PLATFORM STREQUAL "pc")
+        set(_aros_ahi_supported_profile TRUE)
+    elseif(AROS_TARGET_CPU STREQUAL "arm" AND
+           AROS_TARGET_PLATFORM STREQUAL "raspi" AND
+           GCC_CONFIG_FLOAT_ABI STREQUAL "hard")
+        set(_aros_ahi_supported_profile TRUE)
+    elseif(AROS_TARGET_CPU STREQUAL "aarch64" AND
+           AROS_TARGET_PLATFORM STREQUAL "raspi")
+        set(_aros_ahi_supported_profile TRUE)
+    endif()
+endif()
+if(_aros_ahi_supported_profile)
+    set(AROS_HOST_PERL "/usr/bin/perl")
+    find_program(AROS_AHI_MAKE NAMES gmake make)
+    set(AROS_AHI_MAKE "${AROS_AHI_MAKE}" CACHE FILEPATH
+        "GNU make executable for the closed AHI build")
+    if(NOT EXISTS "${AROS_HOST_PERL}" OR
+       IS_DIRECTORY "${AROS_HOST_PERL}" OR
+       NOT IS_EXECUTABLE "${AROS_HOST_PERL}")
+        message(FATAL_ERROR
+            "AHI requires the explicit executable Perl interpreter ${AROS_HOST_PERL}")
+    endif()
+    include("${CMAKE_SOURCE_DIR}/cmake/SfdcHostTool.cmake")
+    include("${CMAKE_SOURCE_DIR}/cmake/AhiBuild.cmake")
+    aros_build_host_sfdc(PERL "${AROS_HOST_PERL}")
+endif()
+
 include("${CMAKE_SOURCE_DIR}/cmake/Icons.cmake")
 include("${CMAKE_SOURCE_DIR}/cmake/GeneratedHeaders.cmake")
 
