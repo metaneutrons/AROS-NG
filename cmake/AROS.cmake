@@ -1449,6 +1449,382 @@ function(aros_fetch_archive)
     set_property(GLOBAL PROPERTY AROS_FETCH_TARGETS "${_all}")
 endfunction()
 
+# aros_build_external_cmake(
+#     MMAKE_ID <target>
+#     SOURCE_DIR <fetched-source>
+#     BINARY_DIR <private-build-dir>
+#     INSTALL_PREFIX <build-tree-prefix>
+#     FETCH_TARGET <fetch-owner>
+#     SOURCE_ARCHIVE <downloaded-archive>
+#     SOURCE_SHA256 <digest>
+#     PROVIDED_LIBRARY <uselibs-name>
+#     OPTIONS <cmake-options...>
+#     LIBRARY_PRODUCTS <installed-archives...>
+#     [HEADER_PRODUCTS <installed-headers...>]
+#     [AUXILIARY_PRODUCTS <installed-metadata...>]
+#     PUBLIC_INCLUDE_DIRS <installed-include-dirs...>)
+#
+# Materialises the deliberately small, audited subset of
+# %build_with_cmake. The transpiler proves which declaration owns the source,
+# options and installed products; this helper independently validates every
+# path and produces one output-tracked configure/build/install rule. It is not
+# an escape hatch for arbitrary configure commands.
+function(aros_build_external_cmake)
+    set(oneValueArgs MMAKE_ID SOURCE_DIR BINARY_DIR INSTALL_PREFIX
+        FETCH_TARGET SOURCE_ARCHIVE SOURCE_SHA256 PROVIDED_LIBRARY)
+    set(multiValueArgs OPTIONS LIBRARY_PRODUCTS HEADER_PRODUCTS
+        AUXILIARY_PRODUCTS PUBLIC_INCLUDE_DIRS)
+    cmake_parse_arguments(PARSE_ARGV 0 EC "" "${oneValueArgs}" "${multiValueArgs}")
+
+    if(EC_UNPARSED_ARGUMENTS OR EC_KEYWORDS_MISSING_VALUES)
+        message(FATAL_ERROR
+            "aros_build_external_cmake received malformed arguments")
+    endif()
+    foreach(_required IN ITEMS MMAKE_ID SOURCE_DIR BINARY_DIR INSTALL_PREFIX
+            FETCH_TARGET SOURCE_ARCHIVE SOURCE_SHA256 PROVIDED_LIBRARY)
+        if(NOT EC_${_required})
+            message(FATAL_ERROR
+                "aros_build_external_cmake requires ${_required}")
+        endif()
+    endforeach()
+    if(NOT EC_LIBRARY_PRODUCTS OR NOT EC_PUBLIC_INCLUDE_DIRS)
+        message(FATAL_ERROR
+            "${EC_MMAKE_ID}: external CMake library requires products and public includes")
+    endif()
+    foreach(_name IN ITEMS EC_MMAKE_ID EC_FETCH_TARGET EC_PROVIDED_LIBRARY)
+        if(NOT "${${_name}}" MATCHES "^[A-Za-z0-9_.+-]+$")
+            message(FATAL_ERROR
+                "${EC_MMAKE_ID}: invalid external CMake target/library name '${${_name}}'")
+        endif()
+    endforeach()
+    if(TARGET "${EC_MMAKE_ID}")
+        message(FATAL_ERROR
+            "${EC_MMAKE_ID}: external CMake target was already declared")
+    endif()
+    set(_interface_target
+        "${EC_MMAKE_ID}-external-${EC_PROVIDED_LIBRARY}")
+    if(TARGET "${_interface_target}")
+        message(FATAL_ERROR
+            "${EC_MMAKE_ID}: external CMake interface target already exists")
+    endif()
+    string(LENGTH "${EC_SOURCE_SHA256}" _source_sha256_length)
+    if(NOT _source_sha256_length EQUAL 64 OR
+       NOT EC_SOURCE_SHA256 MATCHES "^[0-9A-Fa-f]+$")
+        message(FATAL_ERROR
+            "${EC_MMAKE_ID}: invalid external source SHA-256")
+    endif()
+    string(TOLOWER "${EC_SOURCE_SHA256}" _source_sha256)
+
+    if(NOT TARGET "${EC_FETCH_TARGET}")
+        message(FATAL_ERROR
+            "${EC_MMAKE_ID}: missing fetch target ${EC_FETCH_TARGET}")
+    endif()
+    get_property(_fetch_destination TARGET "${EC_FETCH_TARGET}"
+        PROPERTY AROS_FETCH_DESTINATION)
+    get_property(_fetch_stamp TARGET "${EC_FETCH_TARGET}"
+        PROPERTY AROS_FETCH_COMPLETION_STAMP)
+    if(NOT _fetch_destination OR NOT _fetch_stamp)
+        message(FATAL_ERROR
+            "${EC_MMAKE_ID}: ${EC_FETCH_TARGET} is not a complete fetch owner")
+    endif()
+
+    cmake_path(ABSOLUTE_PATH CMAKE_BINARY_DIR
+        NORMALIZE OUTPUT_VARIABLE _build_root)
+    cmake_path(ABSOLUTE_PATH AROS_PORTS_SOURCE_DIR
+        NORMALIZE OUTPUT_VARIABLE _archive_root)
+    set(_raw_source "${EC_SOURCE_DIR}")
+    set(_raw_binary "${EC_BINARY_DIR}")
+    set(_raw_prefix "${EC_INSTALL_PREFIX}")
+    set(_raw_archive "${EC_SOURCE_ARCHIVE}")
+    set(_raw_fetch "${_fetch_destination}")
+    foreach(_kind IN ITEMS source binary prefix archive fetch)
+        set(_raw_path "${_raw_${_kind}}")
+        string(FIND "${_raw_path}" ";" _semicolon)
+        string(FIND "${_raw_path}" "$" _dollar)
+        string(FIND "${_raw_path}" "\\" _backslash)
+        string(FIND "${_raw_path}" "\n" _newline)
+        if(NOT _semicolon EQUAL -1 OR NOT _dollar EQUAL -1 OR
+           NOT _backslash EQUAL -1 OR NOT _newline EQUAL -1)
+            message(FATAL_ERROR
+                "${EC_MMAKE_ID}: unsafe external CMake ${_kind} path '${_raw_path}'")
+        endif()
+        set(_normal_path "${_raw_path}")
+        cmake_path(ABSOLUTE_PATH _normal_path
+            BASE_DIRECTORY "${_build_root}" NORMALIZE
+            OUTPUT_VARIABLE _${_kind})
+    endforeach()
+
+    cmake_path(IS_PREFIX _fetch "${_source}" NORMALIZE _source_owned)
+    if(NOT _source_owned)
+        message(FATAL_ERROR
+            "${EC_MMAKE_ID}: source is outside fetch destination: ${_source}")
+    endif()
+    cmake_path(IS_PREFIX _build_root "${_binary}" NORMALIZE _binary_owned)
+    set(_external_binary_root "${_build_root}/gen/external-cmake")
+    cmake_path(NORMAL_PATH _external_binary_root)
+    cmake_path(IS_PREFIX _external_binary_root "${_binary}"
+        NORMALIZE _binary_helper_owned)
+    if(NOT _binary_owned OR NOT _binary_helper_owned OR
+       _binary STREQUAL _external_binary_root)
+        message(FATAL_ERROR
+            "${EC_MMAKE_ID}: external binary directory must be a private child of ${_external_binary_root}: ${_binary}")
+    endif()
+    string(SHA256 _binary_key "${_binary}")
+    get_property(_binary_owner GLOBAL PROPERTY
+        "AROS_EXTERNAL_BINARY_OWNER_${_binary_key}")
+    if(_binary_owner AND NOT _binary_owner STREQUAL EC_MMAKE_ID)
+        message(FATAL_ERROR
+            "${EC_MMAKE_ID}: external binary directory is already owned by ${_binary_owner}: ${_binary}")
+    endif()
+    set_property(GLOBAL PROPERTY
+        "AROS_EXTERNAL_BINARY_OWNER_${_binary_key}" "${EC_MMAKE_ID}")
+    cmake_path(IS_PREFIX _build_root "${_prefix}" NORMALIZE _prefix_owned)
+    if(NOT _prefix_owned OR _prefix STREQUAL _build_root)
+        message(FATAL_ERROR
+            "${EC_MMAKE_ID}: external install prefix escapes the build tree: ${_prefix}")
+    endif()
+    foreach(_kind IN ITEMS source fetch prefix)
+        cmake_path(IS_PREFIX _binary "${_${_kind}}"
+            NORMALIZE _binary_contains_owned_path)
+        cmake_path(IS_PREFIX _${_kind} "${_binary}"
+            NORMALIZE _owned_path_contains_binary)
+        if(_binary_contains_owned_path OR _owned_path_contains_binary)
+            message(FATAL_ERROR
+                "${EC_MMAKE_ID}: external binary directory overlaps ${_kind}: ${_${_kind}}")
+        endif()
+    endforeach()
+    cmake_path(IS_PREFIX _archive_root "${_archive}" NORMALIZE _archive_owned)
+    if(NOT _archive_owned OR _archive STREQUAL _archive_root)
+        message(FATAL_ERROR
+            "${EC_MMAKE_ID}: source archive escapes the ports cache: ${_archive}")
+    endif()
+
+    set(_products "")
+    set(_library_products "")
+    set(_header_products "")
+    foreach(_kind IN ITEMS LIBRARY_PRODUCTS HEADER_PRODUCTS AUXILIARY_PRODUCTS)
+        foreach(_raw_product IN LISTS EC_${_kind})
+            if(_raw_product MATCHES "[;\"$\\\r\n]")
+                message(FATAL_ERROR
+                    "${EC_MMAKE_ID}: unsafe external product path '${_raw_product}'")
+            endif()
+            set(_product "${_raw_product}")
+            cmake_path(ABSOLUTE_PATH _product
+                BASE_DIRECTORY "${_prefix}" NORMALIZE
+                OUTPUT_VARIABLE _product)
+            cmake_path(IS_PREFIX _prefix "${_product}" NORMALIZE _inside_prefix)
+            if(NOT _inside_prefix OR _product STREQUAL _prefix)
+                message(FATAL_ERROR
+                    "${EC_MMAKE_ID}: external product escapes install prefix: ${_product}")
+            endif()
+            list(APPEND _products "${_product}")
+            if(_kind STREQUAL "LIBRARY_PRODUCTS")
+                list(APPEND _library_products "${_product}")
+            else()
+                list(APPEND _header_products "${_product}")
+            endif()
+        endforeach()
+    endforeach()
+    list(LENGTH EC_LIBRARY_PRODUCTS _declared_library_count)
+    list(LENGTH EC_HEADER_PRODUCTS _declared_header_count)
+    list(LENGTH EC_AUXILIARY_PRODUCTS _declared_auxiliary_count)
+    math(EXPR _declared_product_count
+        "${_declared_library_count} + ${_declared_header_count} + ${_declared_auxiliary_count}")
+    list(REMOVE_DUPLICATES _products)
+    list(LENGTH _products _product_count)
+    if(NOT _declared_product_count EQUAL _product_count)
+        message(FATAL_ERROR
+            "${EC_MMAKE_ID}: duplicate external product")
+    endif()
+    list(LENGTH _library_products _library_count)
+    set(_expected_archive
+        "${_prefix}/lib/${CMAKE_STATIC_LIBRARY_PREFIX}${EC_PROVIDED_LIBRARY}${CMAKE_STATIC_LIBRARY_SUFFIX}")
+    cmake_path(NORMAL_PATH _expected_archive)
+    if(NOT _library_count EQUAL 1 OR
+       NOT _expected_archive IN_LIST _library_products)
+        message(FATAL_ERROR
+            "${EC_MMAKE_ID}: provided library must install exactly ${_expected_archive}")
+    endif()
+    foreach(_product IN LISTS _products)
+        string(SHA256 _product_key "${_product}")
+        get_property(_previous_owner GLOBAL PROPERTY
+            "AROS_EXTERNAL_PRODUCT_OWNER_${_product_key}")
+        if(_previous_owner AND NOT _previous_owner STREQUAL EC_MMAKE_ID)
+            message(FATAL_ERROR
+                "${EC_MMAKE_ID}: ${_product} is already owned by ${_previous_owner}")
+        endif()
+        set_property(GLOBAL PROPERTY
+            "AROS_EXTERNAL_PRODUCT_OWNER_${_product_key}" "${EC_MMAKE_ID}")
+    endforeach()
+    _aros_claim_linklib_archive(
+        "${EC_MMAKE_ID}" "${_prefix}/lib" "${EC_PROVIDED_LIBRARY}")
+
+    set(_public_include_dirs "")
+    foreach(_raw_include IN LISTS EC_PUBLIC_INCLUDE_DIRS)
+        if(_raw_include MATCHES "[;\"$\\\r\n]")
+            message(FATAL_ERROR
+                "${EC_MMAKE_ID}: unsafe public include path '${_raw_include}'")
+        endif()
+        set(_include "${_raw_include}")
+        cmake_path(ABSOLUTE_PATH _include
+            BASE_DIRECTORY "${_prefix}" NORMALIZE OUTPUT_VARIABLE _include)
+        cmake_path(IS_PREFIX _prefix "${_include}" NORMALIZE _inside_prefix)
+        if(NOT _inside_prefix OR _include STREQUAL _prefix)
+            message(FATAL_ERROR
+                "${EC_MMAKE_ID}: public include directory escapes install prefix: ${_include}")
+        endif()
+        list(APPEND _public_include_dirs "${_include}")
+    endforeach()
+    list(REMOVE_DUPLICATES _public_include_dirs)
+
+    foreach(_option IN LISTS EC_OPTIONS)
+        string(FIND "${_option}" ";" _semicolon)
+        string(FIND "${_option}" "\n" _newline)
+        if(NOT _semicolon EQUAL -1 OR NOT _newline EQUAL -1 OR
+           NOT _option MATCHES "^(-D[A-Za-z_][A-Za-z0-9_]*(:[A-Za-z]+)?=[A-Za-z0-9_.+:/=-]+|-Wno-error=dev)$")
+            message(FATAL_ERROR
+                "${EC_MMAKE_ID}: unsafe external CMake option '${_option}'")
+        endif()
+        if(_option MATCHES
+           "^-DCMAKE_(INSTALL_PREFIX|TOOLCHAIN_FILE|SYSTEM_NAME|SYSTEM_PROCESSOR|C_COMPILER|CXX_COMPILER|ASM_COMPILER|AR|RANLIB|C_FLAGS|CXX_FLAGS|ASM_FLAGS|EXE_LINKER_FLAGS|TRY_COMPILE_TARGET_TYPE)(:|=)")
+            message(FATAL_ERROR
+                "${EC_MMAKE_ID}: external option overrides a forced toolchain setting: ${_option}")
+        endif()
+    endforeach()
+
+    # Reuse the parent directory's target options/definitions so a nested
+    # build selects the exact same ISA and AROS ABI. Bare-metal Clang has no
+    # installed AROS specs, hence the explicit POSIX/stdc namespace order.
+    get_directory_property(_parent_options COMPILE_OPTIONS)
+    get_directory_property(_parent_definitions COMPILE_DEFINITIONS)
+    get_directory_property(_parent_includes INCLUDE_DIRECTORIES)
+    set(_target_flags "")
+    foreach(_option IN LISTS _parent_options)
+        if(_option MATCHES "[;\r\n]" OR _option MATCHES "^\\$<")
+            message(FATAL_ERROR
+                "${EC_MMAKE_ID}: unsupported parent compile option '${_option}'")
+        endif()
+        list(APPEND _target_flags "${_option}")
+    endforeach()
+    foreach(_definition IN LISTS _parent_definitions)
+        if(_definition MATCHES "[;\r\n]" OR _definition MATCHES "^\\$<")
+            message(FATAL_ERROR
+                "${EC_MMAKE_ID}: unsupported parent compile definition '${_definition}'")
+        endif()
+        list(APPEND _target_flags "-D${_definition}")
+    endforeach()
+    set(_external_includes
+        "${AROS_SDK_INCLUDE_DIR}/aros/posixc"
+        "${AROS_SDK_INCLUDE_DIR}/aros/stdc")
+    list(APPEND _external_includes ${_parent_includes})
+    list(REMOVE_DUPLICATES _external_includes)
+    foreach(_include IN LISTS _external_includes)
+        if(_include MATCHES "[;\r\n]" OR _include MATCHES "^\\$<")
+            message(FATAL_ERROR
+                "${EC_MMAKE_ID}: unsupported parent include '${_include}'")
+        endif()
+        # CMAKE_<LANG>_FLAGS is a command-line string rather than a CMake
+        # argument list. Preserve an include root containing whitespace when
+        # the nested generator parses that string into compiler arguments.
+        list(APPEND _target_flags "-I\"${_include}\"")
+    endforeach()
+    string(JOIN " " _target_flags_string ${_target_flags})
+    foreach(_language IN ITEMS C CXX ASM)
+        set(_parent_language_flags "${CMAKE_${_language}_FLAGS}")
+        if(_parent_language_flags MATCHES "[;\r\n]")
+            message(FATAL_ERROR
+                "${EC_MMAKE_ID}: unsafe parent ${_language} flags")
+        endif()
+        string(STRIP
+            "${_parent_language_flags} ${_target_flags_string}"
+            _${_language}_flags)
+    endforeach()
+
+    cmake_path(GET CMAKE_CURRENT_FUNCTION_LIST_DIR PARENT_PATH
+        _aros_source_root)
+    set(_hash_verifier
+        "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/VerifySHA256.cmake")
+    set(_output_verifier
+        "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/VerifyOutputs.cmake")
+
+    # Ninja and Make both trust a successful custom command even if it failed
+    # to create one of its declared outputs. Verify the complete install
+    # contract before writing the success stamp. file(GENERATE) preserves the
+    # manifest timestamp across no-op reconfigures.
+    set(_products_manifest
+        "${CMAKE_CURRENT_BINARY_DIR}/.aros-${EC_MMAKE_ID}-products.cmake")
+    set(_products_manifest_content "set(EXPECTED_OUTPUTS\n")
+    foreach(_product IN LISTS _products)
+        string(APPEND _products_manifest_content "    \"${_product}\"\n")
+    endforeach()
+    string(APPEND _products_manifest_content ")\n")
+    file(GENERATE OUTPUT "${_products_manifest}"
+        CONTENT "${_products_manifest_content}")
+
+    set(_forced_options
+        "-DCMAKE_SYSTEM_NAME=AROS"
+        "-DCMAKE_SYSTEM_VERSION=1"
+        "-DCMAKE_SYSTEM_PROCESSOR=${AROS_TARGET_CPU}"
+        "-DCMAKE_MODULE_PATH=${_aros_source_root}/config/cmake"
+        "-DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY"
+        "-DBUILD_SHARED_LIBS=OFF"
+        "-DCMAKE_INSTALL_PREFIX=${_prefix}"
+        "-DCMAKE_C_COMPILER=${CMAKE_C_COMPILER}"
+        "-DCMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}"
+        "-DCMAKE_ASM_COMPILER=${CMAKE_ASM_COMPILER}"
+        "-DCMAKE_AR=${CMAKE_AR}"
+        "-DCMAKE_RANLIB=${CMAKE_RANLIB}"
+        "-DCMAKE_C_FLAGS=${_C_flags}"
+        "-DCMAKE_CXX_FLAGS=${_CXX_flags}"
+        "-DCMAKE_ASM_FLAGS=${_ASM_flags}")
+    if(CMAKE_C_COMPILER_LAUNCHER)
+        list(APPEND _forced_options
+            "-DCMAKE_C_COMPILER_LAUNCHER=${CMAKE_C_COMPILER_LAUNCHER}")
+    endif()
+    if(CMAKE_CXX_COMPILER_LAUNCHER)
+        list(APPEND _forced_options
+            "-DCMAKE_CXX_COMPILER_LAUNCHER=${CMAKE_CXX_COMPILER_LAUNCHER}")
+    endif()
+
+    set(_stamp "${_binary}/.aros-${EC_MMAKE_ID}-installed")
+    add_custom_command(
+        OUTPUT "${_stamp}" ${_products}
+        # The rule runs only when an input/contract changed or a product is
+        # missing. A clean private cache prevents a source-version change or
+        # removed option from surviving in the nested CMakeCache.txt.
+        COMMAND "${CMAKE_COMMAND}" -E rm -rf "${_binary}"
+        COMMAND "${CMAKE_COMMAND}" -E make_directory "${_binary}" "${_prefix}"
+        COMMAND "${CMAKE_COMMAND}"
+            "-DFILE=${_archive}"
+            "-DEXPECTED=${_source_sha256}"
+            -P "${_hash_verifier}"
+        COMMAND "${CMAKE_COMMAND}" -S "${_source}" -B "${_binary}"
+            -G "${CMAKE_GENERATOR}"
+            ${EC_OPTIONS}
+            ${_forced_options}
+        COMMAND "${CMAKE_COMMAND}" --build "${_binary}"
+        COMMAND "${CMAKE_COMMAND}" --install "${_binary}"
+        COMMAND "${CMAKE_COMMAND}"
+            "-DMANIFEST=${_products_manifest}"
+            -P "${_output_verifier}"
+        COMMAND "${CMAKE_COMMAND}" -E touch "${_stamp}"
+        DEPENDS "${_fetch_stamp}" "${_hash_verifier}"
+            "${_output_verifier}" "${_products_manifest}"
+        COMMENT "Building external CMake target ${EC_MMAKE_ID}"
+        VERBATIM
+        COMMAND_EXPAND_LISTS)
+    add_custom_target("${EC_MMAKE_ID}"
+        DEPENDS "${_stamp}" ${_products})
+
+    add_library("${_interface_target}" INTERFACE)
+    add_dependencies("${_interface_target}" "${EC_MMAKE_ID}")
+    target_link_libraries("${_interface_target}" INTERFACE "${_expected_archive}")
+    target_include_directories("${_interface_target}" INTERFACE
+        ${_public_include_dirs})
+    set_property(TARGET "${EC_MMAKE_ID}" PROPERTY
+        AROS_EXTERNAL_INTERFACE_TARGET "${_interface_target}")
+endfunction()
+
 # aros_generate_defines_header(OWNER <mmake> OUTPUT <file>
 #                              DEFINES "<identifier> <literal>"...
 #                              [DEPENDS <make-source-files...>]
