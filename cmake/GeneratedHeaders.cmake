@@ -80,6 +80,30 @@ aros_ilbm_header(
 _aros_needs_header(kernel-cgxbootpic "${_gen}/rom/cgxbootpic/bootpic_image.h")
 
 # -----------------------------------------------------------------------------
+# SoftFloat platform configuration
+# -----------------------------------------------------------------------------
+#
+# compiler/softfloat/mmakefile.src:278-290 generates a deliberately tiny
+# private platform.h before its fetched sources are compiled.  Do not replace
+# it with SoftFloat's build/*/platform.h: those upstream variants select host
+# compiler-specific helpers that the historic AROS rule intentionally leaves
+# disabled.  The legacy ARM-family branch changes only its explicit big-endian
+# variant; every other current target is little-endian.
+set(_softfloat_littleendian 1)
+set(_softfloat_arm_family arm armeb aarch64)
+if(AROS_TARGET_CPU IN_LIST _softfloat_arm_family AND
+   AROS_TARGET_VARIANT STREQUAL "be")
+    set(_softfloat_littleendian 0)
+endif()
+set(_softfloat_platform_h "${_gen}/compiler/softfloat/platform.h")
+aros_generate_defines_header(
+    OWNER linklibs-softfloat-genfiles
+    OUTPUT "${_softfloat_platform_h}"
+    DEFINES "LITTLEENDIAN ${_softfloat_littleendian}"
+    DEPENDS "${CMAKE_SOURCE_DIR}/compiler/softfloat/mmakefile.src")
+_aros_needs_header(linklibs-softfloat "${_softfloat_platform_h}")
+
+# -----------------------------------------------------------------------------
 # libraries/mui.h
 # -----------------------------------------------------------------------------
 #

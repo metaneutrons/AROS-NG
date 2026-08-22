@@ -4,6 +4,7 @@
 include(CMakeParseArguments)
 include("${CMAKE_CURRENT_LIST_DIR}/GenmoduleManifest.cmake")
 include("${CMAKE_CURRENT_LIST_DIR}/GenmoduleTargets.cmake")
+include("${CMAKE_CURRENT_LIST_DIR}/GenmoduleHeaders.cmake")
 include("${CMAKE_CURRENT_LIST_DIR}/PythonGenerators.cmake")
 include("${CMAKE_CURRENT_LIST_DIR}/TransitiveHeaderBindings.cmake")
 # The arch/ subdirectories this configuration may build from. Directory names
@@ -535,6 +536,8 @@ endfunction()
 set(AROS_ADHOC_HEADERS_HANDLED
     "hidd/pci.h"
     "hidd/thunderbolt.h"
+    # Counterpart in cmake/PngLibconf.cmake, installed after libpng fetch.
+    "pnglibconf.h"
     # Counterparts in cmake/GeneratedHeaders.cmake.
     "$(CURDIR)/dos/errorlist.h"
     "$(CURDIR)/dosboot/nomedia_image.h"
@@ -561,7 +564,7 @@ set(AROS_ADHOC_HEADERS_OUT_OF_SCOPE
     # Hosted ports only.
     "sigcore.h"
     # Third-party libraries, not part of a bootable kickstart.
-    "pnglibconf.h" "tiffconf.h" "tifftypes.h" "tiffinline.h"
+    "tiffconf.h" "tifftypes.h" "tiffinline.h"
     "freetype/*" "libraries"
     # A pattern rule whose destination is a directory category, not a file.
     "hidd/%.h"
@@ -570,9 +573,7 @@ set(AROS_ADHOC_HEADERS_OUT_OF_SCOPE
     "$(CURDIR)/libde265/de265-version.h"
     "$(CURDIR)/libheif/heif_version.h"
     "$(CURDIR)/src/webp/config.h"
-    # softfloat is only built for targets without an FPU, none of which are
-    # buildable yet; isapnp is x86 legacy and in no package.
-    "$(CURDIR)/platform.h"
+    # isapnp is x86 legacy and in no package.
     "$(CURDIR)/version.h"
     # libtiff's config header, substituted from a template in the port.
     "$(CURDIR)/tif_config.h"
@@ -615,6 +616,15 @@ function(aros_adhoc_header_rule)
             return()
         endif()
     endforeach()
+
+    # compiler/softfloat/mmakefile.src:291 generates its private platform.h
+    # through cmake/GeneratedHeaders.cmake.  Keep this ownership file-specific:
+    # a broad $(CURDIR)/platform.h allowlist would hide an unrelated future
+    # hand-written header rule with the same legacy spelling.
+    if(AR_FILE STREQUAL "compiler/softfloat/mmakefile.src" AND
+       AR_DEST STREQUAL "$(CURDIR)/platform.h")
+        return()
+    endif()
 
     if(AR_DEST IN_LIST AROS_ADHOC_HEADERS_HANDLED)
         return()

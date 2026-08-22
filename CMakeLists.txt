@@ -112,6 +112,64 @@ if(EXISTS "${TRANSPILER_BIN}")
     )
     if(TRANSPILER_RES EQUAL 0 AND EXISTS "${GENERATED_TARGETS_CMAKE}")
         include("${GENERATED_TARGETS_CMAKE}")
+
+        # icon.library and Wanderer's private Icon MUI class share a .conf
+        # stem. BootstrapSDK intentionally withholds ambiguous shared headers;
+        # the legacy `includes` closure selects icon.library for linklibs-amiga.
+        # Materialise that exact declaration as the real producer rather than
+        # letting configure-time traversal order decide the SDK API.
+        if(TARGET "workbench-libs-icon-includes")
+            aros_materialize_genmodule_headers(
+                NAME workbench-libs-icon-includes-generated
+                OWNER workbench-libs-icon-includes
+                CONFIG "${CMAKE_SOURCE_DIR}/workbench/libs/icon/icon.conf"
+                MODULE icon
+                MODTYPE library
+                INCLUDE_NAME icon)
+        endif()
+
+        # libpng's historical build rewrites a fetched prebuilt header before
+        # linklibs-png-nostdio compiles.  It is a real SDK-only output rather
+        # than a configure-time placeholder, so retain its fetch ordering.
+        if(TARGET "libpng-fetch" OR TARGET "workbench-libs-png-generated")
+            if(NOT TARGET "libpng-fetch" OR
+               NOT TARGET "workbench-libs-png-generated")
+                message(FATAL_ERROR
+                    "libpng pnglibconf staging requires both generated targets")
+            endif()
+            include("${CMAKE_SOURCE_DIR}/cmake/PngLibconf.cmake")
+            aros_stage_pnglibconf(
+                NAME workbench-libs-png-generated-pnglibconf
+                FETCH_TARGET libpng-fetch
+                OWNER workbench-libs-png-generated
+                PORTS_DIR "${AROS_PORTS_DIR}"
+                SDK_INCLUDE_DIR "${AROS_SDK_INCLUDE_DIR}")
+        endif()
+
+        # The GRUB2 host-tool lanes above produce the real BIOS and EFI
+        # generators, but the historic ISO recipe's asset staging is a
+        # separate, output-producing step.  Materialise it only for its one
+        # audited x86_64-pc LLVM profile, after the generated declarations
+        # have created all three concrete host-lane targets.
+        if(AROS_TOOLCHAIN STREQUAL "llvm" AND
+           AROS_TARGET_CPU STREQUAL "x86_64" AND
+           AROS_TARGET_PLATFORM STREQUAL "pc")
+            foreach(_aros_grub_host_lane IN ITEMS
+                    grub2-host grub2-efi-host grub2-efi32-host)
+                if(NOT TARGET "${_aros_grub_host_lane}")
+                    message(FATAL_ERROR
+                        "GRUB2 ISO asset staging requires ${_aros_grub_host_lane}")
+                endif()
+            endforeach()
+            include("${CMAKE_SOURCE_DIR}/cmake/GrubIsoAssets.cmake")
+            aros_stage_grub2_iso_assets(
+                MODE x86_64
+                BINARY_DIR "${CMAKE_BINARY_DIR}/gen/grub2-iso-assets/x86_64"
+                SYS_DIR "${CMAKE_BINARY_DIR}/SYS"
+                HOST_PC "${CMAKE_BINARY_DIR}/hosttools/grub2/pc"
+                HOST_EFI64 "${CMAKE_BINARY_DIR}/hosttools/grub2/efi-x86_64"
+                HOST_EFI32 "${CMAKE_BINARY_DIR}/hosttools/grub2/efi-i386")
+        endif()
     endif()
 endif()
 
