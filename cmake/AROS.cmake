@@ -730,6 +730,7 @@ function(aros_apply_includes target_name)
     # and the platform struct would come out missing its fields.
     set(GEN_DIRS "")
     set(ARCH_DIRS "")
+    set(NAMESPACE_DIRS "")
     set(GENERIC_DIRS "")
     set(FALLBACK_DIRS "")
 
@@ -744,7 +745,24 @@ function(aros_apply_includes target_name)
         list(APPEND FALLBACK_DIRS "${INC_MODULE_DIR}")
     endif()
 
+    # The target compiler's specs search these two libc namespaces before the
+    # common SDK include root. Bare-metal Clang has no installed AROS specs, so
+    # an exact declaration-local request recreates that lane explicitly. The
+    # fixed order is semantic; do not inherit a reversed order from an
+    # assignment assembled through several Make variables.
+    foreach(_namespace IN ITEMS
+            "${AROS_SDK_INCLUDE_DIR}/aros/posixc"
+            "${AROS_SDK_INCLUDE_DIR}/aros/stdc")
+        if(_namespace IN_LIST INC_INCLUDES)
+            file(MAKE_DIRECTORY "${_namespace}")
+            list(APPEND NAMESPACE_DIRS "${_namespace}")
+        endif()
+    endforeach()
+
     foreach(d IN LISTS INC_INCLUDES)
+        if(d IN_LIST NAMESPACE_DIRS)
+            continue()
+        endif()
         # A path inside the build tree holds generated files, so it may not
         # exist yet at configure time: rom/dos asks for
         # -I$(GENDIR)/$(CURDIR)/dos, which only appears once its catalog
@@ -758,6 +776,12 @@ function(aros_apply_includes target_name)
             list(APPEND GENERIC_DIRS "${d}")
         endif()
     endforeach()
+
+    if(NAMESPACE_DIRS)
+        list(REMOVE_DUPLICATES NAMESPACE_DIRS)
+        target_include_directories(${target_name} BEFORE PRIVATE
+            ${NAMESPACE_DIRS})
+    endif()
 
     foreach(pair IN LISTS INC_ARCH_INCLUDES)
         # Split "<tag>|<path>"; a path may not contain "|".
@@ -798,7 +822,9 @@ function(aros_apply_includes target_name)
     # out put every -iquote path ahead of every architecture path, so
     # `#include "kernel_debug.h"` in arch/x86_64-pc/kernel resolved to
     # rom/kernel's header instead of arch/all-pc's, and __cli went missing.
-    set(QUOTE_DIRS ${GEN_DIRS} ${ARCH_DIRS} ${GENERIC_DIRS} ${FALLBACK_DIRS})
+    set(QUOTE_DIRS
+        ${GEN_DIRS} ${ARCH_DIRS} ${NAMESPACE_DIRS}
+        ${GENERIC_DIRS} ${FALLBACK_DIRS})
     if(QUOTE_DIRS)
         list(REMOVE_DUPLICATES QUOTE_DIRS)
         foreach(d IN LISTS QUOTE_DIRS)
@@ -992,9 +1018,9 @@ endfunction()
 
 # Apply the graph-validated declaration-local USER_LDFLAGS snapshot. MetaMake
 # places this lane after the objects. Only `-l<name>` items with a proven public
-# archive producer reach this point, so CMake may emit them in <LINK_LIBRARIES>
-# (after the SDK -L path) even though the canonical rule invokes ld.lld rather
-# than a compiler driver.
+# archive producer or an exact matching private `-L` directory reach this
+# point. CMake may therefore emit them in <LINK_LIBRARIES> even though the
+# canonical rule invokes ld.lld rather than a compiler driver.
 function(aros_apply_link_options target_name)
     if(TARGET "${target_name}" AND ARGN)
         target_link_directories("${target_name}" PRIVATE
@@ -2952,15 +2978,87 @@ function(_aros_genmodule_linklib_sources
     set(${out_config} "${_config}" PARENT_SCOPE)
 endfunction()
 
+# Resolve one explicit `%build_linklib libdir=` output. Private archives must
+# stay under this configuration's build tree; an absolute host path or parent
+# traversal is never a valid generated-build destination.
+function(_aros_validate_linklib_output_directory out_var owner requested)
+    string(FIND "${requested}" ";" _has_semicolon)
+    string(FIND "${requested}" "$" _has_dollar)
+    string(FIND "${requested}" "\\" _has_backslash)
+    if(NOT _has_semicolon EQUAL -1 OR
+       NOT _has_dollar EQUAL -1 OR
+       NOT _has_backslash EQUAL -1)
+        message(FATAL_ERROR
+            "${owner}: private linklib output contains unsafe syntax: ${requested}")
+    endif()
+    cmake_path(ABSOLUTE_PATH CMAKE_BINARY_DIR
+        NORMALIZE OUTPUT_VARIABLE _binary_root)
+    set(_requested "${requested}")
+    cmake_path(ABSOLUTE_PATH _requested
+        BASE_DIRECTORY "${_binary_root}" NORMALIZE OUTPUT_VARIABLE _output)
+    cmake_path(IS_PREFIX _binary_root "${_output}" NORMALIZE _inside_build)
+    if(NOT _inside_build OR _output STREQUAL _binary_root)
+        message(FATAL_ERROR
+            "${owner}: private linklib output escapes the build tree: ${_output}")
+    endif()
+    set(${out_var} "${_output}" PARENT_SCOPE)
+endfunction()
+
+# Reserve the complete archive path before creating its target. CMake normally
+# notices duplicate outputs only when the backend is generated, and the error
+# can depend on declaration order. A stable ownership check reports both
+# MetaMake declarations at configure time instead.
+function(_aros_claim_linklib_archive owner output_dir output_name)
+    set(_archive
+        "${output_dir}/${CMAKE_STATIC_LIBRARY_PREFIX}${output_name}${CMAKE_STATIC_LIBRARY_SUFFIX}")
+    cmake_path(NORMAL_PATH _archive)
+    string(SHA256 _archive_key "${_archive}")
+    get_property(_previous_owner GLOBAL PROPERTY
+        "AROS_LINKLIB_ARCHIVE_OWNER_${_archive_key}")
+    if(_previous_owner AND NOT _previous_owner STREQUAL owner)
+        message(FATAL_ERROR
+            "${owner}: ${_archive} is already owned by ${_previous_owner}")
+    endif()
+    set_property(GLOBAL PROPERTY
+        "AROS_LINKLIB_ARCHIVE_OWNER_${_archive_key}" "${owner}")
+endfunction()
+
 # Macro: aros_add_linklib
 function(aros_add_linklib)
     set(options CANONICAL_OUTPUT)
-    set(oneValueArgs TARGET MMAKE_ID DIRECTORY)
+    set(oneValueArgs TARGET MMAKE_ID DIRECTORY OUTPUT_DIR)
     set(multiValueArgs SOURCES CXX_SOURCES OBJC_SOURCES ASM_SOURCES
         LIBS USELIBS INCLUDES ARCH_INCLUDES
         DEFINES UNDEFINES COMPILE_OPTIONS ARCH_SOURCES
         ARCH_DEFINES ARCH_COMPILE_OPTIONS LINK_OPTIONS)
-    cmake_parse_arguments(ARG "${options}" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
+    # PARSE_ARGV preserves semicolons inside quoted values so the private
+    # output validator can reject them instead of silently seeing only the
+    # first list element.
+    cmake_parse_arguments(PARSE_ARGV 0 ARG
+        "${options}" "${oneValueArgs}" "${multiValueArgs}")
+
+    if(ARG_UNPARSED_ARGUMENTS)
+        message(FATAL_ERROR
+            "${ARG_MMAKE_ID}: aros_add_linklib contains unsafe syntax or unknown arguments: ${ARG_UNPARSED_ARGUMENTS}")
+    endif()
+    if(ARG_KEYWORDS_MISSING_VALUES)
+        message(FATAL_ERROR
+            "${ARG_MMAKE_ID}: aros_add_linklib has missing values: ${ARG_KEYWORDS_MISSING_VALUES}")
+    endif()
+
+    if(ARG_CANONICAL_OUTPUT AND ARG_OUTPUT_DIR)
+        message(FATAL_ERROR
+            "${ARG_MMAKE_ID}: CANONICAL_OUTPUT and OUTPUT_DIR are mutually exclusive")
+    endif()
+    set(_private_output_dir "")
+    if(ARG_OUTPUT_DIR)
+        if(NOT ARG_TARGET OR NOT ARG_TARGET MATCHES "^[A-Za-z0-9_.+-]+$")
+            message(FATAL_ERROR
+                "${ARG_MMAKE_ID}: private linklib output requires a literal archive name")
+        endif()
+        _aros_validate_linklib_output_directory(
+            _private_output_dir "${ARG_MMAKE_ID}" "${ARG_OUTPUT_DIR}")
+    endif()
 
     set(_ordinary_c_sources "")
     set(_genmodule_sources "")
@@ -3022,6 +3120,10 @@ function(aros_add_linklib)
     aros_mark_preprocessed_asm(${RESOLVED_SOURCES})
 
     if(RESOLVED_SOURCES)
+        if(_private_output_dir)
+            _aros_claim_linklib_archive(
+                "${ARG_MMAKE_ID}" "${_private_output_dir}" "${ARG_TARGET}")
+        endif()
         add_library(${ARG_MMAKE_ID} STATIC ${RESOLVED_SOURCES})
         set_target_properties(${ARG_MMAKE_ID} PROPERTIES LINKER_LANGUAGE C)
 
@@ -3034,6 +3136,10 @@ function(aros_add_linklib)
             set_target_properties(${ARG_MMAKE_ID} PROPERTIES
                 OUTPUT_NAME "${ARG_TARGET}"
                 ARCHIVE_OUTPUT_DIRECTORY "${AROS_DEVELOPER_LIB_DIR}")
+        elseif(_private_output_dir)
+            set_target_properties(${ARG_MMAKE_ID} PROPERTIES
+                OUTPUT_NAME "${ARG_TARGET}"
+                ARCHIVE_OUTPUT_DIRECTORY "${_private_output_dir}")
         endif()
         if(_genmodule_sources)
             # The target compiler's specs search the POSIX and standard-C
