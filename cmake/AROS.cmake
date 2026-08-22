@@ -1387,7 +1387,10 @@ set_property(GLOBAL PROPERTY AROS_FETCH_TARGETS "")
 
 # aros_fetch_archive(NAME <t> ARCHIVE <a> SUFFIXES <s> ORIGINS <o>
 #                    LOCATION <l> DESTINATION <d> [BASE <b>]
-#                    PATCH_ORIGINS <po> PATCHES <p>)
+#                    PATCH_ORIGINS <po> PATCHES <p>
+#                    [SOURCE_DIR <audited-source>
+#                     LOCAL_PATCH_FILES <files...>
+#                     LOCAL_PATCH_SHA256 <digests...>])
 #
 # Declares a fetch target. The recipe mirrors the %fetch macro's invocation of
 # scripts/fetch.sh.  The completion stamp lives in the concrete unpack
@@ -1396,8 +1399,17 @@ set_property(GLOBAL PROPERTY AROS_FETCH_TARGETS "")
 # its own Ports tree.
 function(aros_fetch_archive)
     set(oneValueArgs NAME ARCHIVE SUFFIXES ORIGINS LOCATION DESTINATION BASE
-        PATCH_ORIGINS PATCHES)
-    cmake_parse_arguments(FA "" "${oneValueArgs}" "" ${ARGN})
+        PATCH_ORIGINS PATCHES SOURCE_DIR)
+    set(multiValueArgs LOCAL_PATCH_FILES LOCAL_PATCH_SHA256)
+    cmake_parse_arguments(FA "" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
+
+    # Empty LOCATION/BASE/SUFFIXES values are part of the legacy %fetch
+    # contract, and cmake_parse_arguments reports them as missing values.
+    # Unknown positional tokens are still always malformed; the audited
+    # SOURCE_DIR/PATCH trio is validated independently below.
+    if(FA_UNPARSED_ARGUMENTS)
+        message(FATAL_ERROR "aros_fetch_archive received malformed arguments")
+    endif()
 
     if(NOT FA_NAME OR NOT FA_ARCHIVE OR NOT FA_DESTINATION)
         return()
@@ -1420,11 +1432,149 @@ function(aros_fetch_archive)
     endif()
     set(_stamp "${FA_DESTINATION}/.${FA_ARCHIVE}-fetched")
 
+    # Strict external-CMake profiles pin their in-tree patches.  fetch.sh
+    # deliberately caches both the copied patch and an `.applied` marker, so a
+    # plain file dependency would rerun the recipe but still use the old
+    # patch.  When one of these audited inputs changes, discard only the
+    # declared archive source directory and its own cache markers before
+    # letting fetch.sh unpack and patch it again.
+    set(_patch_refresh_commands "")
+    set(_patch_dependency_args "")
+    if(FA_SOURCE_DIR OR FA_LOCAL_PATCH_FILES OR FA_LOCAL_PATCH_SHA256)
+        if(NOT FA_SOURCE_DIR OR NOT FA_LOCAL_PATCH_FILES OR
+           NOT FA_LOCAL_PATCH_SHA256)
+            message(FATAL_ERROR
+                "${FA_NAME}: SOURCE_DIR, LOCAL_PATCH_FILES and LOCAL_PATCH_SHA256 must be declared together")
+        endif()
+        list(LENGTH FA_LOCAL_PATCH_FILES _local_patch_count)
+        list(LENGTH FA_LOCAL_PATCH_SHA256 _local_patch_hash_count)
+        if(NOT _local_patch_count EQUAL _local_patch_hash_count)
+            message(FATAL_ERROR
+                "${FA_NAME}: local patch files and SHA-256 digests differ in length")
+        endif()
+
+        set(_destination "${FA_DESTINATION}")
+        set(_source "${FA_SOURCE_DIR}")
+        set(_patch_base "${_base}")
+        foreach(_path_var IN ITEMS _destination _source _patch_base)
+            if("${${_path_var}}" MATCHES "[;\"$\\\r\n]")
+                message(FATAL_ERROR
+                    "${FA_NAME}: unsafe audited fetch path '${${_path_var}}'")
+            endif()
+            cmake_path(ABSOLUTE_PATH ${_path_var}
+                BASE_DIRECTORY "${CMAKE_BINARY_DIR}" NORMALIZE
+                OUTPUT_VARIABLE ${_path_var})
+        endforeach()
+        cmake_path(IS_PREFIX _destination "${_source}" NORMALIZE
+            _source_owned)
+        if(NOT _source_owned OR _source STREQUAL _destination)
+            message(FATAL_ERROR
+                "${FA_NAME}: audited source must be a private child of the fetch destination: ${_source}")
+        endif()
+        cmake_path(RELATIVE_PATH _source BASE_DIRECTORY "${_destination}"
+            OUTPUT_VARIABLE _source_relative)
+
+        separate_arguments(_patch_specs UNIX_COMMAND "${FA_PATCHES}")
+        set(_local_patch_inputs "")
+        set(_cached_patch_paths "")
+        set(_applied_patch_markers "")
+        math(EXPR _last_local_patch "${_local_patch_count} - 1")
+        foreach(_index RANGE 0 ${_last_local_patch})
+            list(GET FA_LOCAL_PATCH_FILES ${_index} _raw_patch)
+            list(GET FA_LOCAL_PATCH_SHA256 ${_index} _patch_sha256)
+            string(LENGTH "${_patch_sha256}" _patch_sha256_length)
+            if(NOT _patch_sha256_length EQUAL 64 OR
+               NOT _patch_sha256 MATCHES "^[0-9A-Fa-f]+$")
+                message(FATAL_ERROR
+                    "${FA_NAME}: invalid local patch SHA-256 '${_patch_sha256}'")
+            endif()
+            string(TOLOWER "${_patch_sha256}" _patch_sha256)
+
+            if("${_raw_patch}" MATCHES "[;\"$\\\r\n]")
+                message(FATAL_ERROR
+                    "${FA_NAME}: unsafe local patch path '${_raw_patch}'")
+            endif()
+            set(_patch "${_raw_patch}")
+            cmake_path(ABSOLUTE_PATH _patch
+                BASE_DIRECTORY "${CMAKE_SOURCE_DIR}" NORMALIZE
+                OUTPUT_VARIABLE _patch)
+            cmake_path(ABSOLUTE_PATH CMAKE_SOURCE_DIR NORMALIZE
+                OUTPUT_VARIABLE _source_root)
+            cmake_path(IS_PREFIX _source_root "${_patch}" NORMALIZE
+                _patch_owned)
+            cmake_path(IS_PREFIX _destination "${_patch}" NORMALIZE
+                _patch_in_destination)
+            cmake_path(IS_PREFIX _patch_base "${_patch}" NORMALIZE
+                _patch_in_base)
+            if(NOT _patch_owned OR _patch STREQUAL _source_root OR
+               _patch_in_destination OR _patch_in_base OR
+               NOT EXISTS "${_patch}" OR IS_DIRECTORY "${_patch}")
+                message(FATAL_ERROR
+                    "${FA_NAME}: local patch is missing or outside the source tree: ${_patch}")
+            endif()
+
+            cmake_path(GET _patch FILENAME _patch_name)
+            set(_matching_spec_count 0)
+            foreach(_patch_spec IN LISTS _patch_specs)
+                string(REPLACE ":" ";" _patch_fields "${_patch_spec}")
+                list(GET _patch_fields 0 _spec_name)
+                list(LENGTH _patch_fields _patch_field_count)
+                if(_patch_field_count GREATER 1)
+                    list(GET _patch_fields 1 _spec_subdir)
+                else()
+                    set(_spec_subdir "")
+                endif()
+                if(_spec_name STREQUAL _patch_name AND
+                   _spec_subdir STREQUAL _source_relative)
+                    math(EXPR _matching_spec_count "${_matching_spec_count} + 1")
+                endif()
+            endforeach()
+            if(NOT _matching_spec_count EQUAL 1)
+                message(FATAL_ERROR
+                    "${FA_NAME}: local patch ${_patch_name} must have exactly one spec rooted at ${_source_relative}")
+            endif()
+
+            list(APPEND _local_patch_inputs "${_patch}")
+            list(APPEND _cached_patch_paths "${_patch_base}/${_patch_name}")
+            list(APPEND _applied_patch_markers
+                "${_patch_base}/.${_patch_name}.applied")
+            list(APPEND _patch_refresh_commands
+                COMMAND "${CMAKE_COMMAND}"
+                    "-DFILE=${_patch}"
+                    "-DEXPECTED=${_patch_sha256}"
+                    -P "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/VerifySHA256.cmake")
+        endforeach()
+
+        separate_arguments(_archive_suffixes UNIX_COMMAND "${FA_SUFFIXES}")
+        set(_archive_unpack_markers "")
+        foreach(_suffix IN LISTS _archive_suffixes)
+            list(APPEND _archive_unpack_markers
+                "${_patch_base}/.${FA_ARCHIVE}.${_suffix}.unpacked")
+        endforeach()
+        list(APPEND _patch_refresh_commands
+            COMMAND "${CMAKE_COMMAND}" -E rm -rf "${_source}"
+            COMMAND "${CMAKE_COMMAND}" -E rm -f
+                ${_archive_unpack_markers}
+                ${_cached_patch_paths}
+                ${_applied_patch_markers})
+        foreach(_index RANGE 0 ${_last_local_patch})
+            list(GET _local_patch_inputs ${_index} _patch)
+            cmake_path(GET _patch FILENAME _patch_name)
+            list(APPEND _patch_refresh_commands
+                COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+                    "${_patch}" "${_patch_base}/${_patch_name}")
+        endforeach()
+        set(_patch_dependency_args DEPENDS
+            ${_local_patch_inputs}
+            "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/VerifySHA256.cmake")
+    endif()
+
     add_custom_command(
         OUTPUT "${_stamp}"
         COMMAND ${CMAKE_COMMAND} -E make_directory "${_loc}"
         COMMAND ${CMAKE_COMMAND} -E make_directory "${_base}"
         COMMAND ${CMAKE_COMMAND} -E make_directory "${FA_DESTINATION}"
+        ${_patch_refresh_commands}
         COMMAND "${AROS_FETCH_SCRIPT}"
                 -ao "${FA_ORIGINS}"
                 -a "${FA_ARCHIVE}"
@@ -1435,6 +1585,7 @@ function(aros_fetch_archive)
                 -po "${FA_PATCH_ORIGINS}"
                 -p "${FA_PATCHES}"
         COMMAND ${CMAKE_COMMAND} -E touch "${_stamp}"
+        ${_patch_dependency_args}
         COMMENT "🌐 Fetching ${FA_ARCHIVE}"
         VERBATIM
     )
