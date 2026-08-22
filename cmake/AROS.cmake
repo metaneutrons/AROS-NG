@@ -2757,6 +2757,19 @@ function(_aros_generate_module_support out_prefix)
     set(${out_prefix}_FD_TARGET "${_fd_target}" PARENT_SCOPE)
 endfunction()
 
+# Select the linker language for a runtime module.  `alwayscxxlink=yes` is a
+# legacy module-macro contract, separate from whether a declaration happened
+# to list C++ sources: Mesa's HIDD wrappers are C sources but deliberately
+# link through the C++ toolchain.  Every caller keeps C as the conservative
+# default unless the transpiler supplied the explicit opt-in.
+function(_aros_set_module_linker_language target always_cxx_link)
+    if(always_cxx_link)
+        set_target_properties("${target}" PROPERTIES LINKER_LANGUAGE CXX)
+    else()
+        set_target_properties("${target}" PROPERTIES LINKER_LANGUAGE C)
+    endif()
+endfunction()
+
 # aros_add_module_abi(TARGET <name> MMAKE_ID <id> DIRECTORY <dir>
 #                     MODTYPE <type> [MODSUFFIX <suffix>] ...)
 #
@@ -2832,7 +2845,7 @@ endfunction()
 
 # Macro: aros_add_library
 function(aros_add_library)
-    set(options GENMODULE_ONLY GENMODULE_LINKLIBS)
+    set(options ALWAYS_CXX_LINK GENMODULE_ONLY GENMODULE_LINKLIBS)
     set(oneValueArgs TARGET MMAKE_ID DIRECTORY INSTALL_DIR
         MODSUFFIX DEFAULT_INSTALL_DIR DEFAULT_MODSUFFIX LINKLIB_NAME)
     set(multiValueArgs SOURCES CXX_SOURCES OBJC_SOURCES ASM_SOURCES
@@ -2925,8 +2938,9 @@ function(aros_add_library)
             "${AROS_SDK_INCLUDE_DIR}/aros/stdc")
         set_target_properties("${ARG_MMAKE_ID}" PROPERTIES
             OUTPUT_NAME "${_output_name}"
-            RUNTIME_OUTPUT_DIRECTORY "${_install_dir}"
-            LINKER_LANGUAGE C)
+            RUNTIME_OUTPUT_DIRECTORY "${_install_dir}")
+        _aros_set_module_linker_language("${ARG_MMAKE_ID}"
+            "${ARG_ALWAYS_CXX_LINK}")
         add_dependencies("${ARG_MMAKE_ID}"
             "${ARG_MMAKE_ID}-includes"
             "${ARG_MMAKE_ID}-linklib")
@@ -3230,9 +3244,9 @@ function(aros_add_library)
         )
         set_target_properties(${ARG_MMAKE_ID} PROPERTIES
             OUTPUT_NAME "${_output_name}"
-            RUNTIME_OUTPUT_DIRECTORY "${_install_dir}"
-            LINKER_LANGUAGE C
-        )
+            RUNTIME_OUTPUT_DIRECTORY "${_install_dir}")
+        _aros_set_module_linker_language("${ARG_MMAKE_ID}"
+            "${ARG_ALWAYS_CXX_LINK}")
         if(_has_genmodule)
             target_include_directories(${ARG_MMAKE_ID} BEFORE PRIVATE
                 "${_gm_INCLUDE_DIR}" "${_gm_GEN_DIR}"
@@ -3295,7 +3309,7 @@ endfunction()
 
 # Macro: aros_add_device
 function(aros_add_device)
-    set(options)
+    set(options ALWAYS_CXX_LINK)
     set(oneValueArgs TARGET MMAKE_ID DIRECTORY INSTALL_DIR MODSUFFIX)
     set(multiValueArgs SOURCES CXX_SOURCES OBJC_SOURCES ASM_SOURCES
         LIBS USELIBS INCLUDES ARCH_INCLUDES
@@ -3350,9 +3364,9 @@ function(aros_add_device)
         )
         set_target_properties(${ARG_MMAKE_ID} PROPERTIES
             OUTPUT_NAME "${_output_name}"
-            RUNTIME_OUTPUT_DIRECTORY "${_install_dir}"
-            LINKER_LANGUAGE C
-        )
+            RUNTIME_OUTPUT_DIRECTORY "${_install_dir}")
+        _aros_set_module_linker_language("${ARG_MMAKE_ID}"
+            "${ARG_ALWAYS_CXX_LINK}")
         aros_gate_arch(${ARG_MMAKE_ID} "${ARG_DIRECTORY}")
         aros_apply_includes(${ARG_MMAKE_ID}
             MODULE_DIR "${ARG_DIRECTORY}"
@@ -3375,7 +3389,7 @@ endfunction()
 
 # Macro: aros_add_resource
 function(aros_add_resource)
-    set(options)
+    set(options ALWAYS_CXX_LINK)
     set(oneValueArgs TARGET MMAKE_ID DIRECTORY INSTALL_DIR MODSUFFIX)
     set(multiValueArgs SOURCES CXX_SOURCES OBJC_SOURCES ASM_SOURCES
         LIBS USELIBS INCLUDES ARCH_INCLUDES
@@ -3430,9 +3444,9 @@ function(aros_add_resource)
         )
         set_target_properties(${ARG_MMAKE_ID} PROPERTIES
             OUTPUT_NAME "${_output_name}"
-            RUNTIME_OUTPUT_DIRECTORY "${_install_dir}"
-            LINKER_LANGUAGE C
-        )
+            RUNTIME_OUTPUT_DIRECTORY "${_install_dir}")
+        _aros_set_module_linker_language("${ARG_MMAKE_ID}"
+            "${ARG_ALWAYS_CXX_LINK}")
         aros_gate_arch(${ARG_MMAKE_ID} "${ARG_DIRECTORY}")
         aros_apply_includes(${ARG_MMAKE_ID}
             MODULE_DIR "${ARG_DIRECTORY}"
@@ -3455,7 +3469,7 @@ endfunction()
 
 # Macro: aros_add_hidd
 function(aros_add_hidd)
-    set(options)
+    set(options ALWAYS_CXX_LINK)
     set(oneValueArgs TARGET MMAKE_ID DIRECTORY INSTALL_DIR MODSUFFIX)
     set(multiValueArgs SOURCES CXX_SOURCES OBJC_SOURCES ASM_SOURCES
         LIBS USELIBS INCLUDES ARCH_INCLUDES
@@ -3510,9 +3524,9 @@ function(aros_add_hidd)
         )
         set_target_properties(${ARG_MMAKE_ID} PROPERTIES
             OUTPUT_NAME "${_output_name}"
-            RUNTIME_OUTPUT_DIRECTORY "${_install_dir}"
-            LINKER_LANGUAGE C
-        )
+            RUNTIME_OUTPUT_DIRECTORY "${_install_dir}")
+        _aros_set_module_linker_language("${ARG_MMAKE_ID}"
+            "${ARG_ALWAYS_CXX_LINK}")
         aros_gate_arch(${ARG_MMAKE_ID} "${ARG_DIRECTORY}")
         aros_apply_includes(${ARG_MMAKE_ID}
             MODULE_DIR "${ARG_DIRECTORY}"
@@ -4001,12 +4015,13 @@ endfunction()
 # suffix; the compilation is identical to modtype=library. So this builds like
 # aros_add_library and differs only in its runtime output properties.
 function(aros_add_custom_target)
+    set(options ALWAYS_CXX_LINK)
     set(oneValueArgs TARGET MMAKE_ID DIRECTORY MODTYPE INSTALL_DIR MODSUFFIX)
     set(multiValueArgs SOURCES CXX_SOURCES OBJC_SOURCES ASM_SOURCES
         LIBS USELIBS INCLUDES ARCH_INCLUDES
         DEFINES UNDEFINES COMPILE_OPTIONS ARCH_SOURCES
         ARCH_DEFINES ARCH_COMPILE_OPTIONS LINK_OPTIONS)
-    cmake_parse_arguments(ARG "" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
+    cmake_parse_arguments(ARG "${options}" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
 
     if((NOT ARG_SOURCES AND NOT ARG_CXX_SOURCES AND
         NOT ARG_OBJC_SOURCES AND NOT ARG_ASM_SOURCES AND
@@ -4097,9 +4112,9 @@ function(aros_add_custom_target)
     )
     set_target_properties(${ARG_MMAKE_ID} PROPERTIES
         OUTPUT_NAME "${_outname}"
-        RUNTIME_OUTPUT_DIRECTORY "${_moddir}"
-        LINKER_LANGUAGE C
-    )
+        RUNTIME_OUTPUT_DIRECTORY "${_moddir}")
+    _aros_set_module_linker_language("${ARG_MMAKE_ID}"
+        "${ARG_ALWAYS_CXX_LINK}")
     aros_gate_arch(${ARG_MMAKE_ID} "${ARG_DIRECTORY}")
     aros_apply_includes(${ARG_MMAKE_ID}
         MODULE_DIR "${ARG_DIRECTORY}"
@@ -4497,12 +4512,13 @@ endfunction()
 # that printer modules are suffixless. The 28 declarations in the tree use
 # mcc, resource, library, mcp, hook and printer.
 function(aros_add_module_simple)
+    set(options ALWAYS_CXX_LINK)
     set(oneValueArgs TARGET MMAKE_ID DIRECTORY MODTYPE INSTALL_DIR MODSUFFIX)
     set(multiValueArgs SOURCES CXX_SOURCES OBJC_SOURCES ASM_SOURCES
         LIBS USELIBS INCLUDES ARCH_INCLUDES
         DEFINES UNDEFINES COMPILE_OPTIONS ARCH_SOURCES
         ARCH_DEFINES ARCH_COMPILE_OPTIONS LINK_OPTIONS)
-    cmake_parse_arguments(ARG "" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
+    cmake_parse_arguments(ARG "${options}" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
 
     if((NOT ARG_SOURCES AND NOT ARG_CXX_SOURCES AND
         NOT ARG_OBJC_SOURCES AND NOT ARG_ASM_SOURCES AND
@@ -4591,9 +4607,9 @@ function(aros_add_module_simple)
         # Named after the mmake id, as every other module builder here does;
         # known duplicate modnames would otherwise produce duplicate rules.
         OUTPUT_NAME "${_output_name}"
-        RUNTIME_OUTPUT_DIRECTORY "${_install_dir}"
-        LINKER_LANGUAGE C
-    )
+        RUNTIME_OUTPUT_DIRECTORY "${_install_dir}")
+    _aros_set_module_linker_language("${ARG_MMAKE_ID}"
+        "${ARG_ALWAYS_CXX_LINK}")
     aros_gate_arch(${ARG_MMAKE_ID} "${ARG_DIRECTORY}")
     aros_apply_includes(${ARG_MMAKE_ID}
         MODULE_DIR "${ARG_DIRECTORY}"
