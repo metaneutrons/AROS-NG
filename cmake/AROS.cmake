@@ -873,8 +873,16 @@ function(aros_apply_flags target_name)
     endif()
 endfunction()
 
-# Helper to filter CMake keyword collisions in link libraries
-function(aros_link_libraries target_name)
+# Bind one complete MetaMake library list after all currently available target
+# names are known.  Keeping this separate from the public helper lets a
+# forward reference retain its original group and item order instead of
+# splitting the link line into "already declared" and "declared later"
+# fragments.
+function(_aros_bind_link_libraries target_name)
+    if(NOT TARGET "${target_name}")
+        return()
+    endif()
+
     set(CLEAN_LIBS "")
     set(_client_namespace_includes "")
     foreach(lib ${ARGN})
@@ -909,6 +917,77 @@ function(aros_link_libraries target_name)
         target_link_libraries(${target_name} PRIVATE
             --start-group ${CLEAN_LIBS} --end-group)
     endif()
+endfunction()
+
+# Helper to filter CMake keyword collisions in link libraries.  Generated
+# declarations are sorted for reproducibility, not dependency order, so a
+# consumer may legitimately precede its provider.  CMake's TARGET predicate is
+# false for that forward reference at the point the consumer macro runs.  Save
+# the complete invocation and bind it once every concrete declaration exists;
+# truly unknown names are still discarded by _aros_bind_link_libraries, as
+# they were before.
+function(aros_link_libraries target_name)
+    if(NOT TARGET "${target_name}")
+        return()
+    endif()
+
+    set(_has_forward_reference FALSE)
+    foreach(lib ${ARGN})
+        if(lib STREQUAL "debug" OR lib STREQUAL "optimized" OR
+           lib STREQUAL "general")
+            continue()
+        endif()
+        if(NOT TARGET "${lib}")
+            set(_has_forward_reference TRUE)
+            break()
+        endif()
+    endforeach()
+
+    if(NOT _has_forward_reference)
+        _aros_bind_link_libraries("${target_name}" ${ARGN})
+        return()
+    endif()
+
+    get_property(_serial GLOBAL PROPERTY AROS_DEFERRED_LINK_SERIAL)
+    if(NOT _serial)
+        set(_serial 0)
+    endif()
+    math(EXPR _serial "${_serial} + 1")
+    set_property(GLOBAL PROPERTY AROS_DEFERRED_LINK_SERIAL "${_serial}")
+    set_property(GLOBAL APPEND PROPERTY AROS_DEFERRED_LINK_IDS "${_serial}")
+    set_property(GLOBAL PROPERTY
+        "AROS_DEFERRED_LINK_${_serial}_TARGET" "${target_name}")
+    set_property(GLOBAL PROPERTY
+        "AROS_DEFERRED_LINK_${_serial}_LIBRARIES" "${ARGN}")
+
+    # The generated file finalises immediately after its concrete target
+    # section.  This directory-end fallback also covers hand-written callers
+    # which introduce another forward reference later in configuration.
+    cmake_language(DEFER CALL aros_finalize_link_libraries)
+endfunction()
+
+function(aros_finalize_link_libraries)
+    get_property(_ids GLOBAL PROPERTY AROS_DEFERRED_LINK_IDS)
+    if(NOT _ids)
+        return()
+    endif()
+
+    # Clear the queue before binding so this function is idempotent and a
+    # directory-end deferred call cannot replay an already applied link list.
+    set_property(GLOBAL PROPERTY AROS_DEFERRED_LINK_IDS "")
+    foreach(_id IN LISTS _ids)
+        get_property(_target GLOBAL PROPERTY
+            "AROS_DEFERRED_LINK_${_id}_TARGET")
+        get_property(_libraries GLOBAL PROPERTY
+            "AROS_DEFERRED_LINK_${_id}_LIBRARIES")
+        if(TARGET "${_target}")
+            _aros_bind_link_libraries("${_target}" ${_libraries})
+        endif()
+        set_property(GLOBAL PROPERTY
+            "AROS_DEFERRED_LINK_${_id}_TARGET" "")
+        set_property(GLOBAL PROPERTY
+            "AROS_DEFERRED_LINK_${_id}_LIBRARIES" "")
+    endforeach()
 endfunction()
 
 # Apply the graph-validated declaration-local USER_LDFLAGS snapshot. MetaMake
@@ -1342,6 +1421,121 @@ function(aros_fetch_archive)
     get_property(_all GLOBAL PROPERTY AROS_FETCH_TARGETS)
     list(APPEND _all "${FA_NAME}")
     set_property(GLOBAL PROPERTY AROS_FETCH_TARGETS "${_all}")
+endfunction()
+
+# aros_generate_defines_header(OWNER <mmake> OUTPUT <file>
+#                              DEFINES "<identifier> <literal>"...
+#                              [DEPENDS <make-source-files...>]
+#                              [CONSUMERS <compile-targets...>])
+#
+# Materialises the deliberately narrow literal `echo "#define ..."` recipe
+# shape accepted by the transpiler. The output is always a build product below
+# CMAKE_BINARY_DIR; no configure-time placeholder is created.
+function(aros_generate_defines_header)
+    set(oneValueArgs OWNER OUTPUT)
+    set(multiValueArgs DEFINES DEPENDS CONSUMERS)
+    cmake_parse_arguments(DH "" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
+
+    if(DH_UNPARSED_ARGUMENTS OR DH_KEYWORDS_MISSING_VALUES)
+        message(FATAL_ERROR
+            "aros_generate_defines_header received malformed arguments")
+    endif()
+    if(NOT DH_OWNER OR NOT DH_OUTPUT OR NOT DH_DEFINES)
+        message(FATAL_ERROR
+            "aros_generate_defines_header requires OWNER, OUTPUT and DEFINES")
+    endif()
+    if(TARGET "${DH_OWNER}")
+        message(FATAL_ERROR
+            "aros_generate_defines_header owner '${DH_OWNER}' was already declared")
+    endif()
+
+    cmake_path(ABSOLUTE_PATH CMAKE_BINARY_DIR
+        NORMALIZE OUTPUT_VARIABLE _binary_root)
+    cmake_path(ABSOLUTE_PATH DH_OUTPUT
+        BASE_DIRECTORY "${_binary_root}" NORMALIZE OUTPUT_VARIABLE _output)
+    cmake_path(IS_PREFIX _binary_root "${_output}" NORMALIZE _inside_build)
+    if(NOT _inside_build OR _output STREQUAL _binary_root)
+        message(FATAL_ERROR
+            "${DH_OWNER}: defines-header output escapes the build tree: ${_output}")
+    endif()
+
+    set(_define_names "")
+    foreach(_definition IN LISTS DH_DEFINES)
+        if(NOT _definition MATCHES
+           "^([A-Za-z_][A-Za-z0-9_]*) ([A-Za-z0-9_+.,:/<>=!&|%*~?@#^()-]+)$")
+            message(FATAL_ERROR
+                "${DH_OWNER}: invalid literal define payload: '${_definition}'")
+        endif()
+        set(_define_name "${CMAKE_MATCH_1}")
+        if(_define_name IN_LIST _define_names)
+            message(FATAL_ERROR
+                "${DH_OWNER}: duplicate literal define: ${_define_name}")
+        endif()
+        list(APPEND _define_names "${_define_name}")
+    endforeach()
+
+    string(SHA256 _output_key "${_output}")
+    get_property(_previous_owner GLOBAL PROPERTY
+        "AROS_DEFINE_HEADER_OWNER_${_output_key}")
+    if(_previous_owner AND NOT _previous_owner STREQUAL DH_OWNER)
+        message(FATAL_ERROR
+            "${DH_OWNER}: ${_output} is already owned by ${_previous_owner}")
+    endif()
+    set_property(GLOBAL PROPERTY
+        "AROS_DEFINE_HEADER_OWNER_${_output_key}" "${DH_OWNER}")
+
+    set(_dependencies "")
+    foreach(_dependency IN LISTS DH_DEPENDS)
+        cmake_path(ABSOLUTE_PATH _dependency
+            BASE_DIRECTORY "${CMAKE_SOURCE_DIR}"
+            NORMALIZE OUTPUT_VARIABLE _dependency_abs)
+        if(NOT EXISTS "${_dependency_abs}" OR IS_DIRECTORY "${_dependency_abs}")
+            message(FATAL_ERROR
+                "${DH_OWNER}: missing defines-header dependency ${_dependency_abs}")
+        endif()
+        list(APPEND _dependencies "${_dependency_abs}")
+    endforeach()
+    list(REMOVE_DUPLICATES _dependencies)
+    if(_dependencies)
+        set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+            ${_dependencies})
+    endif()
+
+    set(_writer "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/WriteDefinesHeader.cmake")
+    get_filename_component(_output_dir "${_output}" DIRECTORY)
+    add_custom_command(
+        OUTPUT "${_output}"
+        COMMAND "${CMAKE_COMMAND}" -E make_directory "${_output_dir}"
+        COMMAND "${CMAKE_COMMAND}"
+            "-DBINARY_ROOT=${_binary_root}"
+            "-DOUTPUT=${_output}"
+            "-DDEFINES=${DH_DEFINES}"
+            -P "${_writer}"
+        # The standalone writer preserves mtime when contents are identical.
+        # A build rule must nevertheless make its declared OUTPUT newer than
+        # a changed dependency, otherwise Makefile generators rerun forever.
+        COMMAND "${CMAKE_COMMAND}" -E touch "${_output}"
+        DEPENDS "${_writer}" ${_dependencies}
+        COMMENT "Generating literal defines header ${_output}"
+        VERBATIM)
+    add_custom_target("${DH_OWNER}" DEPENDS "${_output}")
+
+    list(REMOVE_DUPLICATES DH_CONSUMERS)
+    foreach(_consumer IN LISTS DH_CONSUMERS)
+        if(NOT TARGET "${_consumer}")
+            message(FATAL_ERROR
+                "${DH_OWNER}: missing defines-header consumer ${_consumer}")
+        endif()
+        get_target_property(_consumer_type "${_consumer}" TYPE)
+        if(_consumer_type STREQUAL "UTILITY")
+            message(FATAL_ERROR
+                "${DH_OWNER}: defines-header consumer ${_consumer} does not compile")
+        endif()
+        if(NOT _consumer STREQUAL DH_OWNER)
+            add_dependencies("${_consumer}" "${DH_OWNER}")
+        endif()
+        target_include_directories("${_consumer}" BEFORE PRIVATE "${_output_dir}")
+    endforeach()
 endfunction()
 
 # aros_transform_header(NAME <mmake> INPUT <file> OUTPUT <file>
