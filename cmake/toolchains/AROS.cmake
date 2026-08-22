@@ -145,6 +145,14 @@ if(NOT _aros_builtins_archives)
     message(FATAL_ERROR
         "AROS toolchain ${_aros_profile} lacks compiler-rt builtins for ${_aros_builtins}")
 endif()
+list(SORT _aros_builtins_archives)
+list(LENGTH _aros_builtins_archives _aros_builtins_archive_count)
+if(NOT _aros_builtins_archive_count EQUAL 1)
+    message(FATAL_ERROR
+        "AROS toolchain ${_aros_profile} has an ambiguous compiler-rt builtins "
+        "selection for ${_aros_builtins}: ${_aros_builtins_archives}")
+endif()
+list(GET _aros_builtins_archives 0 _aros_builtins_archive)
 if(AROS_TARGET_CPU STREQUAL "x86_64")
     file(GLOB _aros_i386_builtins
         "${_aros_cross_root}/lib/clang/*/lib/aros/libclang_rt.builtins-i386.a")
@@ -153,6 +161,21 @@ if(AROS_TARGET_CPU STREQUAL "x86_64")
             "AROS x86_64 release toolchain lacks its i386 compiler-rt companion")
     endif()
 endif()
+
+# A release prefix intentionally ships only the C++ runtime needed by an
+# external CMake consumer.  Its locked direct-ld.lld partial links use this
+# exact, prefix-owned archive set.  Keep absolute archive names here, after
+# validating them once, so the consumer cannot resolve a host library through
+# a search path by accident.
+set(AROS_CROSS_TOOLCHAIN_BUILTINS_ARCHIVE "${_aros_builtins_archive}"
+    CACHE FILEPATH "Prefix-owned compiler-rt archive for locked C++ links" FORCE)
+set(AROS_CROSS_TOOLCHAIN_CXX_RUNTIME_LIBRARIES
+    "${_aros_cross_root}/lib/libc++.a"
+    "${_aros_cross_root}/lib/libc++abi.a"
+    "${_aros_cross_root}/lib/libunwind.a"
+    "${_aros_builtins_archive}"
+    CACHE INTERNAL
+    "Prefix-owned C++ runtime archives for locked AROS partial links" FORCE)
 
 set(CMAKE_SYSTEM_NAME Generic)
 set(CMAKE_SYSTEM_PROCESSOR "${AROS_TARGET_CPU}")

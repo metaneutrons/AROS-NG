@@ -29,5 +29,25 @@ foreach(_mode IN ITEMS development locked)
     endif()
 endforeach()
 
+# The locked fixture deliberately uses its host compiler for this small C
+# object, after checking the exact direct-link template separately. Building
+# it proves that the linker-visible sysroot file is a concrete output,
+# not just a dependency-only placeholder.
+execute_process(
+    COMMAND "${CMAKE_COMMAND}" --build "${_build}-locked"
+        --target aros-cxx-startup
+    RESULT_VARIABLE _startup_result
+    OUTPUT_VARIABLE _startup_stdout
+    ERROR_VARIABLE _startup_stderr)
+if(NOT _startup_result EQUAL 0)
+    message(FATAL_ERROR
+        "always-cxx-link locked cxx-startup build failed (${_startup_result})\n"
+        "${_startup_stdout}\n${_startup_stderr}")
+endif()
+if(NOT EXISTS "${_build}-locked/SYS/Developer/lib/cxx-startup.o")
+    message(FATAL_ERROR
+        "always-cxx-link locked fixture did not publish Developer/lib/cxx-startup.o")
+endif()
+
 file(REMOVE_RECURSE "${_build}-development" "${_build}-locked")
 message(STATUS "always C++ linker contract test passed")

@@ -68,6 +68,7 @@ foreach(_profile IN LISTS _profiles)
             "-DAROS_TARGET_PLATFORM=${_platform}"
             "-DEXPECTED_PROFILE=${_name}"
             "-DEXPECTED_TRIPLE=${_triple}"
+            "-DEXPECTED_BUILTINS=${_builtins}"
         RESULT_VARIABLE _result
         OUTPUT_VARIABLE _stdout
         ERROR_VARIABLE _stderr)

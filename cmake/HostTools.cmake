@@ -84,27 +84,69 @@ foreach(f IN LISTS _flexcat_all)
 endforeach()
 list(APPEND _flexcat_srcs "${CMAKE_SOURCE_DIR}/cmake/hosttools/flexcat_getft.c")
 
+# FlexCat is a host executable, so probe iconv with exactly the compiler that
+# will build it rather than using CMake's target-side checks.  glibc supplies
+# iconv from libc, while Apple's SDK requires an explicit -liconv.  Trying the
+# unadorned host link first also keeps standalone libiconv hosts supported.
+set(_flexcat_iconv_probe_source
+    "${AROS_HOST_TOOL_DIR}/flexcat-iconv-probe.c")
+set(_flexcat_iconv_probe_binary
+    "${AROS_HOST_TOOL_DIR}/flexcat-iconv-probe")
+file(WRITE "${_flexcat_iconv_probe_source}" [=[
+#include <iconv.h>
+
+int main(void)
+{
+    return iconv_open("UTF-8", "UTF-8") == (iconv_t)-1;
+}
+]=])
+execute_process(
+    COMMAND "${AROS_HOST_CC}" "${_flexcat_iconv_probe_source}"
+            -o "${_flexcat_iconv_probe_binary}"
+    RESULT_VARIABLE _flexcat_iconv_without_library_result
+    ERROR_VARIABLE _flexcat_iconv_without_library_error
+    OUTPUT_QUIET)
+set(_flexcat_iconv_ldflags "")
+if(NOT _flexcat_iconv_without_library_result EQUAL 0)
+    execute_process(
+        COMMAND "${AROS_HOST_CC}" "${_flexcat_iconv_probe_source}"
+                -liconv -o "${_flexcat_iconv_probe_binary}"
+        RESULT_VARIABLE _flexcat_iconv_with_library_result
+        ERROR_VARIABLE _flexcat_iconv_with_library_error
+        OUTPUT_QUIET)
+    if(NOT _flexcat_iconv_with_library_result EQUAL 0)
+        message(FATAL_ERROR
+            "AROS-NG: host FlexCat requires iconv, but ${AROS_HOST_CC} could "
+            "not link it either from the default host runtime or with -liconv.\n"
+            "Without -liconv:\n${_flexcat_iconv_without_library_error}\n"
+            "With -liconv:\n${_flexcat_iconv_with_library_error}")
+    endif()
+    set(_flexcat_iconv_ldflags -liconv)
+endif()
+
 aros_host_tool(NAME flexcat
     SOURCES ${_flexcat_srcs}
     DEFINES _GNU_SOURCE NO_INLINE_STDARG
     INCLUDES "${CMAKE_SOURCE_DIR}/tools/flexcat/src"
-    LIBS iconv)
+    RAW_LDFLAGS ${_flexcat_iconv_ldflags})
 
 # aros_build_catalogs(
 #     MMAKE_ID <id> NAME <catalog-name> SUBDIR <installed-subdirectory>
 #     DIRECTORY <declaring-directory> SOURCE_DIR <cd/ct-directory>
 #     DESTINATION <catalog-root> DESCRIPTION <cd-basename-or-path>
 #     SOURCE_DESCRIPTION <sd-basename-or-path>
-#     LANGUAGES <language>... [SOURCE <generated-source-path>])
+#     LANGUAGES <language>... [SOURCE <generated-source-path>]
+#     [CONSUMERS <compiled-target>...])
 #
 # One real output is declared for every translated catalog. SOURCE is optional;
 # when relative, it is rooted below the declaring directory's generated-tree
-# mirror. No output or parent directory is fabricated at configure time.
+# mirror. CONSUMERS are exact compiled targets whose source files include that
+# rehomed generated source/header.
 function(aros_build_catalogs)
     set(oneValueArgs
         MMAKE_ID NAME SUBDIR DIRECTORY SOURCE_DIR DESTINATION DESCRIPTION
         SOURCE SOURCE_DESCRIPTION)
-    set(multiValueArgs LANGUAGES)
+    set(multiValueArgs LANGUAGES CONSUMERS)
     cmake_parse_arguments(CAT "" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
 
     if(CAT_UNPARSED_ARGUMENTS OR CAT_KEYWORDS_MISSING_VALUES)
@@ -123,6 +165,10 @@ function(aros_build_catalogs)
     if(NOT CAT_LANGUAGES)
         message(FATAL_ERROR
             "aros_build_catalogs: LANGUAGES must contain at least one language")
+    endif()
+    if(CAT_CONSUMERS AND (NOT DEFINED CAT_SOURCE OR CAT_SOURCE STREQUAL ""))
+        message(FATAL_ERROR
+            "aros_build_catalogs: CONSUMERS requires SOURCE")
     endif()
     if(CAT_NAME MATCHES "[/\\\\]" OR CAT_NAME STREQUAL "." OR CAT_NAME STREQUAL "..")
         message(FATAL_ERROR
@@ -296,6 +342,32 @@ function(aros_build_catalogs)
             set_property(GLOBAL APPEND PROPERTY AROS_CATALOG_OUTPUTS
                 "${_source_output}")
         endif()
+        set(_source_helper "aros-catalog-source-${_source_hash}")
+        if(NOT TARGET "${_source_helper}")
+            add_custom_target("${_source_helper}" DEPENDS "${_source_output}")
+        endif()
+
+        # The legacy recipe creates SOURCE beside the consumer's .c file. The
+        # CMake build deliberately rehomes it beneath gen/, so make that mirror
+        # visible only to the concrete targets that actually compile from the
+        # same source directory. -iquote preserves the original quoted-header
+        # lookup without leaking a generated strings.h into SDK/system lookup.
+        list(REMOVE_DUPLICATES CAT_CONSUMERS)
+        foreach(_consumer IN LISTS CAT_CONSUMERS)
+            if(NOT TARGET "${_consumer}")
+                message(FATAL_ERROR
+                    "aros_build_catalogs: SOURCE consumer is not a target: ${_consumer}")
+            endif()
+            get_target_property(_consumer_type "${_consumer}" TYPE)
+            if(NOT _consumer_type MATCHES
+                    "^(EXECUTABLE|STATIC_LIBRARY|SHARED_LIBRARY|MODULE_LIBRARY|OBJECT_LIBRARY)$")
+                message(FATAL_ERROR
+                    "aros_build_catalogs: SOURCE consumer is not compilable: ${_consumer}")
+            endif()
+            add_dependencies("${_consumer}" "${_source_helper}")
+            target_compile_options("${_consumer}" BEFORE PRIVATE
+                "-iquote${_source_output_dir}")
+        endforeach()
         list(APPEND _outputs "${_source_output}")
     endif()
 

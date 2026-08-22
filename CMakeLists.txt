@@ -14,6 +14,17 @@ project(AROS-NG
     LANGUAGES C CXX ASM
 )
 
+# The build graph is generated and its SDK is bootstrapped by two Rust host
+# tools.  Keep their location configurable for aros-cli managed releases, but
+# never silently continue with an incomplete graph when either is absent.
+set(AROS_RUST_TOOLS_DIR
+    "${CMAKE_SOURCE_DIR}/tools/aros-tools/target/release"
+    CACHE PATH "Directory containing the required AROS Rust host tools")
+set(AROS_GENMODULE_BIN "${AROS_RUST_TOOLS_DIR}/aros-genmodule"
+    CACHE FILEPATH "Rust aros-genmodule executable used to bootstrap the SDK")
+set(AROS_TRANSPILER_BIN "${AROS_RUST_TOOLS_DIR}/aros-transpiler"
+    CACHE FILEPATH "Rust aros-transpiler executable used to generate the build graph")
+
 include("${CMAKE_SOURCE_DIR}/cmake/ToolchainIdentity.cmake")
 aros_lock_build_tree_toolchain()
 
@@ -85,6 +96,7 @@ include("${CMAKE_SOURCE_DIR}/cmake/AROS.cmake")
 
 # 3. Tools that run on the build machine, and the header rules using them.
 include("${CMAKE_SOURCE_DIR}/cmake/HostTools.cmake")
+include("${CMAKE_SOURCE_DIR}/cmake/FlexCatSources.cmake")
 
 # AHI is admitted only for the three audited LLVM target profiles.  Its
 # configure-style build needs the historical Perl SFD compiler, which is
@@ -125,91 +137,189 @@ include("${CMAKE_SOURCE_DIR}/cmake/Icons.cmake")
 include("${CMAKE_SOURCE_DIR}/cmake/GeneratedHeaders.cmake")
 
 # 4. Dynamic Target Transpilation
-set(TRANSPILER_BIN "${CMAKE_SOURCE_DIR}/tools/aros-tools/target/release/aros-transpiler")
+set(TRANSPILER_BIN "${AROS_TRANSPILER_BIN}")
 set(GENERATED_TARGETS_CMAKE "${CMAKE_BINARY_DIR}/generated_targets.cmake")
 
-if(EXISTS "${TRANSPILER_BIN}")
-    message(STATUS "⚡ AROS-NG: Running Rust aros-transpiler on mmakefile tree...")
-    if(AROS_ENABLE_MMU)
-        set(_aros_transpiler_use_mmu "1")
-    else()
-        set(_aros_transpiler_use_mmu "0")
+if(NOT EXISTS "${TRANSPILER_BIN}" OR IS_DIRECTORY "${TRANSPILER_BIN}" OR
+   NOT IS_EXECUTABLE "${TRANSPILER_BIN}")
+    message(FATAL_ERROR
+        "AROS-NG requires the executable Rust transpiler at ${TRANSPILER_BIN}. "
+        "Build it with `cargo build --release -p aros-transpiler -p aros-genmodule` "
+        "in tools/aros-tools, or set AROS_RUST_TOOLS_DIR / AROS_TRANSPILER_BIN.")
+endif()
+
+message(STATUS "⚡ AROS-NG: Running Rust aros-transpiler on mmakefile tree...")
+if(AROS_ENABLE_MMU)
+    set(_aros_transpiler_use_mmu "1")
+else()
+    set(_aros_transpiler_use_mmu "0")
+endif()
+execute_process(
+    COMMAND "${TRANSPILER_BIN}"
+            "--source-dir" "${CMAKE_SOURCE_DIR}"
+            "--output" "${GENERATED_TARGETS_CMAKE}"
+            "--cpu" "${AROS_TARGET_CPU}"
+            "--platform" "${AROS_TARGET_PLATFORM}"
+            "--family" "${AROS_TARGET_FAMILY}"
+            "--variant" "${AROS_TARGET_VARIANT}"
+            "--toolchain" "${AROS_TOOLCHAIN}"
+            "--cpu32" "${AROS_TARGET_CPU32}"
+            "--use-mmu" "${_aros_transpiler_use_mmu}"
+            "--float-abi" "${GCC_CONFIG_FLOAT_ABI}"
+    RESULT_VARIABLE TRANSPILER_RES
+    ERROR_VARIABLE _aros_transpiler_error
+)
+if(NOT TRANSPILER_RES EQUAL 0 OR NOT EXISTS "${GENERATED_TARGETS_CMAKE}")
+    message(FATAL_ERROR
+        "AROS-NG transpiler failed (${TRANSPILER_RES}) and did not produce "
+        "${GENERATED_TARGETS_CMAKE}.\n${_aros_transpiler_error}")
+endif()
+include("${GENERATED_TARGETS_CMAKE}")
+
+# compiler/startup's raw object rules are outside the generated declarations.
+# Locked C++ partial links explicitly consume cxx-startup.o, so make the
+# historic aggregate publish that concrete sysroot object as well.
+if(AROS_CROSS_TOOLCHAIN_ROOT)
+    aros_bind_cxx_startup_target("linklibs-startup")
+endif()
+
+# The universal SDK deliberately exposes hostlib.resource's public API even
+# when the selected runtime is not a hosted one. `rom/mmakefile.src` puts this
+# exact includes target in `includes-generate`; without it, WinDebug and other
+# source-tree consumers encounter a missing proto/hostlib.h long after the
+# relevant generated-header rule was discarded by architecture filtering.
+if(TARGET "includes-generate")
+    if(NOT TARGET "kernel-hostlib-includes")
+        add_custom_target("kernel-hostlib-includes")
     endif()
-    execute_process(
-        COMMAND "${TRANSPILER_BIN}"
-                "--source-dir" "${CMAKE_SOURCE_DIR}"
-                "--output" "${GENERATED_TARGETS_CMAKE}"
-                "--cpu" "${AROS_TARGET_CPU}"
-                "--platform" "${AROS_TARGET_PLATFORM}"
-                "--family" "${AROS_TARGET_FAMILY}"
-                "--variant" "${AROS_TARGET_VARIANT}"
-                "--toolchain" "${AROS_TOOLCHAIN}"
-                "--cpu32" "${AROS_TARGET_CPU32}"
-                "--use-mmu" "${_aros_transpiler_use_mmu}"
-                "--float-abi" "${GCC_CONFIG_FLOAT_ABI}"
-        RESULT_VARIABLE TRANSPILER_RES
-    )
-    if(TRANSPILER_RES EQUAL 0 AND EXISTS "${GENERATED_TARGETS_CMAKE}")
-        include("${GENERATED_TARGETS_CMAKE}")
+    aros_materialize_genmodule_headers(
+        NAME kernel-hostlib-includes-generated
+        OWNER kernel-hostlib-includes
+        CONFIG "arch/all-hosted/hostlib/hostlib.conf"
+        MODULE hostlib
+        MODTYPE resource
+        INCLUDE_NAME hostlib)
+    aros_add_target_dependency("includes-generate" "kernel-hostlib-includes")
+    _aros_register_genmodule_public_includes("kernel-hostlib-includes")
+endif()
 
-        # icon.library and Wanderer's private Icon MUI class share a .conf
-        # stem. BootstrapSDK intentionally withholds ambiguous shared headers;
-        # the legacy `includes` closure selects icon.library for linklibs-amiga.
-        # Materialise that exact declaration as the real producer rather than
-        # letting configure-time traversal order decide the SDK API.
-        if(TARGET "workbench-libs-icon-includes")
-            aros_materialize_genmodule_headers(
-                NAME workbench-libs-icon-includes-generated
-                OWNER workbench-libs-icon-includes
-                CONFIG "${CMAKE_SOURCE_DIR}/workbench/libs/icon/icon.conf"
-                MODULE icon
-                MODTYPE library
-                INCLUDE_NAME icon)
-        endif()
+# icon.library and Wanderer's private Icon MUI class share a .conf stem.
+# BootstrapSDK intentionally withholds ambiguous shared headers; the legacy
+# `includes` closure selects icon.library for linklibs-amiga. Materialise that
+# exact declaration as the real producer rather than letting configure-time
+# traversal order decide the SDK API.
+if(TARGET "workbench-libs-icon-includes")
+    aros_materialize_genmodule_headers(
+        NAME workbench-libs-icon-includes-generated
+        OWNER workbench-libs-icon-includes
+        CONFIG "${CMAKE_SOURCE_DIR}/workbench/libs/icon/icon.conf"
+        MODULE icon
+        MODTYPE library
+        INCLUDE_NAME icon)
+endif()
 
-        # libpng's historical build rewrites a fetched prebuilt header before
-        # linklibs-png-nostdio compiles.  It is a real SDK-only output rather
-        # than a configure-time placeholder, so retain its fetch ordering.
-        if(TARGET "libpng-fetch" OR TARGET "workbench-libs-png-generated")
-            if(NOT TARGET "libpng-fetch" OR
-               NOT TARGET "workbench-libs-png-generated")
-                message(FATAL_ERROR
-                    "libpng pnglibconf staging requires both generated targets")
-            endif()
-            include("${CMAKE_SOURCE_DIR}/cmake/PngLibconf.cmake")
-            aros_stage_pnglibconf(
-                NAME workbench-libs-png-generated-pnglibconf
-                FETCH_TARGET libpng-fetch
-                OWNER workbench-libs-png-generated
-                PORTS_DIR "${AROS_PORTS_DIR}"
-                SDK_INCLUDE_DIR "${AROS_SDK_INCLUDE_DIR}")
-        endif()
-
-        # The GRUB2 host-tool lanes above produce the real BIOS and EFI
-        # generators, but the historic ISO recipe's asset staging is a
-        # separate, output-producing step.  Materialise it only for its one
-        # audited x86_64-pc LLVM profile, after the generated declarations
-        # have created all three concrete host-lane targets.
-        if(AROS_TOOLCHAIN STREQUAL "llvm" AND
-           AROS_TARGET_CPU STREQUAL "x86_64" AND
-           AROS_TARGET_PLATFORM STREQUAL "pc")
-            foreach(_aros_grub_host_lane IN ITEMS
-                    grub2-host grub2-efi-host grub2-efi32-host)
-                if(NOT TARGET "${_aros_grub_host_lane}")
-                    message(FATAL_ERROR
-                        "GRUB2 ISO asset staging requires ${_aros_grub_host_lane}")
-                endif()
-            endforeach()
-            include("${CMAKE_SOURCE_DIR}/cmake/GrubIsoAssets.cmake")
-            aros_stage_grub2_iso_assets(
-                MODE x86_64
-                BINARY_DIR "${CMAKE_BINARY_DIR}/gen/grub2-iso-assets/x86_64"
-                SYS_DIR "${CMAKE_BINARY_DIR}/SYS"
-                HOST_PC "${CMAKE_BINARY_DIR}/hosttools/grub2/pc"
-                HOST_EFI64 "${CMAKE_BINARY_DIR}/hosttools/grub2/efi-x86_64"
-                HOST_EFI32 "${CMAKE_BINARY_DIR}/hosttools/grub2/efi-i386")
-        endif()
+# libpng's historical build rewrites a fetched prebuilt header before
+# linklibs-png-nostdio compiles. It is a real SDK-only output rather than a
+# configure-time placeholder, so retain its fetch ordering.
+if(TARGET "libpng-fetch" OR TARGET "workbench-libs-png-generated")
+    if(NOT TARGET "libpng-fetch" OR
+       NOT TARGET "workbench-libs-png-generated")
+        message(FATAL_ERROR
+            "libpng pnglibconf staging requires both generated targets")
     endif()
+    include("${CMAKE_SOURCE_DIR}/cmake/PngLibconf.cmake")
+    aros_stage_pnglibconf(
+        NAME workbench-libs-png-generated-pnglibconf
+        FETCH_TARGET libpng-fetch
+        OWNER workbench-libs-png-generated
+        PORTS_DIR "${AROS_PORTS_DIR}"
+        SDK_INCLUDE_DIR "${AROS_SDK_INCLUDE_DIR}")
+endif()
+
+# FreeType publishes its ordinary SDK headers via %copy_includes, but replaces
+# ftoption.h with the target's configuration before the aggregate `includes`
+# target can satisfy any FreeType consumer.  Keep the historic generated
+# header as a fetch-dependent output; using the port source as an include path
+# would accidentally expose FreeType's unconfigured defaults.
+if(TARGET "freetype2-fetch" OR TARGET "workbench-libs-freetype-genincludes")
+    if(NOT TARGET "freetype2-fetch" OR
+       NOT TARGET "workbench-libs-freetype-genincludes")
+        message(FATAL_ERROR
+            "FreeType option staging requires both generated targets")
+    endif()
+    include("${CMAKE_SOURCE_DIR}/cmake/FreetypeOptions.cmake")
+    aros_stage_freetype_options(
+        NAME workbench-libs-freetype-genincludes-ftoption
+        FETCH_TARGET freetype2-fetch
+        OWNER workbench-libs-freetype-genincludes
+        INPUT "${AROS_PORTS_DIR}/freetype2/freetype-2.14.3/include/freetype/config/ftoption.h"
+        OUTPUT "${AROS_SDK_INCLUDE_DIR}/freetype/config/ftoption.h")
+endif()
+
+# libde265 and libheif both configure private version headers after fetching
+# their immutable ports.  The generated `*-genfiles` meta targets are only
+# aggregate identities; make their real headers explicit so direct CMake/Ninja
+# consumers cannot race the port fetch or compile against an absent template
+# output.
+if(TARGET "linklibs-de265-fetch" OR
+   TARGET "datatypes-heic-linklibs-de265-genfiles")
+    if(NOT TARGET "linklibs-de265-fetch" OR
+       NOT TARGET "datatypes-heic-linklibs-de265-genfiles")
+        message(FATAL_ERROR
+            "libde265 version-header staging requires its fetch and genfiles targets")
+    endif()
+    include("${CMAKE_SOURCE_DIR}/cmake/HeicVersionHeaders.cmake")
+    aros_stage_heic_version_header(
+        NAME datatypes-heic-linklibs-de265-version-header
+        FETCH_TARGET linklibs-de265-fetch
+        OWNER datatypes-heic-linklibs-de265-genfiles
+        KIND DE265
+        INPUT "${AROS_PORTS_DIR}/libde265/libde265-1.1.1/libde265/de265-version.h.in"
+        OUTPUT "${AROS_GEN_DIR}/workbench/classes/datatypes/heic/libde265/de265-version.h")
+endif()
+
+if(TARGET "linklibs-heif-fetch" OR
+   TARGET "datatypes-heic-linklibs-heif-genfiles")
+    if(NOT TARGET "linklibs-heif-fetch" OR
+       NOT TARGET "datatypes-heic-linklibs-heif-genfiles")
+        message(FATAL_ERROR
+            "libheif version-header staging requires its fetch and genfiles targets")
+    endif()
+    include("${CMAKE_SOURCE_DIR}/cmake/HeicVersionHeaders.cmake")
+    aros_stage_heic_version_header(
+        NAME datatypes-heic-linklibs-heif-version-header
+        FETCH_TARGET linklibs-heif-fetch
+        OWNER datatypes-heic-linklibs-heif-genfiles
+        KIND HEIF
+        INPUT "${AROS_PORTS_DIR}/libheif/libheif-1.23.1/libheif/api/libheif/heif_version.h.in"
+        OUTPUT "${AROS_GEN_DIR}/workbench/classes/datatypes/heic/libheif/heif_version.h")
+endif()
+
+# The GRUB2 host-tool lanes above produce the real BIOS and EFI generators,
+# but the historic ISO recipe's asset staging is a separate, output-producing
+# step. Materialise it only for its one audited x86_64-pc LLVM profile, and
+# only on the host capability that actually implements the closed GRUB
+# contract, after the generated declarations have created all three concrete
+# host-lane targets.
+if(AROS_TOOLCHAIN STREQUAL "llvm" AND
+   AROS_TARGET_CPU STREQUAL "x86_64" AND
+   AROS_TARGET_PLATFORM STREQUAL "pc" AND
+   AROS_GRUB2_HOST_LANES_AVAILABLE)
+    foreach(_aros_grub_host_lane IN ITEMS
+            grub2-host grub2-efi-host grub2-efi32-host)
+        if(NOT TARGET "${_aros_grub_host_lane}")
+            message(FATAL_ERROR
+                "GRUB2 ISO asset staging requires ${_aros_grub_host_lane}")
+        endif()
+    endforeach()
+    include("${CMAKE_SOURCE_DIR}/cmake/GrubIsoAssets.cmake")
+    aros_stage_grub2_iso_assets(
+        MODE x86_64
+        BINARY_DIR "${CMAKE_BINARY_DIR}/gen/grub2-iso-assets/x86_64"
+        SYS_DIR "${CMAKE_BINARY_DIR}/SYS"
+        HOST_PC "${CMAKE_BINARY_DIR}/hosttools/grub2/pc"
+        HOST_EFI64 "${CMAKE_BINARY_DIR}/hosttools/grub2/efi-x86_64"
+        HOST_EFI32 "${CMAKE_BINARY_DIR}/hosttools/grub2/efi-i386")
 endif()
 
 # 4a. Configure-time diagnostics accumulated by the CMake target helpers. The

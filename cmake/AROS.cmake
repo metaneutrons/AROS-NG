@@ -81,10 +81,15 @@ set(AROS_DEVELOPER_LIB_DIR "${AROS_DEVELOPER_DIR}/lib")
 set(AROS_DEVELOPER_SDK_DIR "${AROS_DEVELOPER_DIR}/SDK")
 set(AROS_DEVELOPER_FD_DIR "${AROS_DEVELOPER_SDK_DIR}/fd")
 
+# genmodule keeps module-private headers outside the shared SDK tree.  This is
+# an output-root contract for later generated-file rules as well, so establish
+# it in directory scope rather than only inside the bootstrap helper.
+set(AROS_GEN_DIR "${CMAKE_BINARY_DIR}/gen")
+
 # Release compilers intentionally have no producer build directory embedded as
 # DEFAULT_SYSROOT.  Match config/features.in's external-toolchain contract:
 # every consumer supplies its own Developer tree explicitly.  This path also
-# provides cxx-startup.o to the patched AROS clang++ partial-link driver.
+# provides cxx-startup.o to the locked direct-ld.lld C++ partial link.
 set(AROS_TARGET_SYSROOT "${AROS_DEVELOPER_DIR}")
 
 file(MAKE_DIRECTORY
@@ -107,6 +112,40 @@ file(MAKE_DIRECTORY
 
 # Bootstrap SDK Includes
 aros_bootstrap_sdk_includes()
+
+# AROS' normal clang++ driver adds this object to C++ links.  Locked CMake
+# consumers deliberately use the prefix-owned ld.lld directly, so the
+# transpiled graph must publish and name that equivalent input explicitly.
+# The historic make graph produces it under AROS_LIB, but the CMake graph has
+# no concrete owner for compiler/startup's raw object rules.  Its source is
+# deliberately located relative to this module so the focused CMake fixture
+# exercises the real source rather than maintaining a copy.
+if(AROS_CROSS_TOOLCHAIN_ROOT)
+    set(_aros_cxx_startup_source
+        "${CMAKE_CURRENT_LIST_DIR}/../compiler/startup/cxx-startup.c")
+    if(NOT EXISTS "${_aros_cxx_startup_source}")
+        message(FATAL_ERROR
+            "Locked AROS C++ consumer cannot find cxx-startup source: "
+            "${_aros_cxx_startup_source}")
+    endif()
+    set(_aros_cxx_startup_output "${AROS_DEVELOPER_LIB_DIR}/cxx-startup.o")
+    add_library(aros-cxx-startup-objects OBJECT EXCLUDE_FROM_ALL
+        "${_aros_cxx_startup_source}")
+    set_target_properties(aros-cxx-startup-objects PROPERTIES
+        POSITION_INDEPENDENT_CODE OFF)
+    add_custom_command(
+        OUTPUT "${_aros_cxx_startup_output}"
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+            "$<TARGET_OBJECTS:aros-cxx-startup-objects>"
+            "${_aros_cxx_startup_output}"
+        DEPENDS "$<TARGET_OBJECTS:aros-cxx-startup-objects>"
+        COMMENT "Publishing cxx-startup.o for locked AROS C++ partial links"
+        COMMAND_EXPAND_LISTS
+        VERBATIM)
+    add_custom_target(aros-cxx-startup DEPENDS "${_aros_cxx_startup_output}")
+    add_dependencies(aros-cxx-startup aros-cxx-startup-objects)
+    set(AROS_CXX_STARTUP_TARGET "aros-cxx-startup")
+endif()
 
 # AppleClang does not ship the ELF utilities needed by target archives, AHI
 # and GRUB. Direct preset builds may discover a complete LLVM installation;
@@ -179,11 +218,39 @@ if(AROS_LLD_BIN)
     set(CMAKE_C_CREATE_SHARED_MODULE
         "${AROS_LLD_BIN} -r --sysroot=\"${AROS_TARGET_SYSROOT}\" <LINK_FLAGS> <OBJECTS> -o <TARGET> <LINK_LIBRARIES>")
     if(AROS_CROSS_TOOLCHAIN_ROOT)
-        # `alwayscxxlink=yes` is a real upstream ABI contract. Route those
-        # partial links through the patched AROS clang++ driver so it selects
-        # libc++, libc++abi and libunwind from the release prefix.
+        if(NOT AROS_CROSS_TOOLCHAIN_CXX_RUNTIME_LIBRARIES)
+            message(FATAL_ERROR
+                "Locked AROS C++ links require the validated prefix runtime list from "
+                "cmake/toolchains/AROS.cmake")
+        endif()
+        list(LENGTH AROS_CROSS_TOOLCHAIN_CXX_RUNTIME_LIBRARIES
+            _aros_cxx_runtime_library_count)
+        if(NOT _aros_cxx_runtime_library_count EQUAL 4)
+            message(FATAL_ERROR
+                "Locked AROS C++ links require exactly libc++, libc++abi, libunwind "
+                "and compiler-rt from the release prefix")
+        endif()
+        set(_aros_cxx_runtime_link_args "")
+        foreach(_aros_cxx_runtime_library
+                IN LISTS AROS_CROSS_TOOLCHAIN_CXX_RUNTIME_LIBRARIES)
+            if(NOT IS_ABSOLUTE "${_aros_cxx_runtime_library}")
+                message(FATAL_ERROR
+                    "Locked AROS C++ runtime archive is not an absolute prefix path: "
+                    "${_aros_cxx_runtime_library}")
+            endif()
+            string(APPEND _aros_cxx_runtime_link_args
+                " \"${_aros_cxx_runtime_library}\"")
+        endforeach()
+
+        # `alwayscxxlink=yes` is a real upstream ABI contract.  Link locked
+        # C++ modules through the prefix-owned lld directly instead of the
+        # AROS clang++ driver: that driver delegates to collect-aros, whose
+        # build-local configuration is intentionally absent from relocatable
+        # release prefixes.  Name cxx-startup.o and the four validated runtime
+        # archives explicitly, so this partial link has neither driver defaults
+        # nor host-PATH resolution.
         set(_aros_cxx_partial_link
-            "<CMAKE_CXX_COMPILER> --target=${AROS_TARGET_TRIPLE} --sysroot=\"${AROS_TARGET_SYSROOT}\" <FLAGS> <CMAKE_CXX_LINK_FLAGS> <LINK_FLAGS> -nostartfiles -r <OBJECTS> -o <TARGET> <LINK_LIBRARIES>")
+            "${AROS_LLD_BIN} -r --sysroot=\"${AROS_TARGET_SYSROOT}\" <LINK_FLAGS> \"${_aros_cxx_startup_output}\" <OBJECTS> -o <TARGET> <LINK_LIBRARIES> --start-group${_aros_cxx_runtime_link_args} --end-group")
         set(CMAKE_CXX_LINK_EXECUTABLE "${_aros_cxx_partial_link}")
         set(CMAKE_CXX_CREATE_SHARED_MODULE "${_aros_cxx_partial_link}")
     else()
@@ -309,7 +376,8 @@ set(_AROS_DEFERRED_HEADER_REPORT
 file(REMOVE "${_AROS_DEFERRED_HEADER_REPORT}")
 
 # aros_copy_includes([NAME <mmake>] DEST <subdir> SOURCE <src-relative dir>
-#                    PATTERNS <globs...> [FLATTEN])
+#                    PATTERNS <globs...> [EXCLUDES <literal names...>]
+#                    [FLATTEN])
 #
 # FLATTEN mirrors the macro's $(notdir ...) behaviour, which applies when the
 # declaration passes dir=. Without it the listed relative path is preserved.
@@ -353,7 +421,7 @@ endfunction()
 function(aros_copy_includes)
     set(options FLATTEN)
     set(oneValueArgs NAME DEST SOURCE)
-    set(multiValueArgs PATTERNS)
+    set(multiValueArgs PATTERNS EXCLUDES)
     cmake_parse_arguments(CI "${options}" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
 
     if(NOT CI_DEST OR NOT CI_SOURCE OR NOT CI_PATTERNS)
@@ -387,9 +455,9 @@ function(aros_copy_includes)
     endif()
     if(NOT IS_DIRECTORY "${SRC_ABS}")
         # A cache-empty fetched port cannot be globbed at configure time.  An
-        # explicit file list can still be registered here and materialised as
-        # real Ninja outputs when a generated consumer binds one of its
-        # headers, ordered after the fetch which owns the source path.
+        # explicit file list has known output names even though its port has
+        # not been fetched yet.  Bind those outputs to their MetaMake owner
+        # below, ordered after the fetch which owns the source path.
         set(_fetch_owner "")
         set(_fetch_owner_len -1)
         get_property(_fetch_targets GLOBAL PROPERTY AROS_FETCH_TARGETS)
@@ -416,11 +484,6 @@ function(aros_copy_includes)
         elseif(NOT _fetch_owner)
             set(_unsupported "has no matching %fetch destination owner")
         endif()
-        foreach(_pattern IN LISTS CI_PATTERNS)
-            if(_pattern MATCHES "[*?\\[]")
-                set(_unsupported "uses a glob before its port has been fetched")
-            endif()
-        endforeach()
         if(_unsupported)
             set(_note "${CI_NAME}|${SRC_ABS}|${_unsupported}")
             set_property(GLOBAL APPEND PROPERTY
@@ -429,10 +492,33 @@ function(aros_copy_includes)
         endif()
 
         foreach(_pattern IN LISTS CI_PATTERNS)
+            if(_pattern MATCHES "[*?\\[]")
+                set(_glob_args
+                    NAME "${CI_NAME}"
+                    SOURCE "${SRC_ABS}"
+                    DEST "${CI_DEST}"
+                    PATTERN "${_pattern}"
+                    FETCH "${_fetch_owner}")
+                if(CI_EXCLUDES)
+                    list(APPEND _glob_args EXCLUDES ${CI_EXCLUDES})
+                endif()
+                if(CI_FLATTEN)
+                    list(APPEND _glob_args FLATTEN)
+                endif()
+                _aros_materialize_deferred_header_glob(${_glob_args})
+                continue()
+            endif()
             if(CI_FLATTEN)
                 get_filename_component(_name "${_pattern}" NAME)
             else()
                 set(_name "${_pattern}")
+            endif()
+            # Keep explicit fetched files consistent with the existing-source
+            # path below. A bounded `filter-out` may contain literal entries
+            # alongside a wildcard; those literals must not be materialised
+            # merely because the port source was absent at configure time.
+            if(_name IN_LIST CI_EXCLUDES)
+                continue()
             endif()
             _aros_staged_header_path(
                 _header_path "${CI_DEST}" "${_name}")
@@ -459,6 +545,11 @@ function(aros_copy_includes)
                 "${CI_NAME}|${_header_path}|${_source}")
             set_property(GLOBAL APPEND PROPERTY AROS_STAGED_HEADER_BINDINGS
                 "${_header_path}|${CI_NAME}|${_copy_hash}|${_source}")
+            # Unlike a glob, an explicit port header has a stable name at
+            # configure time.  Materialising it now preserves the historic
+            # owner edge (for example ports-includes -> bzlib.h) while the
+            # custom command remains lazy until that owner is requested.
+            _aros_materialize_deferred_header("${_copy_hash}")
         endforeach()
         return()
     endif()
@@ -475,6 +566,21 @@ function(aros_copy_includes)
         return()
     endif()
     list(REMOVE_DUPLICATES FOUND)
+
+    if(CI_EXCLUDES)
+        set(_filtered_found "")
+        foreach(_found IN LISTS FOUND)
+            if(CI_FLATTEN)
+                get_filename_component(_published_name "${_found}" NAME)
+            else()
+                set(_published_name "${_found}")
+            endif()
+            if(NOT _published_name IN_LIST CI_EXCLUDES)
+                list(APPEND _filtered_found "${_found}")
+            endif()
+        endforeach()
+        set(FOUND "${_filtered_found}")
+    endif()
 
     get_property(count GLOBAL PROPERTY AROS_STAGED_HEADERS)
     foreach(rel IN LISTS FOUND)
@@ -499,6 +605,229 @@ function(aros_copy_includes)
         math(EXPR count "${count} + 1")
     endforeach()
     set_property(GLOBAL PROPERTY AROS_STAGED_HEADERS ${count})
+endfunction()
+
+# aros_copy_dir_recursive(NAME <mmake-id> SOURCE <absolute-or-source-relative>
+#                         DESTINATION <build-tree-directory>
+#                         [DEPENDS <target>...])
+#
+# Materialises the safe subset of MetaMake's %copy_dir_recursive.  A fetched
+# source tree does not exist while CMake configures, so the copy has one real
+# stamp output and waits for the owning fetch completion stamp.  In-tree
+# directories are tracked through their concrete files instead.  Copies retain
+# MetaMake's overlay semantics, so sibling declarations may safely stage into
+# nested destination directories.  The destination is deliberately confined to
+# the build tree: this helper models staged build products, not arbitrary host
+# filesystem writes.
+function(aros_copy_dir_recursive)
+    set(oneValueArgs NAME SOURCE DESTINATION)
+    set(multiValueArgs DEPENDS)
+    cmake_parse_arguments(CDR "" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
+
+    if(CDR_UNPARSED_ARGUMENTS OR CDR_KEYWORDS_MISSING_VALUES OR
+       NOT CDR_NAME OR NOT CDR_SOURCE OR NOT CDR_DESTINATION)
+        message(FATAL_ERROR
+            "aros_copy_dir_recursive: NAME, SOURCE and DESTINATION are required")
+    endif()
+
+    if(NOT TARGET "${CDR_NAME}")
+        add_custom_target("${CDR_NAME}")
+    endif()
+
+    if(IS_ABSOLUTE "${CDR_SOURCE}")
+        set(_source "${CDR_SOURCE}")
+    else()
+        set(_source "${CMAKE_SOURCE_DIR}/${CDR_SOURCE}")
+    endif()
+    cmake_path(NORMAL_PATH _source)
+
+    if(NOT IS_ABSOLUTE "${CDR_DESTINATION}")
+        message(FATAL_ERROR
+            "${CDR_NAME}: %copy_dir_recursive destination must be absolute: "
+            "${CDR_DESTINATION}")
+    endif()
+    set(_destination "${CDR_DESTINATION}")
+    cmake_path(NORMAL_PATH _destination)
+    cmake_path(ABSOLUTE_PATH CMAKE_BINARY_DIR NORMALIZE
+        OUTPUT_VARIABLE _binary_root)
+    cmake_path(IS_PREFIX _binary_root "${_destination}" NORMALIZE
+        _destination_owned)
+    if(NOT _destination_owned OR _destination STREQUAL _binary_root)
+        message(FATAL_ERROR
+            "${CDR_NAME}: %copy_dir_recursive destination is outside the build tree: "
+            "${_destination}")
+    endif()
+
+    # Pick the deepest fetched-port owner, matching the deferred literal
+    # %copy_includes logic above.  A port may unpack several nested trees.
+    set(_fetch_owner "")
+    set(_fetch_owner_len -1)
+    get_property(_fetch_targets GLOBAL PROPERTY AROS_FETCH_TARGETS)
+    foreach(_fetch IN LISTS _fetch_targets)
+        if(NOT TARGET "${_fetch}")
+            continue()
+        endif()
+        get_property(_fetch_dest TARGET "${_fetch}" PROPERTY
+            AROS_FETCH_DESTINATION)
+        if(NOT _fetch_dest)
+            continue()
+        endif()
+        cmake_path(NORMAL_PATH _fetch_dest)
+        string(LENGTH "${_fetch_dest}" _fetch_len)
+        string(FIND "${_source}" "${_fetch_dest}/" _fetch_prefix)
+        if(("${_source}" STREQUAL "${_fetch_dest}" OR _fetch_prefix EQUAL 0)
+           AND _fetch_len GREATER _fetch_owner_len)
+            set(_fetch_owner "${_fetch}")
+            set(_fetch_owner_len "${_fetch_len}")
+        endif()
+    endforeach()
+
+    set(_dependencies "")
+    foreach(_dependency_target IN LISTS CDR_DEPENDS)
+        if(NOT TARGET "${_dependency_target}")
+            message(FATAL_ERROR
+                "${CDR_NAME}: %copy_dir_recursive dependency target is missing: "
+                "${_dependency_target}")
+        endif()
+        get_property(_dependency_stamp TARGET "${_dependency_target}" PROPERTY
+            AROS_FETCH_COMPLETION_STAMP)
+        if(_dependency_stamp)
+            list(APPEND _dependencies "${_dependency_stamp}")
+        else()
+            list(APPEND _dependencies "${_dependency_target}")
+        endif()
+    endforeach()
+    if(_fetch_owner)
+        get_property(_fetch_stamp TARGET "${_fetch_owner}" PROPERTY
+            AROS_FETCH_COMPLETION_STAMP)
+        if(NOT _fetch_stamp)
+            message(FATAL_ERROR
+                "${CDR_NAME}: fetch owner ${_fetch_owner} has no completion stamp")
+        endif()
+        list(APPEND _dependencies "${_fetch_stamp}")
+    endif()
+    if(IS_DIRECTORY "${_source}")
+        # Concrete in-tree assets should retrigger the staging rule when any
+        # payload changes.  Fetched ports are immutable after their completion
+        # stamp, so their stamp is the correct dependency instead.
+        file(GLOB_RECURSE _source_inputs CONFIGURE_DEPENDS
+            LIST_DIRECTORIES FALSE "${_source}/*")
+        list(APPEND _dependencies ${_source_inputs})
+    elseif(NOT _dependencies)
+        message(FATAL_ERROR
+            "${CDR_NAME}: %copy_dir_recursive source is absent and has no "
+            "declared or matching dependency owner: ${_source}")
+    endif()
+    list(REMOVE_DUPLICATES _dependencies)
+
+    string(SHA256 _copy_hash
+        "${CDR_NAME}|${_source}|${_destination}")
+    string(SUBSTRING "${_copy_hash}" 0 16 _copy_hash)
+    set(_stamp
+        "${CMAKE_BINARY_DIR}/CMakeFiles/aros-copy-dir-${_copy_hash}.stamp")
+    set(_copy_target "aros-copy-dir-${_copy_hash}")
+    if(NOT TARGET "${_copy_target}")
+        add_custom_command(
+            OUTPUT "${_stamp}"
+            COMMAND "${CMAKE_COMMAND}"
+                "-DAROS_COPY_DIR_SOURCE=${_source}"
+                "-DAROS_COPY_DIR_DESTINATION=${_destination}"
+                "-DAROS_COPY_DIR_STAMP=${_stamp}"
+                -P "${CMAKE_SOURCE_DIR}/cmake/CopyDirRecursive.cmake"
+            DEPENDS ${_dependencies}
+            COMMENT "Staging recursive directory ${CDR_NAME}"
+            VERBATIM)
+        add_custom_target("${_copy_target}" DEPENDS "${_stamp}")
+    endif()
+    add_dependencies("${CDR_NAME}" "${_copy_target}")
+endfunction()
+
+# A wildcard header list from a fetched port cannot name its outputs while
+# CMake configures: the port's source directory materialises only after its
+# fetch completion stamp.  Keep the list as one real build-time staging rule
+# instead of letting cache state decide which headers enter the graph.
+function(_aros_materialize_deferred_header_glob)
+    set(options FLATTEN)
+    set(oneValueArgs NAME SOURCE DEST PATTERN FETCH)
+    set(multiValueArgs EXCLUDES)
+    cmake_parse_arguments(DHG "${options}" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
+
+    if(DHG_UNPARSED_ARGUMENTS OR DHG_KEYWORDS_MISSING_VALUES OR
+       NOT DHG_NAME OR NOT DHG_SOURCE OR NOT DHG_DEST OR NOT DHG_PATTERN OR
+       NOT DHG_FETCH)
+        message(FATAL_ERROR
+            "_aros_materialize_deferred_header_glob requires NAME, SOURCE, DEST, "
+            "PATTERN and FETCH")
+    endif()
+    if(NOT TARGET "${DHG_NAME}" OR NOT TARGET "${DHG_FETCH}")
+        message(FATAL_ERROR
+            "${DHG_NAME}: deferred header glob has no declared owner or fetch target")
+    endif()
+    if(NOT DHG_PATTERN MATCHES "[*?\\[]")
+        message(FATAL_ERROR
+            "${DHG_NAME}: deferred header staging requires a glob pattern")
+    endif()
+    foreach(_exclude IN LISTS DHG_EXCLUDES)
+        # Do not encode these as one character-class regex: CMake's regex
+        # escaping treats `\\n`/`\\r` as ordinary letters, which would reject
+        # a legitimate name such as ftoption.h in a cold fetched-port build.
+        string(FIND "${_exclude}" ";" _exclude_semicolon)
+        string(FIND "${_exclude}" "|" _exclude_pipe)
+        string(FIND "${_exclude}" "\n" _exclude_newline)
+        string(FIND "${_exclude}" "\r" _exclude_carriage_return)
+        if(NOT _exclude_semicolon EQUAL -1 OR
+           NOT _exclude_pipe EQUAL -1 OR
+           NOT _exclude_newline EQUAL -1 OR
+           NOT _exclude_carriage_return EQUAL -1 OR
+           _exclude MATCHES "(^|/)\\.\\.(/|$)" OR
+           IS_ABSOLUTE "${_exclude}")
+            message(FATAL_ERROR
+                "${DHG_NAME}: invalid literal header exclusion '${_exclude}'")
+        endif()
+    endforeach()
+
+    get_property(_fetch_stamp TARGET "${DHG_FETCH}" PROPERTY
+        AROS_FETCH_COMPLETION_STAMP)
+    if(NOT _fetch_stamp)
+        message(FATAL_ERROR
+            "${DHG_NAME}: ${DHG_FETCH} has no fetch completion stamp")
+    endif()
+
+    if(DHG_FLATTEN)
+        set(_flatten 1)
+    else()
+        set(_flatten 0)
+    endif()
+    string(JOIN "|" _excludes ${DHG_EXCLUDES})
+    string(SHA256 _copy_hash
+        "${DHG_NAME}|${DHG_SOURCE}|${DHG_DEST}|${DHG_PATTERN}|${_excludes}|${_flatten}")
+    string(SUBSTRING "${_copy_hash}" 0 16 _copy_hash)
+    set(_stamp
+        "${CMAKE_BINARY_DIR}/CMakeFiles/aros-copy-includes-glob-${_copy_hash}.stamp")
+    set(_copy_target "aros-copy-includes-glob-${_copy_hash}")
+    set(_stage_script "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/StageHeaderGlob.cmake")
+    if(NOT EXISTS "${_stage_script}")
+        message(FATAL_ERROR "${DHG_NAME}: missing header-glob staging script")
+    endif()
+    if(NOT TARGET "${_copy_target}")
+        add_custom_command(
+            OUTPUT "${_stamp}"
+            COMMAND "${CMAKE_COMMAND}"
+                "-DAROS_STAGE_HEADERS_SOURCE=${DHG_SOURCE}"
+                "-DAROS_STAGE_HEADERS_DEST=${DHG_DEST}"
+                "-DAROS_STAGE_HEADERS_PATTERN=${DHG_PATTERN}"
+                "-DAROS_STAGE_HEADERS_EXCLUDES=${_excludes}"
+                "-DAROS_STAGE_HEADERS_FLATTEN=${_flatten}"
+                "-DAROS_STAGE_HEADERS_SDK_ROOT=${AROS_SDK_INCLUDE_DIR}"
+                "-DAROS_STAGE_HEADERS_GEN_ROOT=${AROS_GENINC_DIR}"
+                "-DAROS_STAGE_HEADERS_STAMP=${_stamp}"
+                -P "${_stage_script}"
+            DEPENDS "${_fetch_stamp}" "${_stage_script}"
+            COMMENT "Staging fetched header group ${DHG_NAME}"
+            VERBATIM)
+        add_custom_target("${_copy_target}" DEPENDS "${_stamp}")
+    endif()
+    add_dependencies("${DHG_NAME}" "${_copy_target}")
 endfunction()
 
 function(_aros_materialize_deferred_header hash)
@@ -670,13 +999,11 @@ set(AROS_ADHOC_HEADERS_OUT_OF_SCOPE
     "sigcore.h"
     # Third-party libraries, not part of a bootable kickstart.
     "tiffconf.h" "tifftypes.h" "tiffinline.h"
-    "freetype/*" "libraries"
+    "libraries"
     # A pattern rule whose destination is a directory category, not a file.
     "hidd/%.h"
-    # Datatypes are not part of a bootable kickstart, and these three rules
-    # only substitute a version number into a port's config header.
-    "$(CURDIR)/libde265/de265-version.h"
-    "$(CURDIR)/libheif/heif_version.h"
+    # Datatypes are not part of a bootable kickstart, and this WebP config
+    # header remains outside the currently modelled port capability.
     "$(CURDIR)/src/webp/config.h"
     # isapnp is x86 legacy and in no package.
     "$(CURDIR)/version.h"
@@ -728,6 +1055,25 @@ function(aros_adhoc_header_rule)
     # hand-written header rule with the same legacy spelling.
     if(AR_FILE STREQUAL "compiler/softfloat/mmakefile.src" AND
        AR_DEST STREQUAL "$(CURDIR)/platform.h")
+        return()
+    endif()
+
+    # workbench/libs/freetype2/mmakefile.src:165 generates ftoption.h from
+    # the fetched FreeType source with four target-specific substitutions.
+    # Its exact CMake counterpart is installed after the generated graph in
+    # FreetypeOptions.cmake.  Keep this file-specific so a newly added
+    # FreeType header rule is still reported rather than hidden by a prefix.
+    if(AR_FILE STREQUAL "workbench/libs/freetype2/mmakefile.src" AND
+       AR_DEST STREQUAL "freetype/config/$(FT2OPTIONFILE)")
+        return()
+    endif()
+
+    # The two HEIC port headers are concrete, fetch-dependent outputs of
+    # HeicVersionHeaders.cmake. Keep this acknowledgement file-specific so a
+    # future datatype rule still reaches the unknown-rule audit.
+    if(AR_FILE STREQUAL "workbench/classes/datatypes/heic/mmakefile.src" AND
+       (AR_DEST STREQUAL "$(CURDIR)/libde265/de265-version.h" OR
+        AR_DEST STREQUAL "$(CURDIR)/libheif/heif_version.h"))
         return()
     endif()
 
@@ -815,6 +1161,13 @@ function(aros_gate_arch target directory)
     set_property(GLOBAL PROPERTY AROS_FOREIGN_ARCH_TARGETS "${_n}")
 endfunction()
 
+# aros_gate_platform(TARGET <target> PLATFORMS <platform>... [REASON <text>])
+#
+# Keeps an otherwise source-tree-neutral target out of `all` when it is tied
+# to a particular hosted platform. Unlike a target below arch/, there is no
+# directory name from which aros_gate_arch() can infer that restriction. The
+# target remains addressable for its supported platform and is reported at
+# configure time instead of failing later on an unavailable hosted API.
 # aros_apply_includes(<target> [MODULE_DIR <dir>] INCLUDES <dirs...>
 #                     ARCH_INCLUDES <tag|dir...>)
 #
@@ -1176,6 +1529,25 @@ function(aros_add_target_dependency target_name dependency)
     endforeach()
 endfunction()
 
+# The generated full-tree graph creates linklibs-startup only after this
+# module is loaded. Bind its aggregate edge at that point, while preserving a
+# fail-closed error if a locked consumer ever loses the linker-visible object.
+function(aros_bind_cxx_startup_target target_name)
+    if(NOT AROS_CROSS_TOOLCHAIN_ROOT)
+        return()
+    endif()
+    if(NOT TARGET "${target_name}")
+        message(FATAL_ERROR
+            "Locked AROS C++ consumer requires aggregate target ${target_name}")
+    endif()
+    if(NOT AROS_CXX_STARTUP_TARGET OR
+       NOT TARGET "${AROS_CXX_STARTUP_TARGET}")
+        message(FATAL_ERROR
+            "Locked AROS C++ consumer has no cxx-startup producer target")
+    endif()
+    aros_add_target_dependency("${target_name}" "${AROS_CXX_STARTUP_TARGET}")
+endfunction()
+
 # A fetched source named without its suffix cannot be a Ninja source node: the
 # archive is deliberately absent at configure time. Marking that path GENERATED
 # looks tempting, but CMake then gives it target-order dependencies. If two
@@ -1341,6 +1713,23 @@ function(aros_resolve_sources out_var dir)
         # have different preprocessing semantics and CMake object identities.
         foreach(_candidate IN LISTS _candidates)
             string(SHA256 _generated_output_key "${_candidate}")
+            # Paired hand-written FlexCat rules generate a C translation unit
+            # next to a module in MetaMake. CMake rehomes it under gen/ to
+            # keep the source tree clean; consult that exact nominal-path map
+            # before touching the filesystem so a stale source-tree locale.c
+            # can never win over the declared output.
+            get_property(_flexcat_generated_source GLOBAL PROPERTY
+                "AROS_FLEXCAT_GENERATED_SOURCE_${_generated_output_key}")
+            if(_flexcat_generated_source)
+                set(_resolved "${_flexcat_generated_source}")
+                set_source_files_properties("${_resolved}" PROPERTIES GENERATED TRUE)
+                if(RS_LANGUAGE AND NOT RS_LANGUAGE STREQUAL "C")
+                    set_source_files_properties("${_resolved}" PROPERTIES
+                        LANGUAGE "${RS_LANGUAGE}")
+                endif()
+                list(APPEND RESOLVED "${_resolved}")
+                break()
+            endif()
             get_property(_generated_output_owner GLOBAL PROPERTY
                 "AROS_PYTHON_OUTPUT_OWNER_${_generated_output_key}")
             if(NOT _generated_output_owner)
@@ -2757,14 +3146,25 @@ function(_aros_generate_module_support out_prefix)
     set(${out_prefix}_FD_TARGET "${_fd_target}" PARENT_SCOPE)
 endfunction()
 
-# Select the linker language for a runtime module.  `alwayscxxlink=yes` is a
-# legacy module-macro contract, separate from whether a declaration happened
-# to list C++ sources: Mesa's HIDD wrappers are C sources but deliberately
-# link through the C++ toolchain.  Every caller keeps C as the conservative
-# default unless the transpiler supplied the explicit opt-in.
+# Select the linker language for a runtime module or program.  Upstream's
+# C++ compile rule claims the linker whenever `cxxfiles=` is non-empty;
+# `alwayscxxlink=yes` is the additional force for C/ASM-only wrappers such as
+# Mesa's HIDDs.  The release C++ partial-link rule supplies libc++, libc++abi
+# and libunwind, so forcing a C++ source through the naked C linker loses part
+# of the target ABI contract.
 function(_aros_set_module_linker_language target always_cxx_link)
-    if(always_cxx_link)
+    set(multiValueArgs CXX_SOURCES)
+    cmake_parse_arguments(ML "" "" "${multiValueArgs}" ${ARGN})
+    if(always_cxx_link OR ML_CXX_SOURCES)
         set_target_properties("${target}" PROPERTIES LINKER_LANGUAGE CXX)
+        if(AROS_CROSS_TOOLCHAIN_ROOT)
+            if(NOT AROS_CXX_STARTUP_TARGET OR
+               NOT TARGET "${AROS_CXX_STARTUP_TARGET}")
+                message(FATAL_ERROR
+                    "${target}: locked C++ link has no cxx-startup producer target")
+            endif()
+            add_dependencies("${target}" "${AROS_CXX_STARTUP_TARGET}")
+        endif()
     else()
         set_target_properties("${target}" PROPERTIES LINKER_LANGUAGE C)
     endif()
@@ -2940,7 +3340,8 @@ function(aros_add_library)
             OUTPUT_NAME "${_output_name}"
             RUNTIME_OUTPUT_DIRECTORY "${_install_dir}")
         _aros_set_module_linker_language("${ARG_MMAKE_ID}"
-            "${ARG_ALWAYS_CXX_LINK}")
+            "${ARG_ALWAYS_CXX_LINK}"
+            CXX_SOURCES ${ARG_CXX_SOURCES})
         add_dependencies("${ARG_MMAKE_ID}"
             "${ARG_MMAKE_ID}-includes"
             "${ARG_MMAKE_ID}-linklib")
@@ -3246,7 +3647,8 @@ function(aros_add_library)
             OUTPUT_NAME "${_output_name}"
             RUNTIME_OUTPUT_DIRECTORY "${_install_dir}")
         _aros_set_module_linker_language("${ARG_MMAKE_ID}"
-            "${ARG_ALWAYS_CXX_LINK}")
+            "${ARG_ALWAYS_CXX_LINK}"
+            CXX_SOURCES ${ARG_CXX_SOURCES})
         if(_has_genmodule)
             target_include_directories(${ARG_MMAKE_ID} BEFORE PRIVATE
                 "${_gm_INCLUDE_DIR}" "${_gm_GEN_DIR}"
@@ -3366,7 +3768,8 @@ function(aros_add_device)
             OUTPUT_NAME "${_output_name}"
             RUNTIME_OUTPUT_DIRECTORY "${_install_dir}")
         _aros_set_module_linker_language("${ARG_MMAKE_ID}"
-            "${ARG_ALWAYS_CXX_LINK}")
+            "${ARG_ALWAYS_CXX_LINK}"
+            CXX_SOURCES ${ARG_CXX_SOURCES})
         aros_gate_arch(${ARG_MMAKE_ID} "${ARG_DIRECTORY}")
         aros_apply_includes(${ARG_MMAKE_ID}
             MODULE_DIR "${ARG_DIRECTORY}"
@@ -3446,7 +3849,8 @@ function(aros_add_resource)
             OUTPUT_NAME "${_output_name}"
             RUNTIME_OUTPUT_DIRECTORY "${_install_dir}")
         _aros_set_module_linker_language("${ARG_MMAKE_ID}"
-            "${ARG_ALWAYS_CXX_LINK}")
+            "${ARG_ALWAYS_CXX_LINK}"
+            CXX_SOURCES ${ARG_CXX_SOURCES})
         aros_gate_arch(${ARG_MMAKE_ID} "${ARG_DIRECTORY}")
         aros_apply_includes(${ARG_MMAKE_ID}
             MODULE_DIR "${ARG_DIRECTORY}"
@@ -3526,7 +3930,8 @@ function(aros_add_hidd)
             OUTPUT_NAME "${_output_name}"
             RUNTIME_OUTPUT_DIRECTORY "${_install_dir}")
         _aros_set_module_linker_language("${ARG_MMAKE_ID}"
-            "${ARG_ALWAYS_CXX_LINK}")
+            "${ARG_ALWAYS_CXX_LINK}"
+            CXX_SOURCES ${ARG_CXX_SOURCES})
         aros_gate_arch(${ARG_MMAKE_ID} "${ARG_DIRECTORY}")
         aros_apply_includes(${ARG_MMAKE_ID}
             MODULE_DIR "${ARG_DIRECTORY}"
@@ -3921,7 +4326,7 @@ endfunction()
 
 # Macro: aros_add_program
 function(aros_add_program)
-    set(options)
+    set(options ALWAYS_CXX_LINK)
     set(oneValueArgs TARGET MMAKE_ID DIRECTORY INSTALL_DIR)
     set(multiValueArgs SOURCES CXX_SOURCES OBJC_SOURCES ASM_SOURCES
         LIBS USELIBS INCLUDES ARCH_INCLUDES
@@ -3978,9 +4383,10 @@ function(aros_add_program)
             # location mirrors targetdir="$(AROSDIR)/$(CURDIR)"; a flat one
             # collides, since two mmakefiles both build `testboot`.
             OUTPUT_NAME "${ARG_TARGET}"
-            RUNTIME_OUTPUT_DIRECTORY "${_prog_outdir}"
-            LINKER_LANGUAGE C
-        )
+            RUNTIME_OUTPUT_DIRECTORY "${_prog_outdir}")
+        _aros_set_module_linker_language("${ARG_MMAKE_ID}"
+            "${ARG_ALWAYS_CXX_LINK}"
+            CXX_SOURCES ${ARG_CXX_SOURCES})
         aros_gate_arch(${ARG_MMAKE_ID} "${ARG_DIRECTORY}")
         aros_apply_includes(${ARG_MMAKE_ID}
             MODULE_DIR "${ARG_DIRECTORY}"
@@ -4114,7 +4520,8 @@ function(aros_add_custom_target)
         OUTPUT_NAME "${_outname}"
         RUNTIME_OUTPUT_DIRECTORY "${_moddir}")
     _aros_set_module_linker_language("${ARG_MMAKE_ID}"
-        "${ARG_ALWAYS_CXX_LINK}")
+        "${ARG_ALWAYS_CXX_LINK}"
+        CXX_SOURCES ${ARG_CXX_SOURCES})
     aros_gate_arch(${ARG_MMAKE_ID} "${ARG_DIRECTORY}")
     aros_apply_includes(${ARG_MMAKE_ID}
         MODULE_DIR "${ARG_DIRECTORY}"
@@ -4458,9 +4865,14 @@ function(aros_add_programs)
             "${ARG_INSTALL_DIR}")
         set_target_properties(${_tgt} PROPERTIES
             OUTPUT_NAME "${_stem}"
-            RUNTIME_OUTPUT_DIRECTORY "${_outdir}"
-            LINKER_LANGUAGE C
-        )
+            RUNTIME_OUTPUT_DIRECTORY "${_outdir}")
+        if(_language STREQUAL "CXX")
+            set(_member_cxx_sources "${src}")
+        else()
+            set(_member_cxx_sources "")
+        endif()
+        _aros_set_module_linker_language("${_tgt}" ""
+            CXX_SOURCES ${_member_cxx_sources})
         aros_gate_arch(${_tgt} "${ARG_DIRECTORY}")
         aros_apply_includes(${_tgt}
             MODULE_DIR "${ARG_DIRECTORY}"
@@ -4609,7 +5021,8 @@ function(aros_add_module_simple)
         OUTPUT_NAME "${_output_name}"
         RUNTIME_OUTPUT_DIRECTORY "${_install_dir}")
     _aros_set_module_linker_language("${ARG_MMAKE_ID}"
-        "${ARG_ALWAYS_CXX_LINK}")
+        "${ARG_ALWAYS_CXX_LINK}"
+        CXX_SOURCES ${ARG_CXX_SOURCES})
     aros_gate_arch(${ARG_MMAKE_ID} "${ARG_DIRECTORY}")
     aros_apply_includes(${ARG_MMAKE_ID}
         MODULE_DIR "${ARG_DIRECTORY}"

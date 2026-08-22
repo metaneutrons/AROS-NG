@@ -163,14 +163,9 @@ function(aros_bootstrap_sdk_includes)
         )
     endif()
 
-    # 5. Copy Boost preprocessor headers if available on host system
-    if(EXISTS "/opt/homebrew/include/boost/preprocessor")
-        file(MAKE_DIRECTORY "${SDK_INC}/boost")
-        file(COPY "/opt/homebrew/include/boost/preprocessor" DESTINATION "${SDK_INC}/boost")
-    elseif(EXISTS "/usr/include/boost/preprocessor")
-        file(MAKE_DIRECTORY "${SDK_INC}/boost")
-        file(COPY "/usr/include/boost/preprocessor" DESTINATION "${SDK_INC}/boost")
-    endif()
+    # 5. Boost is staged later from the pinned compiler/boost %fetch input.
+    # Do not copy the host's headers here: that made macOS and Linux SDKs
+    # silently differ before the target's ports-includes closure had run.
 
     # 6. Generate aros/config.h
     set(CONFIG_H "${SDK_INC}/aros/config.h")
@@ -217,14 +212,30 @@ function(aros_bootstrap_sdk_includes)
     endif()
     # genmodule takes the list space-separated, CMake stores it with semicolons.
     string(REPLACE ";" " " _arch_dirs_arg "${AROS_ARCH_SOURCE_DIRS}")
+    if(NOT DEFINED AROS_GENMODULE_BIN OR
+       NOT EXISTS "${AROS_GENMODULE_BIN}" OR
+       IS_DIRECTORY "${AROS_GENMODULE_BIN}" OR
+       NOT IS_EXECUTABLE "${AROS_GENMODULE_BIN}")
+        message(FATAL_ERROR
+            "AROS-NG requires the executable Rust SDK generator at "
+            "${AROS_GENMODULE_BIN}. Build it with `cargo build --release "
+            "-p aros-genmodule -p aros-transpiler` in tools/aros-tools, or "
+            "set AROS_RUST_TOOLS_DIR / AROS_GENMODULE_BIN.")
+    endif()
     execute_process(
-        COMMAND "${CMAKE_SOURCE_DIR}/tools/aros-tools/target/release/aros-genmodule"
+        COMMAND "${AROS_GENMODULE_BIN}"
                 "--scan-dir" "${CMAKE_SOURCE_DIR}"
                 "--output-inc" "${SDK_INC}"
                 "--output-gen" "${AROS_GEN_DIR}"
                 "--arch-dirs" "${_arch_dirs_arg}"
         RESULT_VARIABLE GENMODULE_RES
+        ERROR_VARIABLE _aros_genmodule_error
     )
+    if(NOT GENMODULE_RES EQUAL 0)
+        message(FATAL_ERROR
+            "AROS-NG SDK generator failed (${GENMODULE_RES}).\n"
+            "${_aros_genmodule_error}")
+    endif()
 
     # 8. aros/<cpu>/asm.h, needed by every assembly source.
     #

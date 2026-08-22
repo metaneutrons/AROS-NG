@@ -4,6 +4,16 @@ include(CMakeParseArguments)
 
 set(_AROS_GRUB_BUILD_MODULE_DIR "${CMAKE_CURRENT_LIST_DIR}")
 
+# The current GRUB 2.12 host-tool contract is audited specifically for a
+# native Apple-Silicon Homebrew host.  Keep this capability separate from the
+# x86_64-pc *target* profile: a Linux host can build that target's ordinary
+# tree, but must not be offered an unaudited GRUB/ISO lane.
+set(AROS_GRUB2_HOST_LANES_AVAILABLE FALSE)
+if(CMAKE_HOST_SYSTEM_NAME STREQUAL "Darwin" AND
+   CMAKE_HOST_SYSTEM_PROCESSOR MATCHES "^(arm64|aarch64)$")
+    set(AROS_GRUB2_HOST_LANES_AVAILABLE TRUE)
+endif()
+
 # Closed GRUB 2.12 host-tool builder.  The legacy declarations all consume the
 # same patched upstream source, but their PC, EFI64 and EFI32 build trees must
 # never share an install prefix: GRUB installs host programs into --bindir.
