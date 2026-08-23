@@ -577,3 +577,115 @@ function(aros_generate_python_outputs)
             CONSUMERS ${PG_CONSUMERS})
     endif()
 endfunction()
+
+# aros_generate_intree_script_outputs(
+#     OWNER <target> SCRIPT <path> OUTPUTS <paths...>
+#     [ARGUMENTS <words...>] [DEPENDS <paths...>] [CONSUMERS <targets...>])
+#
+# A Make rule whose recipe runs an in-tree Python script over in-tree inputs to
+# produce files under $(GENDIR). arch/all-pc/udis86/mmakefile.src:26 is the case:
+#
+#     $(GENDIR)/$(CURDIR)/libudis86/itab.c: $(OPTABLE) \
+#                $(SRCDIR)/$(CURDIR)/scripts/ud_itab.py \
+#                $(SRCDIR)/$(CURDIR)/scripts/ud_opcode.py | $(GENDIR)/...
+#         $(PYTHON) $(SRCDIR)/$(CURDIR)/scripts/ud_itab.py $(OPTABLE) $(GENDIR)/...
+#
+# This is deliberately not aros_generate_python_outputs. That one exists for a
+# *fetched* generator and spends most of its length on integrity: archive and
+# driver SHA256s, package roots, a runner script. Here the script and its input
+# are files in this repository, so the repository is the integrity boundary and
+# pinning them again would state the same fact twice.
+#
+# What it shares with that function is the part that matters to consumers: each
+# output is registered under AROS_PYTHON_OUTPUT_OWNER_<hash>, which is what
+# aros_resolve_sources consults before it probes the filesystem, so a declared
+# source that does not exist at configure time still resolves.
+function(aros_generate_intree_script_outputs)
+    set(oneValueArgs OWNER SCRIPT)
+    set(multiValueArgs ARGUMENTS OUTPUTS DEPENDS CONSUMERS)
+    cmake_parse_arguments(IG "" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
+    if(IG_UNPARSED_ARGUMENTS OR IG_KEYWORDS_MISSING_VALUES)
+        message(FATAL_ERROR
+            "aros_generate_intree_script_outputs: unknown or valueless "
+            "arguments: ${IG_UNPARSED_ARGUMENTS}${IG_KEYWORDS_MISSING_VALUES}")
+    endif()
+    foreach(_required OWNER SCRIPT OUTPUTS)
+        if(NOT IG_${_required})
+            message(FATAL_ERROR
+                "aros_generate_intree_script_outputs: ${_required} is required")
+        endif()
+    endforeach()
+    if(NOT IG_OWNER MATCHES "^[A-Za-z0-9_.+-]+$")
+        message(FATAL_ERROR "${IG_OWNER}: not a usable target name")
+    endif()
+    if(TARGET "${IG_OWNER}")
+        message(FATAL_ERROR "${IG_OWNER}: owner target already exists")
+    endif()
+    if(NOT EXISTS "${IG_SCRIPT}")
+        message(FATAL_ERROR "${IG_OWNER}: no generator script ${IG_SCRIPT}")
+    endif()
+
+    find_package(Python3 COMPONENTS Interpreter QUIET)
+    if(NOT Python3_Interpreter_FOUND OR NOT Python3_EXECUTABLE)
+        message(FATAL_ERROR
+            "${IG_OWNER}: a working Python 3 interpreter is required; install "
+            "python3 or set Python3_EXECUTABLE")
+    endif()
+
+    foreach(_word IN LISTS IG_ARGUMENTS)
+        if("${_word}" MATCHES "[;$\\\r\n]")
+            message(FATAL_ERROR "${IG_OWNER}: unsafe argument '${_word}'")
+        endif()
+    endforeach()
+    foreach(_dependency IN LISTS IG_DEPENDS)
+        if(NOT EXISTS "${_dependency}")
+            message(FATAL_ERROR
+                "${IG_OWNER}: prerequisite ${_dependency} does not exist")
+        endif()
+    endforeach()
+
+    # Every output must land in the build tree, and no two generators may claim
+    # the same file.
+    set(_directories "")
+    foreach(_output IN LISTS IG_OUTPUTS)
+        cmake_path(IS_PREFIX CMAKE_BINARY_DIR "${_output}" NORMALIZE _owned)
+        if(NOT _owned)
+            message(FATAL_ERROR
+                "${IG_OWNER}: output ${_output} is outside the build tree")
+        endif()
+        string(SHA256 _output_key "${_output}")
+        get_property(_previous GLOBAL PROPERTY
+            "AROS_PYTHON_OUTPUT_OWNER_${_output_key}")
+        if(_previous)
+            message(FATAL_ERROR
+                "${IG_OWNER}: ${_output} is already owned by ${_previous}")
+        endif()
+        get_filename_component(_directory "${_output}" DIRECTORY)
+        if(NOT _directory IN_LIST _directories)
+            list(APPEND _directories "${_directory}")
+        endif()
+    endforeach()
+
+    add_custom_command(
+        OUTPUT ${IG_OUTPUTS}
+        COMMAND "${CMAKE_COMMAND}" -E make_directory ${_directories}
+        COMMAND "${Python3_EXECUTABLE}" "${IG_SCRIPT}" ${IG_ARGUMENTS}
+        DEPENDS "${IG_SCRIPT}" ${IG_DEPENDS}
+        COMMENT "Generating ${IG_OWNER} with ${IG_SCRIPT}"
+        VERBATIM)
+
+    foreach(_output IN LISTS IG_OUTPUTS)
+        string(SHA256 _output_key "${_output}")
+        set_property(GLOBAL PROPERTY
+            "AROS_PYTHON_OUTPUT_OWNER_${_output_key}" "${IG_OWNER}")
+    endforeach()
+
+    add_custom_target("${IG_OWNER}" DEPENDS ${IG_OUTPUTS})
+    set_property(TARGET "${IG_OWNER}" PROPERTY AROS_PYTHON_OUTPUT_OWNER TRUE)
+    set_property(TARGET "${IG_OWNER}" PROPERTY AROS_PYTHON_OUTPUTS "${IG_OUTPUTS}")
+
+    if(IG_CONSUMERS)
+        aros_bind_python_output_consumers(
+            OWNER "${IG_OWNER}" CONSUMERS ${IG_CONSUMERS})
+    endif()
+endfunction()
