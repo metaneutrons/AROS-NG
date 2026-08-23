@@ -21,9 +21,13 @@
 #     lets several members be linked into one image; without it the set lists
 #     collide (`duplicate symbol: set_call_libfuncs`).
 #
-# The kernel linker script is empty for every target but amiga-m68k
-# (config/make.cfg.in:215), so it is not modelled here; a target that needs one
-# is reported instead.
+#   * KERNEL_KOBJ_LDSCRIPT orders the module's sections so its Resident tag is
+#     the module head and its End marker -- the rt_EndSkip the romtag scanner
+#     leaps to -- the module tail. Without it the kickstart link merges all the
+#     tags into one block and all the End markers into a block behind it, the
+#     first tag's leap skips every other module, and the boot ends in
+#     `exec.library is not found`. The transpiler reads the value from
+#     config/make.cfg.in and declares it with aros_set_kickstart_kobj_ldscript.
 
 include_guard(GLOBAL)
 include(CMakeParseArguments)
@@ -51,6 +55,15 @@ set(AROS_KICKSTART_EXCLUDED_LIBS
 set(AROS_KICKSTART_LOCAL_BASES
     DOSBase IntuitionBase LayersBase GfxBase OOPBase
     UtilityBase ExpansionBase KeymapBase KernelBase)
+
+# aros_set_kickstart_kobj_ldscript(<token>...)
+#
+# The `-T <script>` KERNEL_KOBJ_LDSCRIPT names, as the transpiler read it from
+# config/make.cfg.in. Stored rather than applied, because the member objects are
+# built on request, later.
+function(aros_set_kickstart_kobj_ldscript)
+    set_property(GLOBAL PROPERTY AROS_KICKSTART_KOBJ_LDSCRIPT "${ARGN}")
+endfunction()
 
 # _aros_kickstart_archive_map(<out-var>)
 #
@@ -185,17 +198,32 @@ function(aros_kickstart_member_object out_var module)
     # The set lists are named per module, so they cannot be listed here: the
     # reference reads them back out of the linked object with nm. The script
     # does the same, then applies both sets of -L in one objcopy call.
+    # The section-ordering script, and the script file as a real input edge so
+    # every member relinks when it changes.
+    get_property(_kobj_ldscript GLOBAL PROPERTY AROS_KICKSTART_KOBJ_LDSCRIPT)
+    set(_ldscript_deps "")
+    if(_kobj_ldscript)
+        list(GET _kobj_ldscript -1 _ldscript_file)
+        if(EXISTS "${_ldscript_file}")
+            list(APPEND _ldscript_deps "${_ldscript_file}")
+        else()
+            set_property(GLOBAL APPEND PROPERTY AROS_KICKSTART_GAPS
+                "${module}: section-ordering script ${_ldscript_file} is missing")
+        endif()
+    endif()
+
     add_custom_command(
         OUTPUT "${_kobj}"
         COMMAND "${CMAKE_COMMAND}" -E make_directory
             "${CMAKE_BINARY_DIR}/gen/kobj"
-        COMMAND "${AROS_LLD_BIN}" -r -o "${_kobj}"
+        COMMAND "${AROS_LLD_BIN}" -r ${_kobj_ldscript} -o "${_kobj}"
             "$<TARGET_OBJECTS:${_objects}>" ${_external_objects}
             ${_ldopts} ${_lib_args}
         COMMAND "${AROS_KICKSTART_PYTHON3}" -B
             "${AROS_KICKSTART_LOCALISE_SCRIPT}"
             "${CMAKE_OBJCOPY}" "${AROS_KICKSTART_NM}" "${_kobj}" ${_localise}
         DEPENDS "${_objects}" ${_external_objects} ${_lib_deps}
+            ${_ldscript_deps}
             "${AROS_KICKSTART_LOCALISE_SCRIPT}"
         COMMENT "Kickstart object ${module}"
         COMMAND_EXPAND_LISTS
