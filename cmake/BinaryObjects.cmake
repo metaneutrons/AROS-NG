@@ -112,6 +112,16 @@ function(aros_link_binary_object)
     set_source_files_properties("${BO_OUTPUT}" PROPERTIES
         EXTERNAL_OBJECT TRUE GENERATED TRUE)
     target_sources("${BO_CONSUMER}" PRIVATE "${BO_OUTPUT}")
+
+    # A kickstart member's objects were mirrored while its target was created,
+    # which is before this runs, so the wrapped binary has to be registered here
+    # too or the kickstart object loses _binary_<name>_start.
+    get_property(_mirrored GLOBAL PROPERTY
+        "AROS_KICKSTART_OBJECTS_${BO_CONSUMER}")
+    if(_mirrored)
+        set_property(GLOBAL APPEND PROPERTY
+            "AROS_KICKSTART_EXTOBJS_${BO_CONSUMER}" "${BO_OUTPUT}")
+    endif()
 endfunction()
 
 # aros_report_binary_object_gaps()

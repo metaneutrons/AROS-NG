@@ -3307,6 +3307,79 @@ function(_aros_generate_module_support out_prefix)
     set(${out_prefix}_FD_TARGET "${_fd_target}" PARENT_SCOPE)
 endfunction()
 
+# aros_mirror_module_objects(<module> <sources>)
+#
+# A second compilation of the module's own sources, as an object library, so a
+# kickstart member can be linked twice: once as the loadable module and once as
+# the kickstart object, which uses a different library set entirely
+# (cmake/KickstartObjects.cmake).
+#
+# The compile state is copied from the finished module target rather than
+# reconstructed, so the two compilations cannot drift. It does mean the member's
+# sources are compiled twice; three modules are members of the pc-x86_64
+# kickstart, and the alternative is restructuring every module builder around an
+# object library.
+function(aros_mirror_module_objects module)
+    set(_objects "${module}-objs")
+    if(TARGET "${_objects}" OR NOT TARGET "${module}")
+        return()
+    endif()
+    get_target_property(_sources "${module}" SOURCES)
+    if(NOT _sources)
+        return()
+    endif()
+    # $<TARGET_OBJECTS:> yields only what the library compiles, so a source
+    # that is already an object -- the wrapped SMP trampoline is one -- has to
+    # be carried separately or it silently leaves the kickstart object without
+    # _binary_smpbootstrap_start.
+    set(_compiled "")
+    set(_external "")
+    foreach(_source IN LISTS _sources)
+        get_source_file_property(_is_object "${_source}" EXTERNAL_OBJECT)
+        if(_is_object)
+            list(APPEND _external "${_source}")
+        else()
+            list(APPEND _compiled "${_source}")
+        endif()
+    endforeach()
+    if(NOT _compiled)
+        return()
+    endif()
+    set_property(GLOBAL PROPERTY
+        "AROS_KICKSTART_EXTOBJS_${module}" "${_external}")
+    add_library("${_objects}" OBJECT ${_compiled})
+    set_target_properties("${_objects}" PROPERTIES LINKER_LANGUAGE C)
+    foreach(_property INCLUDE_DIRECTORIES COMPILE_DEFINITIONS COMPILE_OPTIONS)
+        get_target_property(_value "${module}" ${_property})
+        if(_value AND NOT _value STREQUAL "_value-NOTFOUND")
+            set_property(TARGET "${_objects}" PROPERTY ${_property} "${_value}")
+        endif()
+    endforeach()
+    # The generated sources have to exist before this compiles too.
+    get_target_property(_deps "${module}" MANUALLY_ADDED_DEPENDENCIES)
+    if(_deps AND NOT _deps STREQUAL "_deps-NOTFOUND")
+        add_dependencies("${_objects}" ${_deps})
+    endif()
+    set_property(GLOBAL PROPERTY "AROS_KICKSTART_OBJECTS_${module}" "${_objects}")
+endfunction()
+
+# aros_module_is_kickstart_member(<out-var> <arch-list>)
+#
+# Whether the module belongs to a kickstart of the configured architecture. The
+# transpiler marks the member with every kickstart architecture that claims it,
+# because a module can be in another architecture's kickstart and must not grow
+# a second artefact here for that one.
+function(aros_module_is_kickstart_member out_var)
+    set(${out_var} FALSE PARENT_SCOPE)
+    foreach(_arch IN LISTS ARGN)
+        aros_package_arch_matches(_matches "${_arch}")
+        if(_matches)
+            set(${out_var} TRUE PARENT_SCOPE)
+            return()
+        endif()
+    endforeach()
+endfunction()
+
 # aros_module_scaffolding(<out-sources> <prefix> MODTYPE <t> TARGET <name>
 #                         MMAKE_ID <id> DIRECTORY <dir> [MODSUFFIX <s>])
 #
@@ -3490,7 +3563,7 @@ function(aros_add_library)
         LIBS USELIBS INCLUDES ARCH_INCLUDES
         DEFINES UNDEFINES COMPILE_OPTIONS ARCH_SOURCES
         ARCH_DEFINES ARCH_COMPILE_OPTIONS LINK_OPTIONS
-        LINKLIB_SOURCES LINKLIB_OBJECT_SOURCES)
+        LINKLIB_SOURCES LINKLIB_OBJECT_SOURCES KICKSTART_MEMBER)
     cmake_parse_arguments(ARG "${options}" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
 
     if(ARG_GENMODULE_ONLY)
@@ -3939,6 +4012,19 @@ function(aros_add_library)
         if(ARG_LIBS)
             aros_link_libraries(${ARG_MMAKE_ID} ${ARG_LIBS})
         endif()
+        # A kickstart member needs a second link with a different library set,
+        # so make this compilation reusable. cmake/KickstartObjects.cmake.
+        aros_module_is_kickstart_member(_is_kickstart ${ARG_KICKSTART_MEMBER})
+        if(_is_kickstart)
+            aros_mirror_module_objects("${ARG_MMAKE_ID}")
+            set_property(GLOBAL PROPERTY
+                "AROS_KICKSTART_USELIBS_${ARG_MMAKE_ID}" "${ARG_USELIBS}")
+            # config/make.tmpl:2758 passes $(USER_LDFLAGS) to the kobj link as
+            # well, which is how arch/all-pc/kernel/make.opts' -lbootconsole
+            # and -lacpica reach a kickstart member.
+            set_property(GLOBAL PROPERTY
+                "AROS_KICKSTART_LDOPTS_${ARG_MMAKE_ID}" "${ARG_LINK_OPTIONS}")
+        endif()
 
         if(_has_genmodule)
             _aros_genmodule_alias("includes-${ARG_TARGET}"
@@ -4062,7 +4148,7 @@ function(aros_add_resource)
     set(multiValueArgs SOURCES CXX_SOURCES OBJC_SOURCES ASM_SOURCES
         LIBS USELIBS INCLUDES ARCH_INCLUDES
         DEFINES UNDEFINES COMPILE_OPTIONS ARCH_SOURCES
-        ARCH_DEFINES ARCH_COMPILE_OPTIONS LINK_OPTIONS)
+        ARCH_DEFINES ARCH_COMPILE_OPTIONS LINK_OPTIONS KICKSTART_MEMBER)
     cmake_parse_arguments(ARG "${options}" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
 
     if((NOT ARG_SOURCES AND NOT ARG_CXX_SOURCES AND
@@ -4141,6 +4227,19 @@ function(aros_add_resource)
         aros_apply_link_options(${ARG_MMAKE_ID} ${ARG_LINK_OPTIONS})
         if(ARG_LIBS)
             aros_link_libraries(${ARG_MMAKE_ID} ${ARG_LIBS})
+        endif()
+        # A kickstart member needs a second link with a different library set,
+        # so make this compilation reusable. cmake/KickstartObjects.cmake.
+        aros_module_is_kickstart_member(_is_kickstart ${ARG_KICKSTART_MEMBER})
+        if(_is_kickstart)
+            aros_mirror_module_objects("${ARG_MMAKE_ID}")
+            set_property(GLOBAL PROPERTY
+                "AROS_KICKSTART_USELIBS_${ARG_MMAKE_ID}" "${ARG_USELIBS}")
+            # config/make.tmpl:2758 passes $(USER_LDFLAGS) to the kobj link as
+            # well, which is how arch/all-pc/kernel/make.opts' -lbootconsole
+            # and -lacpica reach a kickstart member.
+            set_property(GLOBAL PROPERTY
+                "AROS_KICKSTART_LDOPTS_${ARG_MMAKE_ID}" "${ARG_LINK_OPTIONS}")
         endif()
     endif()
 endfunction()
@@ -5394,15 +5493,38 @@ function(aros_link_kickstart)
 
     aros_record_load_set(NAME "${ARG_NAME}" KIND kickstart MEMBERS ${PRESENT})
 
+    # Each member contributes its kickstart object, not its loadable module:
+    # the module carries the compiler spec's default link set and keeps its
+    # library bases global, so linking three of those together fails on
+    # duplicate LibNextTagItem and set_call_libfuncs. See
+    # cmake/KickstartObjects.cmake.
     set(_objs "")
+    set(_member_deps "")
     foreach(mod IN LISTS PRESENT)
-        list(APPEND _objs "$<TARGET_FILE:${mod}>")
+        aros_kickstart_member_object(_member_object "${mod}")
+        list(APPEND _objs "${_member_object}")
+        # The object path, not the custom target: a DEPENDS on a generated file
+        # is a real input edge, where a target is only ordering and left the
+        # files absent at link time.
+        if(TARGET "${mod}-kickstart-object")
+            list(APPEND _member_deps "${_member_object}")
+        else()
+            list(APPEND _member_deps "${mod}")
+        endif()
     endforeach()
 
     set(_libs "")
     foreach(l IN LISTS ARG_USELIBS)
         list(APPEND _libs "-l${l}")
     endforeach()
+
+    # The reference links a kickstart with $(TARGET_CC) (config/make.tmpl:3904),
+    # so the compiler spec's default set applies here, and its LDFLAGS carry
+    # -nosysbase. That is where a member gets libamiga, libautoinit, liblibinit
+    # and the C runtime, all of which are deliberately excluded from the
+    # member's own object (config/make.tmpl:2752).
+    aros_default_link_set_files(_default_files _default_deps nosysbase)
+    list(APPEND _member_deps ${_default_deps})
 
     get_filename_component(_dir "${ARG_OUTPUT}" DIRECTORY)
 
@@ -5415,8 +5537,8 @@ function(aros_link_kickstart)
         OUTPUT "${ARG_OUTPUT}"
         COMMAND "${CMAKE_COMMAND}" -E make_directory "${_dir}"
         COMMAND "${AROS_LLD_BIN}" -r
-                -o "${ARG_OUTPUT}" ${_objs} ${_libs}
-        DEPENDS ${PRESENT}
+                -o "${ARG_OUTPUT}" ${_objs} ${_libs} ${_default_files}
+        DEPENDS ${_member_deps}
         COMMENT "Kickstart ${ARG_NAME} -> ${ARG_OUTPUT}"
         VERBATIM
         COMMAND_EXPAND_LISTS)

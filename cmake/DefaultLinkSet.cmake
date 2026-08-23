@@ -61,6 +61,55 @@ function(_aros_collect_targets directory out_var)
     set(${out_var} "${_targets}" PARENT_SCOPE)
 endfunction()
 
+# aros_default_link_set_files(<out-files> <out-deps> [<switch>...])
+#
+# The resolved set as archive paths, in spec order, for a link that is a custom
+# command rather than a target. The kickstart link needs exactly this: the
+# reference links it with $(TARGET_CC) (config/make.tmpl:3904), so the spec
+# applies there too, with -nosysbase among its LDFLAGS.
+#
+# Without it a kickstart image is left asking for LibNextTagItem (libamiga),
+# __includelibrarieshandling (libautoinit), set_call_libfuncs (liblibinit) and
+# the C runtime, because those archives are deliberately excluded from each
+# member's own object (config/make.tmpl:2752).
+function(aros_default_link_set_files out_files out_deps)
+    get_property(_set GLOBAL PROPERTY AROS_DEFAULT_LINK_SET)
+    set(_files "")
+    set(_deps "")
+    foreach(_spec IN LISTS _set)
+        string(REPLACE "|" ";" _fields "${_spec}")
+        list(LENGTH _fields _field_count)
+        if(NOT _field_count EQUAL 4)
+            continue()
+        endif()
+        list(GET _fields 1 _archive)
+        list(GET _fields 2 _absent)
+        list(GET _fields 3 _present)
+        set(_wanted TRUE)
+        foreach(_switch IN LISTS _absent)
+            if(_switch IN_LIST ARGN)
+                set(_wanted FALSE)
+            endif()
+        endforeach()
+        foreach(_switch IN LISTS _present)
+            if(NOT _switch IN_LIST ARGN)
+                set(_wanted FALSE)
+            endif()
+        endforeach()
+        if(NOT _wanted OR NOT TARGET "${_archive}")
+            continue()
+        endif()
+        # Duplicates are kept in the file list, as the spec names -lamiga twice
+        # and order decides resolution, but an input edge is needed only once.
+        list(APPEND _files "$<TARGET_FILE:${_archive}>")
+        if(NOT _archive IN_LIST _deps)
+            list(APPEND _deps "${_archive}")
+        endif()
+    endforeach()
+    set(${out_files} "${_files}" PARENT_SCOPE)
+    set(${out_deps} "${_deps}" PARENT_SCOPE)
+endfunction()
+
 # aros_apply_default_link_set()
 #
 # Appends the resolved set to every AROS artefact. Every add_executable() in

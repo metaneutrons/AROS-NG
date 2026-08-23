@@ -176,6 +176,7 @@ if(NOT TRANSPILER_RES EQUAL 0 OR NOT EXISTS "${GENERATED_TARGETS_CMAKE}")
 endif()
 include("${CMAKE_SOURCE_DIR}/cmake/DefaultLinkSet.cmake")
 include("${CMAKE_SOURCE_DIR}/cmake/BinaryObjects.cmake")
+include("${CMAKE_SOURCE_DIR}/cmake/KickstartObjects.cmake")
 include("${GENERATED_TARGETS_CMAKE}")
 
 # The target compiler's spec appends a default set of archives to every link,
@@ -189,6 +190,9 @@ aros_report_arch_override_gaps()
 
 # %rule_link_binary declarations this configuration could not build.
 aros_report_binary_object_gaps()
+
+# Kickstart members that could not get their own object.
+aros_report_kickstart_gaps()
 
 # compiler/startup's raw object rules are outside the generated declarations.
 # Locked C++ partial links explicitly consume cxx-startup.o, so make the
