@@ -131,7 +131,36 @@ without it. Same class of problem as Boost in point 1, and the same three
 routes apply. This is now the only thing between the three boot fixes and a
 building kernel.
 
-### 23. WORK — compiler-posixc, 179 failed steps from about three causes
+### 23. WORK — compiler-posixc, 179 failed steps from one cause, location unfound
+
+All of them come from include order, not from missing headers. The 28 posixc
+headers are staged correctly. The problem is that
+`SDK/include/aros/stdc` precedes `SDK/include/aros/posixc` on the include path,
+so a bare `<limits.h>`, `<errno.h>` or `<sys/types.h>` resolves to the C99
+variant and the POSIX superset is shadowed. That is why `PASS_MAX`, `PATH_MAX`,
+`off_t`, `__off64_t`, `EBADF`, `EISDIR` and `locale_t` all read as undeclared.
+
+`aros/posixc/limits.h` opens with `#include <aros/stdc/limits.h>` and adds the
+POSIX names, so the chain works from the SDK root alone and `aros/stdc` does
+not need to be on the search path at all.
+
+Verified by taking one `-I` off one command:
+
+    the command from compile_commands.json for compiler/crt/posixc/__fseeko.c
+    minus -I<build>/SDK/include/aros/stdc      ->  0 errors
+    unchanged                                  ->  3 errors
+
+What has not been found is what puts it there, and the search so far excludes
+the obvious places. Removing all five code sites in `cmake/AROS.cmake` that
+name `aros/stdc` leaves it first on the path; the transpiled declaration for
+`compiler-posixc` does not mention it; `AhiBuild.cmake`, `ConfigureBuild.cmake`
+and `BootstrapSDK.cmake` name it only for their own subsystems. The remaining
+candidate is an INTERFACE include directory arriving through
+`USELIBS stdc_rel stdcio_rel`, which is untested.
+
+The AROS.cmake edits were reverted because they changed nothing measurable.
+
+### 23b. WORK — three original guesses at the posixc cause, for the record
 
     __posixc_intbase.h:55:21   undeclared identifier 'PASS_MAX'     65
     __stdio.h:38:37            unknown type name 'off_t'            24
