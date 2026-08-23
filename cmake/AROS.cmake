@@ -192,6 +192,20 @@ if(NOT AROS_CROSS_TOOLCHAIN_ROOT AND
                NOT IS_DIRECTORY "${_aros_tool_path}")
                 set(${_aros_cmake_tool} "${_aros_tool_path}"
                     CACHE FILEPATH "LLVM target utility" FORCE)
+                # The cache set alone was not enough. CMake's compiler
+                # detection leaves CMAKE_AR and friends as ordinary variables in
+                # this scope, and an ordinary variable shadows the cache entry
+                # of the same name. So the cache read llvm-ar while every
+                # generated rule kept using /usr/bin/ar, and on an ELF object
+                # the macOS ar answers
+                #
+                #     ranlib: warning: archive member '...obj' not a mach-o file
+                #
+                # and writes a 96-byte archive with no members. All 119 static
+                # libraries in this build were empty, which is why strlen,
+                # memset and the rest of the C runtime read as undefined across
+                # hundreds of modules while being defined in the tree.
+                set(${_aros_cmake_tool} "${_aros_tool_path}")
             endif()
         endforeach()
         message(STATUS
@@ -199,6 +213,20 @@ if(NOT AROS_CROSS_TOOLCHAIN_ROOT AND
             "${_aros_development_llvm_bin}")
     endif()
 endif()
+
+# Restated because CMake assembles CMAKE_<LANG>_ARCHIVE_* while configuring the
+# language, which happens in project() before this file runs. Without this the
+# rules keep whichever ar was current then, and the override above never
+# reaches them.
+foreach(_aros_archive_lang C CXX ASM)
+    set(CMAKE_${_aros_archive_lang}_ARCHIVE_CREATE
+        "<CMAKE_AR> qc <TARGET> <LINK_FLAGS> <OBJECTS>")
+    set(CMAKE_${_aros_archive_lang}_ARCHIVE_APPEND
+        "<CMAKE_AR> q <TARGET> <OBJECTS>")
+    set(CMAKE_${_aros_archive_lang}_ARCHIVE_FINISH
+        "<CMAKE_RANLIB> <TARGET>")
+endforeach()
+
 
 # Canonical AROS ELF linker rules. A locked release toolchain defines the
 # linker before project() and must stay entirely inside its immutable prefix.
