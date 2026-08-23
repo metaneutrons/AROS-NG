@@ -714,12 +714,22 @@ Of that we carry only `-DMULTIBOOT_64BIT` and `-L$(GENDIR)/lib32`. Needed: a
 per-declaration ISA/target override, the linker script, and the 32-bit
 compiler-rt.
 
-### 27. WORK — no reproducible boot attempt exists
+### 27. RESOLVED — `scripts/boot/qemu-pc-x86_64.sh`
 
-No QEMU runner in the tree, and no boot has been attempted. `boot-iso` exists
-as a target and packages `${CMAKE_BINARY_DIR}/SYS`, but `grub` is one of the
-nine untranspiled `%build_with_configure` declarations from point 10, so the
-image has no loader yet.
+`boot-iso` still has no loader, because `grub` is one of the nine untranspiled
+`%build_with_configure` declarations from point 10. It is not needed: the
+bootstrap is a multiboot image, so QEMU loads it the way GRUB would, with
+`-kernel` the bootstrap and `-initrd` the module list.
+
+The runner writes the boot console to `<out>.serial` and the VGA screen to
+`<out>.png`, and takes extra QEMU arguments after `--`, which is how the traces
+in 27c through 27g were taken. Two of its choices are worth knowing:
+
+  * `" debug=serial"` is what turns the console on at all
+    (`arch/all-native/bootconsole/common.c:79` reads it with
+    `strstr(cmdline, " debug")`, leading space included). Without it a failing
+    boot is a black screen and nothing else.
+  * only the kickstart is passed as a module, for the reason in 27h.
 
 ### 29. WORK — the release producers count as target obligations
 
