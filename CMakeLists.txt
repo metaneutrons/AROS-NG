@@ -24,6 +24,11 @@ set(AROS_GENMODULE_BIN "${AROS_RUST_TOOLS_DIR}/aros-genmodule"
     CACHE FILEPATH "Rust aros-genmodule executable used to bootstrap the SDK")
 set(AROS_TRANSPILER_BIN "${AROS_RUST_TOOLS_DIR}/aros-transpiler"
     CACHE FILEPATH "Rust aros-transpiler executable used to generate the build graph")
+# Every AROS link goes through this. It is the part of collect-aros this build
+# needs: the second linker pass that turns the .aros.set.* sections into the
+# symbol-set arrays the code reads. See cmake/AROS.cmake's linker rules.
+set(AROS_COLLECT_BIN "${AROS_RUST_TOOLS_DIR}/aros-collect"
+    CACHE FILEPATH "Rust aros-collect executable used to link and collect symbol sets")
 
 include("${CMAKE_SOURCE_DIR}/cmake/ToolchainIdentity.cmake")
 aros_lock_build_tree_toolchain()
@@ -144,7 +149,8 @@ if(NOT EXISTS "${TRANSPILER_BIN}" OR IS_DIRECTORY "${TRANSPILER_BIN}" OR
    NOT IS_EXECUTABLE "${TRANSPILER_BIN}")
     message(FATAL_ERROR
         "AROS-NG requires the executable Rust transpiler at ${TRANSPILER_BIN}. "
-        "Build it with `cargo build --release -p aros-transpiler -p aros-genmodule` "
+        "Build it with `cargo build --release -p aros-transpiler -p aros-genmodule "
+        "-p aros-collect` "
         "in tools/aros-tools, or set AROS_RUST_TOOLS_DIR / AROS_TRANSPILER_BIN.")
 endif()
 

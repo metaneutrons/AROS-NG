@@ -216,7 +216,14 @@ function(aros_kickstart_member_object out_var module)
         OUTPUT "${_kobj}"
         COMMAND "${CMAKE_COMMAND}" -E make_directory
             "${CMAKE_BINARY_DIR}/gen/kobj"
-        COMMAND "${AROS_LLD_BIN}" -r ${_kobj_ldscript} -o "${_kobj}"
+        # Through aros-collect, because the reference's `-Ur` here is not just
+        # "relocatable": it is collect-aros's mode that also builds the symbol
+        # sets (collect-aros.c:188). The member's own `-T` ordering script goes
+        # to the first pass, exactly as KERNEL_KOBJ_LDSCRIPT does there, and the
+        # generated set script to the second.
+        COMMAND "${AROS_COLLECT_BIN}" --ld "${AROS_LLD_BIN}"
+            --report "${CMAKE_BINARY_DIR}/gen/kobj/${module}.sets.txt"
+            -- -r ${_kobj_ldscript} -o "${_kobj}"
             "$<TARGET_OBJECTS:${_objects}>" ${_external_objects}
             ${_ldopts} ${_lib_args}
         COMMAND "${AROS_KICKSTART_PYTHON3}" -B

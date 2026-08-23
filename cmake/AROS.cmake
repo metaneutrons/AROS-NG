@@ -241,10 +241,34 @@ else()
     find_program(AROS_LLD_BIN NAMES ld.lld)
 endif()
 if(AROS_LLD_BIN)
+    # Every link below runs through aros-collect rather than calling ld.lld
+    # directly, and that is not a wrapper for convenience.
+    #
+    # For an AROS target the linker the compiler spec names is not ld but
+    # collect-aros (config/elf-specs.in `*linker:` -> scripts/aros-ld.in:5), and
+    # TARGET_LD is the same wrapper (configure:18209; use_ld_wrapper is
+    # unconditionally yes). It links twice: `ld -r` over the inputs, then
+    # `ld -r -T <generated script>` over that result, and the script is what
+    # lays each .aros.set.* section out as the array the code reads
+    # (tools/collect-aros/gensets.c:69). A plain `-r`, which is what this rule
+    # used to be, is exactly the mode collect-aros stops early in
+    # (collect-aros.c:184), so every symbol set in this build was the empty weak
+    # `{0, 0}` of DEFINESET and no INITLIB, OPENLIB, LIBS or CTORS function had
+    # ever run. OPEN-POINTS point 32 has the measurements.
+    if(NOT EXISTS "${AROS_COLLECT_BIN}" OR IS_DIRECTORY "${AROS_COLLECT_BIN}"
+       OR NOT IS_EXECUTABLE "${AROS_COLLECT_BIN}")
+        message(FATAL_ERROR
+            "AROS-NG requires the executable Rust aros-collect at "
+            "${AROS_COLLECT_BIN}. Build it with `cargo build --release "
+            "-p aros-collect` in tools/aros-tools, or set AROS_RUST_TOOLS_DIR / "
+            "AROS_COLLECT_BIN. Without it every symbol set links empty.")
+    endif()
+    set(_aros_link "\"${AROS_COLLECT_BIN}\" --ld \"${AROS_LLD_BIN}\" --")
+
     set(CMAKE_C_LINK_EXECUTABLE
-        "${AROS_LLD_BIN} -r --sysroot=\"${AROS_TARGET_SYSROOT}\" <LINK_FLAGS> <OBJECTS> -o <TARGET> <LINK_LIBRARIES>")
+        "${_aros_link} -r --sysroot=\"${AROS_TARGET_SYSROOT}\" <LINK_FLAGS> <OBJECTS> -o <TARGET> <LINK_LIBRARIES>")
     set(CMAKE_C_CREATE_SHARED_MODULE
-        "${AROS_LLD_BIN} -r --sysroot=\"${AROS_TARGET_SYSROOT}\" <LINK_FLAGS> <OBJECTS> -o <TARGET> <LINK_LIBRARIES>")
+        "${_aros_link} -r --sysroot=\"${AROS_TARGET_SYSROOT}\" <LINK_FLAGS> <OBJECTS> -o <TARGET> <LINK_LIBRARIES>")
     if(AROS_CROSS_TOOLCHAIN_ROOT)
         if(NOT AROS_CROSS_TOOLCHAIN_CXX_RUNTIME_LIBRARIES)
             message(FATAL_ERROR
@@ -278,14 +302,14 @@ if(AROS_LLD_BIN)
         # archives explicitly, so this partial link has neither driver defaults
         # nor host-PATH resolution.
         set(_aros_cxx_partial_link
-            "${AROS_LLD_BIN} -r --sysroot=\"${AROS_TARGET_SYSROOT}\" <LINK_FLAGS> \"${_aros_cxx_startup_output}\" <OBJECTS> -o <TARGET> <LINK_LIBRARIES> --start-group${_aros_cxx_runtime_link_args} --end-group")
+            "${_aros_link} -r --sysroot=\"${AROS_TARGET_SYSROOT}\" <LINK_FLAGS> \"${_aros_cxx_startup_output}\" <OBJECTS> -o <TARGET> <LINK_LIBRARIES> --start-group${_aros_cxx_runtime_link_args} --end-group")
         set(CMAKE_CXX_LINK_EXECUTABLE "${_aros_cxx_partial_link}")
         set(CMAKE_CXX_CREATE_SHARED_MODULE "${_aros_cxx_partial_link}")
     else()
         set(CMAKE_CXX_LINK_EXECUTABLE
-            "${AROS_LLD_BIN} -r <LINK_FLAGS> <OBJECTS> -o <TARGET> <LINK_LIBRARIES>")
+            "${_aros_link} -r <LINK_FLAGS> <OBJECTS> -o <TARGET> <LINK_LIBRARIES>")
         set(CMAKE_CXX_CREATE_SHARED_MODULE
-            "${AROS_LLD_BIN} -r <LINK_FLAGS> <OBJECTS> -o <TARGET> <LINK_LIBRARIES>")
+            "${_aros_link} -r <LINK_FLAGS> <OBJECTS> -o <TARGET> <LINK_LIBRARIES>")
     endif()
 endif()
 
@@ -5661,15 +5685,21 @@ function(aros_link_kickstart)
 
     get_filename_component(_dir "${ARG_OUTPUT}" DIRECTORY)
 
-    # Linked with lld directly, as every module target here is: the reference
-    # passes -Wl,-Ur, but that is a GNU-ld option and driving clang would hand
-    # the job to the host linker, which rejects it. -r does what is needed,
-    # keeping the output relocatable so the bootstrap can load it, and the
-    # modules are already relocatable objects.
+    # Linked through aros-collect rather than the compiler driver, as every
+    # module target here is: config/make.tmpl:3899 passes -Wl,-Ur, and driving
+    # clang would hand the job to the host linker, which rejects that option.
+    #
+    # The two halves of -Ur are supplied separately. `-r` keeps the output
+    # relocatable so the bootstrap can load it, which is all lld needs to be
+    # told; the other half of what -Ur means to collect-aros is the second pass
+    # that builds the symbol sets (collect-aros.c:188), and that is what
+    # aros-collect does here.
     add_custom_command(
         OUTPUT "${ARG_OUTPUT}"
         COMMAND "${CMAKE_COMMAND}" -E make_directory "${_dir}"
-        COMMAND "${AROS_LLD_BIN}" -r
+        COMMAND "${AROS_COLLECT_BIN}" --ld "${AROS_LLD_BIN}"
+                --report "${CMAKE_BINARY_DIR}/generated_targets.kickstart-sets.txt"
+                -- -r
                 -o "${ARG_OUTPUT}" ${_objs} ${_libs} ${_default_files}
         DEPENDS ${_member_deps}
         COMMENT "Kickstart ${ARG_NAME} -> ${ARG_OUTPUT}"
