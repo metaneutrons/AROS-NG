@@ -177,6 +177,8 @@ endif()
 include("${CMAKE_SOURCE_DIR}/cmake/DefaultLinkSet.cmake")
 include("${CMAKE_SOURCE_DIR}/cmake/BinaryObjects.cmake")
 include("${CMAKE_SOURCE_DIR}/cmake/KickstartObjects.cmake")
+include("${CMAKE_SOURCE_DIR}/cmake/StandaloneLink.cmake")
+include("${CMAKE_SOURCE_DIR}/cmake/HostGeneratedHeaders.cmake")
 include("${GENERATED_TARGETS_CMAKE}")
 
 # The target compiler's spec appends a default set of archives to every link,
@@ -193,6 +195,12 @@ aros_report_binary_object_gaps()
 
 # Kickstart members that could not get their own object.
 aros_report_kickstart_gaps()
+
+# Programs that are standalone executables rather than AROS modules.
+aros_finalize_standalone_links()
+
+# Host-tool headers that could not be generated.
+aros_report_host_header_gaps()
 
 # compiler/startup's raw object rules are outside the generated declarations.
 # Locked C++ partial links explicitly consume cxx-startup.o, so make the

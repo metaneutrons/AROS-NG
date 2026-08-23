@@ -41,7 +41,11 @@ function(aros_link_binary_object)
         # built for this one.
         return()
     endif()
-    if(NOT TARGET "${BO_CONSUMER}")
+    # A standalone-linked consumer has no target yet: its link is created by
+    # aros_finalize_standalone_links, after every binary object is declared. Its
+    # object library carries the name instead.
+    set(_consumer_objects "${BO_CONSUMER}-objs")
+    if(NOT TARGET "${BO_CONSUMER}" AND NOT TARGET "${_consumer_objects}")
         set_property(GLOBAL APPEND PROPERTY AROS_BINARY_OBJECT_GAPS
             "${BO_NAME}: consumer ${BO_CONSUMER} is not a target here")
         return()
@@ -74,6 +78,18 @@ function(aros_link_binary_object)
     add_library("${_objects_target}" OBJECT ${_sources})
     set_target_properties("${_objects_target}" PROPERTIES LINKER_LANGUAGE C)
     aros_apply_includes("${_objects_target}" MODULE_DIR "${BO_DIRECTORY}")
+    # The image is linked with the consumer's architecture -- the vesa blob is
+    # `-m elf_i386` -- so it has to be compiled for it too. The declaration
+    # states only the link flag, and the consumer holds the rest.
+    get_property(_consumer_isa GLOBAL PROPERTY
+        "AROS_ISA_OPTIONS_${BO_CONSUMER}")
+    if(_consumer_isa)
+        target_compile_options("${_objects_target}" PRIVATE ${_consumer_isa})
+    endif()
+    get_property(_host_headers GLOBAL PROPERTY AROS_HOST_HEADER_TARGETS)
+    if(_consumer_isa AND _host_headers)
+        add_dependencies("${_objects_target}" ${_host_headers})
+    endif()
 
     get_filename_component(_out_dir "${BO_OUTPUT}" DIRECTORY)
     # The second link derives the symbol names from the input path as written,
@@ -94,9 +110,18 @@ function(aros_link_binary_object)
         # The reference recipe was written for GNU ld, which has no such base.
         # Setting it to the same address as -Ttext keeps the flat image exactly
         # where the declaration asks for it.
+        # -z norelro is the second lld-specific addition, for the same reason
+        # as --image-base: lld lays out a RELRO segment even for a flat image,
+        # and at a fixed low text address it overlaps .data --
+        #
+        #   ld.lld: error: section .relro_padding virtual address range
+        #   overlaps with .data
+        #
+        # A raw binary has no dynamic loader to enforce RELRO, so there is
+        # nothing to lose by switching it off.
         COMMAND "${AROS_LLD_BIN}" ${BO_LDFLAGS}
             "--entry=${BO_START}" --oformat binary "-Ttext=${BO_START}"
-            "--image-base=${BO_START}"
+            "--image-base=${BO_START}" -z norelro
             -o "${_image_dir}/${BO_NAME}"
             "$<TARGET_OBJECTS:${_objects_target}>"
         COMMAND "${CMAKE_COMMAND}" -E chdir "${_image_dir}"
@@ -111,7 +136,13 @@ function(aros_link_binary_object)
     # $(wildcard $(OBJDIR)/arch/*.o) achieves in the reference.
     set_source_files_properties("${BO_OUTPUT}" PROPERTIES
         EXTERNAL_OBJECT TRUE GENERATED TRUE)
-    target_sources("${BO_CONSUMER}" PRIVATE "${BO_OUTPUT}")
+    # Recorded for every consumer, and attached directly only when the consumer
+    # is a real target.
+    set_property(GLOBAL APPEND PROPERTY
+        "AROS_BINARY_OBJECTS_FOR_${BO_CONSUMER}" "${BO_OUTPUT}")
+    if(TARGET "${BO_CONSUMER}")
+        target_sources("${BO_CONSUMER}" PRIVATE "${BO_OUTPUT}")
+    endif()
 
     # A kickstart member's objects were mirrored while its target was created,
     # which is before this runs, so the wrapped binary has to be registered here

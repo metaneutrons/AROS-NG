@@ -3363,6 +3363,33 @@ function(aros_mirror_module_objects module)
     set_property(GLOBAL PROPERTY "AROS_KICKSTART_OBJECTS_${module}" "${_objects}")
 endfunction()
 
+# aros_apply_32bit_isa(<target>)
+#
+# Compiles a declaration for the 32-bit companion CPU.
+#
+# The reference states this as `ISA_FLAGS := $(ISA_32_FLAGS)` and gets the value
+# from Autoconf (configure.in:1463, `--target=i386-unknown-aros` for llvm).
+# There is no Autoconf here, so this substitutes the 32-bit form of the triple
+# this build already chooses per CPU at cmake/AROS.cmake:301 -- the same
+# substitution, one CPU down. Without it gen/lib32 holds 64-bit objects and the
+# 32-bit PC bootstrap cannot link against them.
+function(aros_apply_32bit_isa target)
+    if(NOT TARGET "${target}" OR NOT AROS_TARGET_CPU32)
+        return()
+    endif()
+    if(AROS_CROSS_TOOLCHAIN_ROOT)
+        # A locked build has one installed triple and no 32-bit counterpart to
+        # name, so this is reported rather than guessed.
+        set_property(GLOBAL APPEND PROPERTY AROS_ISA32_GAPS
+            "${target}: no 32-bit triple for the locked toolchain")
+        return()
+    endif()
+    # The single-argument form: `-target <triple>` as two list items is split
+    # by CMake and clang then reads the triple as a file name.
+    target_compile_options("${target}" PRIVATE
+        "--target=${AROS_TARGET_CPU32}-unknown-elf")
+endfunction()
+
 # aros_module_is_kickstart_member(<out-var> <arch-list>)
 #
 # Whether the module belongs to a kickstart of the configured architecture. The
@@ -4533,7 +4560,7 @@ endfunction()
 
 # Macro: aros_add_linklib
 function(aros_add_linklib)
-    set(options CANONICAL_OUTPUT EMPTY_ARCHIVE)
+    set(options CANONICAL_OUTPUT EMPTY_ARCHIVE VARIANT_32BIT)
     set(oneValueArgs TARGET MMAKE_ID DIRECTORY OUTPUT_DIR)
     set(multiValueArgs SOURCES CXX_SOURCES OBJC_SOURCES ASM_SOURCES
         LIBS USELIBS INCLUDES ARCH_INCLUDES
@@ -4663,6 +4690,9 @@ function(aros_add_linklib)
         endif()
         add_library(${ARG_MMAKE_ID} STATIC ${RESOLVED_SOURCES})
         set_target_properties(${ARG_MMAKE_ID} PROPERTIES LINKER_LANGUAGE C)
+        if(ARG_VARIANT_32BIT)
+            aros_apply_32bit_isa("${ARG_MMAKE_ID}")
+        endif()
 
         # Existing linklibs may target a host cross-tools directory, a private
         # bootstrap directory or lib32, and several deliberately share one
@@ -4716,7 +4746,8 @@ function(aros_add_program)
     set(multiValueArgs SOURCES CXX_SOURCES OBJC_SOURCES ASM_SOURCES
         LIBS USELIBS INCLUDES ARCH_INCLUDES
         DEFINES UNDEFINES COMPILE_OPTIONS ARCH_SOURCES
-        ARCH_DEFINES ARCH_COMPILE_OPTIONS LINK_OPTIONS)
+        ARCH_DEFINES ARCH_COMPILE_OPTIONS LINK_OPTIONS
+        DRIVER_LINK_OPTIONS ISA_LINK_OPTIONS)
     cmake_parse_arguments(ARG "${options}" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
 
     if((NOT ARG_SOURCES AND NOT ARG_CXX_SOURCES AND
@@ -4752,6 +4783,52 @@ function(aros_add_program)
         ASM_SOURCES ${ARG_ASM_SOURCES}
         ARCH_SOURCES ${ARG_ARCH_SOURCES})
     aros_mark_preprocessed_asm(${RESOLVED_SOURCES})
+
+    # A declaration carrying a linker script is not an AROS module but a
+    # standalone executable, and cannot go through the ordinary ld.lld -r rule.
+    # cmake/StandaloneLink.cmake.
+    aros_standalone_link_wanted(_standalone ${ARG_DRIVER_LINK_OPTIONS})
+    if(RESOLVED_SOURCES AND _standalone)
+        aros_program_output_dir(_prog_outdir "${ARG_DIRECTORY}"
+            "${ARG_INSTALL_DIR}")
+        set(_objects "${ARG_MMAKE_ID}-objs")
+        add_library("${_objects}" OBJECT ${RESOLVED_SOURCES})
+        set_target_properties("${_objects}" PROPERTIES LINKER_LANGUAGE C)
+        target_compile_definitions("${_objects}" PRIVATE
+            LC_LIBDEFS_FILE="${ARG_TARGET}_libdefs.h"
+            __AROS_PROGNAME__=${ARG_TARGET}
+            __AROS_MODNAME__=${ARG_TARGET})
+        # The ISA options belong to the compilation as well: this declaration
+        # builds for a different architecture than the rest of the tree.
+        if(ARG_ISA_LINK_OPTIONS)
+            target_compile_options("${_objects}" PRIVATE
+                ${ARG_ISA_LINK_OPTIONS})
+            # A %rule_link_binary attached to this program has to compile for
+            # the same architecture; its own declaration does not say which.
+            set_property(GLOBAL PROPERTY
+                "AROS_ISA_OPTIONS_${ARG_MMAKE_ID}" "${ARG_ISA_LINK_OPTIONS}")
+        endif()
+        aros_gate_arch("${_objects}" "${ARG_DIRECTORY}")
+        aros_apply_includes("${_objects}"
+            MODULE_DIR "${ARG_DIRECTORY}"
+            INCLUDES ${ARG_INCLUDES}
+            ARCH_INCLUDES ${ARG_ARCH_INCLUDES})
+        aros_apply_flags("${_objects}"
+            DEFINES ${ARG_DEFINES}
+            UNDEFINES ${ARG_UNDEFINES}
+            COMPILE_OPTIONS ${ARG_COMPILE_OPTIONS}
+            ARCH_DEFINES ${ARG_ARCH_DEFINES}
+            ARCH_COMPILE_OPTIONS ${ARG_ARCH_COMPILE_OPTIONS})
+        aros_declare_standalone_link(
+            NAME "${ARG_MMAKE_ID}"
+            OBJECTS "${_objects}"
+            OUTPUT "${_prog_outdir}/${ARG_TARGET}"
+            USELIBS ${ARG_USELIBS}
+            LINK_OPTIONS ${ARG_LINK_OPTIONS}
+            DRIVER_LINK_OPTIONS ${ARG_DRIVER_LINK_OPTIONS}
+            ISA_LINK_OPTIONS ${ARG_ISA_LINK_OPTIONS})
+        return()
+    endif()
 
     if(RESOLVED_SOURCES)
         add_executable(${ARG_MMAKE_ID} ${RESOLVED_SOURCES})

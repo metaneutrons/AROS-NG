@@ -408,7 +408,66 @@ We build one artefact per module and hand it to both purposes, so the members
 carry the default link set and their bases stay global. A second artefact per
 member is the work; the localisation step is the part that cannot be skipped.
 
-### 27b. WORK — the PC bootstrap is the last gate to a QEMU attempt
+### 27c. WORK — the kickstart fails to load on one weak undefined symbol
+
+The first QEMU run got this far, which is the first AROS-NG code to execute:
+
+```
+Booting from ROM..[ELF Loader] Undefined symbol '__aros_libreq_SysBase'
+Kickstart ELF: Relocation error in section 2!
+Failed to load the kickstart
+*** SYSTEM PANIC!!! ***
+```
+
+`qemu-system-x86_64 -kernel SYS/boot/pc/bootstrap -initrd SYS/boot/pc/kernel
+-append "aros debug=serial" -m 1024`. The serial console needs the leading
+space: `arch/all-native/bootconsole/common.c:81` looks for `" debug"`. With
+`-m 256` the bootstrap reports needing 268 MB and panics before loading, so the
+kickstart's working area is what wants the memory.
+
+The symbol is weak in the image and the loader does not care:
+`bootstrap/elfloader.c:157` fails on any `SHN_UNDEF`, weak or not.
+
+Where the two spellings part ways:
+
+  * `compiler/include/aros/symbolsets.h:158` -- `AROS_LIBREQ(bname, ver)`
+    emits `__aros_libreq_<bname>.<ver>`, with a version suffix, and its comment
+    says why: lld rejects repeated absolute definitions where GNU ld tolerates
+    them.
+  * `compiler/include/aros/symbolsets.h:151` -- `AROS_LIBSET` declares
+    `extern const LONG __aros_libreq_##bname __attribute__((weak))`, without
+    the suffix, and `rom/exec/exec_autoinit.c:23` reads that name.
+
+Both spellings are upstream's; our only change to that file is a
+`CONST_STRPTR` cast. The kickstart accordingly holds
+`__aros_libreq_SysBase w` (weak, undefined) next to a dozen
+`__aros_libreq_SysBase.<n> a` (absolute, defined). What has not been
+established is how upstream resolves the unsuffixed reference, and that is the
+thing to read next -- not the loader, which is unambiguous.
+
+### 27b. RESOLVED — the PC bootstrap links and boots
+
+2.1 MB ELF32 i386 executable, entry 0x100270, multiboot magic 0x1BADB002 at
+file offset 4096. QEMU loads it and it runs.
+
+Three pieces, all reported at their call sites:
+
+  * a declaration-scoped ISA override, from the `TARGET_ISA_LDFLAGS` assignment
+    to a global (`arch/all-pc/bootstrap/mmakefile.src:32`);
+  * a standalone-executable link (`cmake/StandaloneLink.cmake`), triggered by
+    the declaration carrying `-Wl,-T,<script>`;
+  * the 32-bit archives in `gen/lib32`, which were built 64-bit because
+    `ISA_FLAGS := $(ISA_32_FLAGS)` is an Autoconf value with no counterpart
+    here. CMake now substitutes the 32-bit form of the triple it already picks
+    per CPU, which is the same substitution `cmake/AROS.cmake:301` makes for
+    the 64-bit case.
+
+Four host-toolchain additions the reference recipe does not state, each
+commented where it is applied: `--image-base` and `-z norelro` on the flat
+binary link, `--ld-path` and `-no-pie` on the standalone link. All four are
+lld/clang defaults differing from GNU ld's, not choices about AROS.
+
+### 27b-old. WORK — the PC bootstrap is the last gate to a QEMU attempt
 
 Verified prerequisites, so this is link work and not a dependency hunt:
 
