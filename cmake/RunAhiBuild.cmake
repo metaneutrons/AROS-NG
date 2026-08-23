@@ -326,13 +326,26 @@ foreach(_header IN LISTS AHI_FEATURE_HEADERS)
     endif()
 endforeach()
 
-set(_expected_dependencies
-    "${_build_root}/liblinklibs-amiga.a"
-    "${_build_root}/liblinklibs-libm.a"
-    "${_build_root}/liblinklibs-mui.a")
+# The three link libraries, checked by what they are rather than by where they
+# happen to sit.
+#
+# This used to compare the paths against `<build root>/liblinklibs-<mmake>.a`
+# literally. That name is what a link library is called only while nothing names
+# it: a consumer promotes it and it moves to `SYS/Developer/lib/lib<name>.a`.
+# When that happened the comparison failed, and before it failed the caller could
+# not find the file at all. The three are not even in one place today --
+# linklibs-libm is private while linklibs-amiga and linklibs-mui are canonical.
+#
+# What the audit is actually about survives unchanged: exactly three inputs, each
+# a regular non-empty file inside the build root, each copied into the private
+# staging directory under a fixed alias. Only the assumption about their
+# filenames is gone, and it is the caller that now derives them, from the targets
+# that own them.
 set(_aliases libamiga.a libm.a libmui.a)
-if(NOT AHI_DEPENDENCY_PRODUCTS STREQUAL _expected_dependencies)
-    message(FATAL_ERROR "AHI runner dependency identity differs from audited contract")
+list(LENGTH AHI_DEPENDENCY_PRODUCTS _dependency_count)
+if(NOT _dependency_count EQUAL 3)
+    message(FATAL_ERROR
+        "AHI runner: expected 3 link-library dependencies, got ${_dependency_count}")
 endif()
 foreach(_index RANGE 0 2)
     list(GET AHI_DEPENDENCY_PRODUCTS ${_index} _dependency)
