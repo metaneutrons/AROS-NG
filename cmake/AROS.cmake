@@ -3134,6 +3134,40 @@ set(AROS_GENMODULE_MODTYPES
     library class mcc mui mcp device resource gadget image datatype
     usbclass btclass hidd handler hook)
 
+# aros_set_module_config(<mmake-id> <config-path>)
+#
+# The `.conf` a declaration names with `conffile=`. 81 of the 83 declarations
+# that state one give a file whose stem is not modname -- con_handler.conf for
+# modname=con, gauge.conf for modname=Gauge, VMM_Handler.conf for modname=VMM --
+# and both lookups below used to derive `<modname>.conf` and find nothing. For
+# con-handler that meant no genmodule scaffolding at all, so con_handler.c's
+# `extern const char GM_UNIQUENAME(LibName)[]` stayed undefined and the ELF
+# loader refused the whole boot over it.
+#
+# Kept in a global keyed by the declaration id rather than threaded through
+# every module builder's argument list: the two places that need it both have
+# the id, and eight builder signatures do not have to learn a field they only
+# forward.
+function(aros_set_module_config mmake config)
+    string(MAKE_C_IDENTIFIER "${mmake}" _key)
+    set_property(GLOBAL PROPERTY "AROS_MODULE_CONFIG_${_key}" "${config}")
+endfunction()
+
+# _aros_module_config(<out-var> <mmake-id> <directory> <target>)
+#
+# The declaration's own config when it named one, and `<target>.conf` in the
+# module directory otherwise, which is what a declaration without `conffile=`
+# means.
+function(_aros_module_config out_var mmake directory target)
+    string(MAKE_C_IDENTIFIER "${mmake}" _key)
+    get_property(_explicit GLOBAL PROPERTY "AROS_MODULE_CONFIG_${_key}")
+    if(_explicit)
+        set(${out_var} "${_explicit}" PARENT_SCOPE)
+    else()
+        set(${out_var} "${directory}/${target}.conf" PARENT_SCOPE)
+    endif()
+endfunction()
+
 function(_aros_generate_module_support out_prefix)
     set(options ABI SOURCES_ONLY)
     set(oneValueArgs TARGET MMAKE_ID DIRECTORY MODTYPE MODSUFFIX)
@@ -3157,7 +3191,7 @@ function(_aros_generate_module_support out_prefix)
     endif()
 
     cmake_path(ABSOLUTE_PATH GM_DIRECTORY NORMALIZE OUTPUT_VARIABLE _module_dir)
-    set(_conf "${_module_dir}/${GM_TARGET}.conf")
+    _aros_module_config(_conf "${GM_MMAKE_ID}" "${_module_dir}" "${GM_TARGET}")
     if(NOT EXISTS "${_conf}")
         message(FATAL_ERROR "${GM_MMAKE_ID}: missing genmodule config ${_conf}")
     endif()
@@ -3452,9 +3486,10 @@ endfunction()
 # entry point. rom/kernel is the visible case: kernel_init.c references its own
 # kernel_End and kernel_FuncTable, and nothing generated them.
 #
-# Returns an empty source list when the declaration has no `<name>.conf`. That
-# is not a defect; a hand-written module has nothing for genmodule to read. The
-# caller does not have to check.
+# Returns an empty source list when the declaration has no config -- the one it
+# names with `conffile=`, or `<name>.conf` when it names none. That is not a
+# defect; a hand-written module has nothing for genmodule to read. The caller
+# does not have to check.
 #
 # Sets <prefix>_GEN_DIR, <prefix>_INCLUDE_DIR, <prefix>_GENMODFILES_TARGET and
 # <prefix>_RUNTIME_DEFINES for aros_attach_module_scaffolding.
@@ -3470,7 +3505,8 @@ function(aros_module_scaffolding out_sources out_prefix)
     if(NOT MS_TARGET OR NOT MS_MMAKE_ID OR NOT MS_DIRECTORY OR NOT MS_MODTYPE)
         return()
     endif()
-    if(NOT EXISTS "${MS_DIRECTORY}/${MS_TARGET}.conf")
+    _aros_module_config(_ms_conf "${MS_MMAKE_ID}" "${MS_DIRECTORY}" "${MS_TARGET}")
+    if(NOT EXISTS "${_ms_conf}")
         return()
     endif()
     # A declaration that already owns the full generation must not get a second
@@ -3654,8 +3690,18 @@ endfunction()
 # Macro: aros_add_library
 function(aros_add_library)
     set(options ALWAYS_CXX_LINK GENMODULE_ONLY GENMODULE_LINKLIBS)
+    # DEFAULT_MODTYPE belongs here, and its absence was not harmless. It is
+    # read at :4067, so it looked declared; it was not, so `DEFAULT_MODTYPE mcc`
+    # from aros_add_mcc extended whatever multi-value argument came before it in
+    # the emitted call -- SOURCES. The 48 gadget, mcc and datatype declarations
+    # therefore each gained two sources named `DEFAULT_MODTYPE` and their
+    # modtype, and lost the modtype itself, so their genmodule scaffolding was
+    # generated as `library`: `error superclass specified when not a BOOPSI
+    # class`. The generated-source report added beside this is what showed the
+    # two bogus sources.
     set(oneValueArgs TARGET MMAKE_ID DIRECTORY INSTALL_DIR
-        MODSUFFIX DEFAULT_INSTALL_DIR DEFAULT_MODSUFFIX LINKLIB_NAME)
+        MODSUFFIX DEFAULT_MODTYPE DEFAULT_INSTALL_DIR DEFAULT_MODSUFFIX
+        LINKLIB_NAME)
     set(multiValueArgs SOURCES CXX_SOURCES OBJC_SOURCES ASM_SOURCES
         LIBS USELIBS INCLUDES ARCH_INCLUDES
         DEFINES UNDEFINES COMPILE_OPTIONS ARCH_SOURCES
