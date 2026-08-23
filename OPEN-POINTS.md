@@ -365,7 +365,18 @@ the compiler spec applies there too, with `-lexec` suppressed by `-nosysbase`.
 Its `uselibs=` is empty for pc-x86_64, so it contributes no libraries of its
 own.
 
-### 27a. WORK — a kickstart member is a different artefact from a module
+### 27a. RESOLVED — the kickstart links, with no undefined symbols
+
+`94cfb7c9f6`. 367 KB, ELF64 relocatable, zero undefined symbols, zero
+SHN_COMMON, all three members' romtag scaffolding present. That is the
+threshold `bootstrap/elfloader.c:157` sets.
+
+The reading that got there, in order: `$(USER_LDFLAGS)` applies to the member
+object too (36 undefined -> 16), the kickstart link itself uses `$(TARGET_CC)`
+so the compiler spec's default set applies there with `-nosysbase` (16 -> 2),
+and the wrapped SMP binary had to be carried past `$<TARGET_OBJECTS:>` (2 -> 0).
+
+### 27a-old. WORK — a kickstart member is a different artefact from a module
 
 The blocker for a boot image, and the reason the kickstart link fails with
 `duplicate symbol: LibNextTagItem` and `set_call_libfuncs`.
@@ -397,7 +408,35 @@ We build one artefact per module and hand it to both purposes, so the members
 carry the default link set and their bases stay global. A second artefact per
 member is the work; the localisation step is the part that cannot be skipped.
 
-### 27b. WORK — the PC bootstrap is a 32-bit build and we build it 64-bit
+### 27b. WORK — the PC bootstrap is the last gate to a QEMU attempt
+
+Verified prerequisites, so this is link work and not a dependency hunt:
+
+  * `gen/lib32/` already holds `libbootstrap.a`, `libbootconsole.a` and
+    `libstdc.static.a`, all built 32-bit by the `linklibs-*32` declarations.
+  * `arch/all-pc/bootstrap/ldscript.lds` is present.
+
+What is missing is the link kind. The bootstrap is a standalone multiboot ELF
+executable at a fixed address, not an AROS relocatable module, and our
+`CMAKE_C_LINK_EXECUTABLE` is globally `ld.lld -r`. The declaration's own
+comment (`arch/all-pc/bootstrap/mmakefile.src:25`) says why it must be clang
+driving the system linker: the AROS triple links via collect-aros, which emits
+relocatable modules and ignores the linker script.
+
+Two pieces:
+
+  1. A declaration-scoped ISA override. `TARGET_ISA_LDFLAGS :=
+     --target=i386-pc-linux-gnu -march=i486` and `TARGET_C_LIBS :=
+     $(TARGET_32_C_LIBS)` are assignments to *global* variables inside an
+     `ifeq` on the toolchain, which is why the flag collector, which reads
+     `USER_*` only, does not see them.
+  2. A standalone-executable link for a program declaration that carries
+     `-Wl,-T,<script>`: an object library at the declared ISA plus a custom
+     command linking through clang with `-m32 -Wl,-N -Wl,-e,kernel_bootstrap`
+     and the script. CMake has no per-target link rule, so a custom command is
+     the honest model, and it mirrors the reference having a distinct recipe.
+
+### 27b-old. WORK — what we carry of the bootstrap today
 
 `kernel-bootstrap-pc` fails at its vesa blob with
 
