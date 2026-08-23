@@ -2911,6 +2911,51 @@ endfunction()
 # the architecture object names. Overriding by base name is what lets
 # arch/x86_64-all/exec/stackswap.S replace rom/exec/stackswap.c, whose generic
 # body is only an `#error`.
+# aros_set_arch_source_options(<tag>|<dir>|<file>|<option> ...)
+#
+# Codegen options that belong to one architecture lane's own sources.
+#
+# Per file, not per target. `arch/i386-all/hidd/gfx` compiles rgbconv_sse.c with
+# -msse2 and rgbconv_avx.c with -mavx2, and the baseline dispatcher beside them
+# must stay baseline ISA -- its own comment says so, because it is the code that
+# always runs and decides at runtime which implementation to install. Applying
+# either flag to the whole target would defeat that. And once a lane is attached
+# to another lane the tag no longer separates them, so the file has to.
+function(aros_set_arch_source_options)
+    set_property(GLOBAL PROPERTY AROS_ARCH_SOURCE_OPTIONS "${ARGN}")
+endfunction()
+
+# _aros_apply_arch_source_options(<tag> <dir> <name> <resolved-path>)
+function(_aros_apply_arch_source_options tag dir name path)
+    get_property(_entries GLOBAL PROPERTY AROS_ARCH_SOURCE_OPTIONS)
+    set(_options "")
+    foreach(_entry IN LISTS _entries)
+        string(REPLACE "|" ";" _parts "${_entry}")
+        list(LENGTH _parts _n)
+        if(NOT _n EQUAL 4)
+            continue()
+        endif()
+        list(GET _parts 0 _tag)
+        list(GET _parts 1 _dir)
+        list(GET _parts 2 _file)
+        list(GET _parts 3 _option)
+        if(_tag STREQUAL tag AND _dir STREQUAL dir AND _file STREQUAL name)
+            list(APPEND _options "${_option}")
+        endif()
+    endforeach()
+    if(NOT _options)
+        return()
+    endif()
+    list(REMOVE_DUPLICATES _options)
+    get_source_file_property(_existing "${path}" COMPILE_OPTIONS)
+    if(_existing AND NOT _existing STREQUAL "NOTFOUND")
+        list(APPEND _options ${_existing})
+        list(REMOVE_DUPLICATES _options)
+    endif()
+    set_source_files_properties("${path}" PROPERTIES
+        COMPILE_OPTIONS "${_options}")
+endfunction()
+
 function(aros_resolve_arch_sources out_sources out_dropped module_dir)
     set(multiValueArgs SOURCES ARCH_SOURCES)
     cmake_parse_arguments(AS "" "" "${multiValueArgs}" ${ARGN})
@@ -2971,6 +3016,10 @@ function(aros_resolve_arch_sources out_sources out_dropped module_dir)
                 if(NOT RESOLVED)
                     continue()
                 endif()
+                foreach(_resolved_path IN LISTS RESOLVED)
+                    _aros_apply_arch_source_options(
+                        "${tag}" "${dir}" "${nm}" "${_resolved_path}")
+                endforeach()
                 list(APPEND CLAIMED_NAMES "${nm}")
                 list(APPEND OVERRIDE_NAMES "${nm}")
                 foreach(f IN LISTS RESOLVED)
