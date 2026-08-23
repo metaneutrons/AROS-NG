@@ -116,6 +116,82 @@ by comparing two runs at different parallelism.
 
 ---
 
+## The path to a graphical boot
+
+A full CMake build of pc-x86_64 on 2026-08-23 after the Boost staging fix:
+16378 of 16611 steps completed, 887 steps failed, 1496 errors.
+
+### 22. WORK — ACPICA is a fetched Port that kernel-kernel needs
+
+    GENINCDIR/libraries/acpica.h:47:10:
+        fatal error: 'acpica/actypes.h' file not found
+
+Three `arch/all-pc/kernel` sources need it, so `kernel-kernel` does not build
+without it. Same class of problem as Boost in point 1, and the same three
+routes apply. This is now the only thing between the three boot fixes and a
+building kernel.
+
+### 23. WORK — compiler-posixc, 179 failed steps from about three causes
+
+    __posixc_intbase.h:55:21   undeclared identifier 'PASS_MAX'     65
+    __stdio.h:38:37            unknown type name 'off_t'            24
+    aros/posixc/dirent.h:52:20 undeclared identifier 'PATH_MAX'     11
+
+Plus single instances of `EBADF`, `locale_t` and an implicit `wcwidth`. The
+shape says a small number of missing header sets rather than 179 problems.
+posixc is a core link library, so this is on the boot path.
+
+### 24. WORK — the C++ standard headers are not in the SDK
+
+`cstdint` 64, `cinttypes` 47, `cstddef` 33, `deque` 22, `memory` 14,
+`algorithm` 14, `string` 11. The libc++ headers the release toolchain builds
+are not reaching the consumers that need them. Mostly affects datatypes and
+ports rather than the boot path.
+
+### 25. WORK — third-party media and compression Ports dominate the failure count
+
+`lzma/version.h` 129, `src/webp/config.h` 72, plus heic/heif 118, jpegxl 82,
+de265 32, nouveau 24. None of these is on the boot path; together they are
+roughly half of the 887 failed steps. Worth separating from the boot work when
+reading any build number.
+
+### 26. RISK — nothing measures whether a module is complete
+
+Every link is `ld.lld -r`, partial. A missing symbol never fails a link; it
+produces a module with dangling externals that fails when AROS loads it. So a
+green build is necessary and proves nothing about loadability, and there is no
+instrument for it today.
+
+The cheap one would be `llvm-nm -u` over each built module, checking that every
+undefined symbol resolves within the kickstart set plus the modules loaded
+before it. Without that, a first boot attempt has a black screen as its only
+diagnostic.
+
+### 27. WORK — no reproducible boot attempt exists
+
+No QEMU runner in the tree, and no boot has been attempted. `boot-iso` exists
+as a target and packages `${CMAKE_BINARY_DIR}/SYS`, but `grub` is one of the
+nine untranspiled `%build_with_configure` declarations from point 10, so the
+image has no loader yet.
+
+### 28. WRONG — the four `fix/*` branches held fixes this branch needed
+
+Three of the four were still missing from `feat/cmake-build-propagation` and
+were breaking `kernel-kernel`, `kernel-aros` and `kernel-exec`, three of the
+most boot-critical modules. Applied as `db28a8940a`, `9657524044`,
+`ee1b2546d0`.
+
+Two lessons recorded because both cost time here: a branch created for
+upstreaming is not a branch that has been applied, and re-deriving an edit
+instead of cherry-picking the branch put `#include <proto/exec.h>` inside
+`#if defined(DEBUG_TIMESTAMP)`, where it fixed nothing. The branch had it
+right.
+
+The remaining branch, `fix/ahci-posix-errno`, did not appear in this census;
+whether it is still needed is unchecked.
+
+---
+
 ## Quality gates
 
 ### 7. DECIDE — a pinned digest of a live file sits in Rust source
