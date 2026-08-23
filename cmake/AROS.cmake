@@ -1905,6 +1905,15 @@ function(aros_resolve_sources out_var dir)
                 NORMALIZE _is_port_source)
         endif()
         if(NOT _is_port_source)
+            # A declared in-tree source that resolves to nothing used to be
+            # dropped here in silence, so a target quietly built with fewer
+            # objects than its declaration names. That is how
+            # `linklibs-udis86` came to be missing its generated itab.c with
+            # nothing to say so: the compile then failed on `itab.h` instead,
+            # one step removed from the cause.
+            get_property(_missing GLOBAL PROPERTY AROS_MISSING_SOURCES)
+            list(APPEND _missing "${RS_MMAKE_ID}|${dir}|${src}")
+            set_property(GLOBAL PROPERTY AROS_MISSING_SOURCES "${_missing}")
             continue()
         endif()
 

@@ -397,6 +397,10 @@ _aros_write_property_report(
     AROS_EMPTY_CONCRETE_TARGETS
     "generated_targets.empty-concrete-targets.txt"
     "concrete declaration(s) resolved to zero sources")
+_aros_write_property_report(
+    AROS_MISSING_SOURCES
+    "generated_targets.missing-sources.txt"
+    "declared source(s) that resolved to no file")
 
 get_property(_icon_targets GLOBAL PROPERTY AROS_ICON_TARGETS)
 get_property(_icon_outputs GLOBAL PROPERTY AROS_ICON_OUTPUTS)
