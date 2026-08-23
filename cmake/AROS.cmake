@@ -3095,8 +3095,14 @@ endfunction()
 # private root is essential for duplicate config stems: the global Rust scan is
 # intentionally broad and currently lets rom/usb/classes/arosx/arosx.conf race
 # rom/usb/classes/arosx/include/arosx.conf for the same SDK files.
+# Every modtype tools/genmodule/config.c:249 accepts. Kept as a list so a
+# misspelling still fails here rather than inside the generator.
+set(AROS_GENMODULE_MODTYPES
+    library class mcc mui mcp device resource gadget image datatype
+    usbclass btclass hidd handler hook)
+
 function(_aros_generate_module_support out_prefix)
-    set(options ABI)
+    set(options ABI SOURCES_ONLY)
     set(oneValueArgs TARGET MMAKE_ID DIRECTORY MODTYPE MODSUFFIX)
     cmake_parse_arguments(GM "${options}" "${oneValueArgs}" "" ${ARGN})
 
@@ -3104,9 +3110,13 @@ function(_aros_generate_module_support out_prefix)
         message(FATAL_ERROR
             "_aros_generate_module_support: TARGET, MMAKE_ID, DIRECTORY and MODTYPE are required")
     endif()
-    if(NOT GM_MODTYPE STREQUAL "library")
+    if(NOT GM_MODTYPE IN_LIST AROS_GENMODULE_MODTYPES)
         message(FATAL_ERROR
-            "${GM_MMAKE_ID}: the initial genmodule CMake path supports modtype=library only")
+            "${GM_MMAKE_ID}: '${GM_MODTYPE}' is not a genmodule module type")
+    endif()
+    if(GM_ABI AND GM_SOURCES_ONLY)
+        message(FATAL_ERROR
+            "${GM_MMAKE_ID}: ABI and SOURCES_ONLY are mutually exclusive")
     endif()
     if(NOT AROS_HOST_GENMODULE)
         message(FATAL_ERROR
@@ -3170,23 +3180,35 @@ function(_aros_generate_module_support out_prefix)
         endforeach()
     endforeach()
 
-    # BootstrapSDK's broad configure-time scan may just have written one of
-    # these paths from a same-named, non-ABI config.  Remove only the outputs
-    # this exact declaration owns; Ninja will now require the rule below and
-    # cannot consume the transient wrong arosx headers.
-    file(REMOVE ${_published_headers})
-    add_custom_command(
-        OUTPUT ${_private_headers} ${_published_headers}
-        COMMAND "${CMAKE_COMMAND}" -E make_directory
-            "${_include_dir}" ${_private_include_dirs} ${_publish_dirs}
-        COMMAND "${AROS_HOST_GENMODULE}" ${_opts} -d "${_include_dir}"
-            writeincludes "${GM_TARGET}" "${GM_MODTYPE}"
-        ${_publish_commands}
-        DEPENDS "${AROS_HOST_GENMODULE}" "${_conf}"
-        COMMENT "Generating exact ${GM_TARGET}.${GM_MODTYPE} ABI headers"
-        VERBATIM)
-    set(_includes_target "${GM_MMAKE_ID}-includes-generated")
-    add_custom_target("${_includes_target}" DEPENDS ${_published_headers})
+    # SOURCES_ONLY skips the public headers for two reasons. genmodule emits
+    # them only under `options includes` (tools/genmodule/genmodule.c:39), so
+    # declaring the five outputs for a module that states `noincludes` would
+    # make Ninja fail on a rule that legitimately wrote nothing. And the SDK
+    # header story is already owned by the Rust aros-genmodule's configure-time
+    # scan; publishing 265 more modules into the same three roots would put
+    # same-named headers into a race whose winner is parse order.
+    set(_includes_target "")
+    if(NOT GM_SOURCES_ONLY)
+        # BootstrapSDK's broad configure-time scan may just have written one of
+        # these paths from a same-named, non-ABI config.  Remove only the outputs
+        # this exact declaration owns; Ninja will now require the rule below and
+        # cannot consume the transient wrong arosx headers.
+        file(REMOVE ${_published_headers})
+        add_custom_command(
+            OUTPUT ${_private_headers} ${_published_headers}
+            COMMAND "${CMAKE_COMMAND}" -E make_directory
+                "${_include_dir}" ${_private_include_dirs} ${_publish_dirs}
+            COMMAND "${AROS_HOST_GENMODULE}" ${_opts} -d "${_include_dir}"
+                writeincludes "${GM_TARGET}" "${GM_MODTYPE}"
+            ${_publish_commands}
+            DEPENDS "${AROS_HOST_GENMODULE}" "${_conf}"
+            COMMENT "Generating exact ${GM_TARGET}.${GM_MODTYPE} ABI headers"
+            VERBATIM)
+        set(_includes_target "${GM_MMAKE_ID}-includes-generated")
+        add_custom_target("${_includes_target}" DEPENDS ${_published_headers})
+    else()
+        set(_published_headers "")
+    endif()
 
     set(_libdefs "${_gen_dir}/${GM_TARGET}_libdefs.h")
     add_custom_command(
@@ -3283,6 +3305,83 @@ function(_aros_generate_module_support out_prefix)
     set(${out_prefix}_GENMODFILES_TARGET "${_genmodfiles_target}" PARENT_SCOPE)
     set(${out_prefix}_FD "${_fd}" PARENT_SCOPE)
     set(${out_prefix}_FD_TARGET "${_fd_target}" PARENT_SCOPE)
+endfunction()
+
+# aros_module_scaffolding(<out-sources> <prefix> MODTYPE <t> TARGET <name>
+#                         MMAKE_ID <id> DIRECTORY <dir> [MODSUFFIX <s>])
+#
+# The generated `<mod>_start.c` and `<mod>_end.c` a module needs to be a module
+# at all: the start file carries the romtag and the init entry
+# (tools/genmodule/writestart.c) and the end file the marker the romtag scanner
+# leaps to (tools/genmodule/writeend.c:44). Only aros_add_library asked for
+# them, so 265 declarations with a genmodule config -- every resource, device,
+# hidd, gadget, datatype, mcc and custom module target -- were built without an
+# entry point. rom/kernel is the visible case: kernel_init.c references its own
+# kernel_End and kernel_FuncTable, and nothing generated them.
+#
+# Returns an empty source list when the declaration has no `<name>.conf`. That
+# is not a defect; a hand-written module has nothing for genmodule to read. The
+# caller does not have to check.
+#
+# Sets <prefix>_GEN_DIR, <prefix>_INCLUDE_DIR, <prefix>_GENMODFILES_TARGET and
+# <prefix>_RUNTIME_DEFINES for aros_attach_module_scaffolding.
+function(aros_module_scaffolding out_sources out_prefix)
+    set(oneValueArgs MODTYPE TARGET MMAKE_ID DIRECTORY MODSUFFIX)
+    cmake_parse_arguments(MS "" "${oneValueArgs}" "" ${ARGN})
+
+    set(${out_sources} "" PARENT_SCOPE)
+    set(${out_prefix}_GEN_DIR "" PARENT_SCOPE)
+    set(${out_prefix}_INCLUDE_DIR "" PARENT_SCOPE)
+    set(${out_prefix}_GENMODFILES_TARGET "" PARENT_SCOPE)
+    set(${out_prefix}_RUNTIME_DEFINES "" PARENT_SCOPE)
+    if(NOT MS_TARGET OR NOT MS_MMAKE_ID OR NOT MS_DIRECTORY OR NOT MS_MODTYPE)
+        return()
+    endif()
+    if(NOT EXISTS "${MS_DIRECTORY}/${MS_TARGET}.conf")
+        return()
+    endif()
+    # A declaration that already owns the full generation must not get a second
+    # one under the same private root.
+    if(TARGET "${MS_MMAKE_ID}-genmodfiles-generated")
+        return()
+    endif()
+
+    _aros_generate_module_support(_ms SOURCES_ONLY
+        TARGET "${MS_TARGET}"
+        MMAKE_ID "${MS_MMAKE_ID}"
+        DIRECTORY "${MS_DIRECTORY}"
+        MODTYPE "${MS_MODTYPE}"
+        MODSUFFIX "${MS_MODSUFFIX}")
+
+    set(${out_sources} "${_ms_START}" "${_ms_END}" PARENT_SCOPE)
+    set(${out_prefix}_GEN_DIR "${_ms_GEN_DIR}" PARENT_SCOPE)
+    set(${out_prefix}_INCLUDE_DIR "${_ms_INCLUDE_DIR}" PARENT_SCOPE)
+    set(${out_prefix}_GENMODFILES_TARGET
+        "${_ms_GENMODFILES_TARGET}" PARENT_SCOPE)
+    set(${out_prefix}_RUNTIME_DEFINES
+        "${_ms_RUNTIME_DEFINES}" PARENT_SCOPE)
+endfunction()
+
+# aros_attach_module_scaffolding(<target> <prefix> <directory> <module>)
+#
+# Puts the private generated tree ahead of every other include path, so the
+# generated start file finds its own `<mod>_libdefs.h`, and orders the target
+# after the generation step.
+function(aros_attach_module_scaffolding target prefix directory module)
+    if(NOT TARGET "${target}" OR NOT ${prefix}_GEN_DIR)
+        return()
+    endif()
+    target_include_directories("${target}" BEFORE PRIVATE
+        "${${prefix}_INCLUDE_DIR}" "${${prefix}_GEN_DIR}")
+    if(${prefix}_RUNTIME_DEFINES)
+        target_compile_definitions("${target}" PRIVATE
+            ${${prefix}_RUNTIME_DEFINES})
+    endif()
+    _aros_add_genmodule_config_header_dependencies(
+        "${target}" "${directory}/${module}.conf")
+    if(${prefix}_GENMODFILES_TARGET AND TARGET "${${prefix}_GENMODFILES_TARGET}")
+        add_dependencies("${target}" "${${prefix}_GENMODFILES_TARGET}")
+    endif()
 endfunction()
 
 # Select the linker language for a runtime module or program.  Upstream's
@@ -3755,6 +3854,22 @@ function(aros_add_library)
         if(_has_genmodule)
             list(APPEND RESOLVED_SOURCES "${_gm_START}" "${_gm_END}")
         endif()
+        # aros_add_gadget, aros_add_mcc and aros_add_datatype come through here,
+        # and their module type is not `library`. The full generation above runs
+        # only for a declaration with a client archive, so without this the 48
+        # of them get no start or end file either.
+        if(ARG_DEFAULT_MODTYPE)
+            set(_library_modtype "${ARG_DEFAULT_MODTYPE}")
+        else()
+            set(_library_modtype "library")
+        endif()
+        aros_module_scaffolding(_scaffold_sources _scaffold
+            MODTYPE "${_library_modtype}"
+            TARGET "${ARG_TARGET}"
+            MMAKE_ID "${ARG_MMAKE_ID}"
+            DIRECTORY "${ARG_DIRECTORY}"
+            MODSUFFIX "${ARG_MODSUFFIX}")
+        list(APPEND RESOLVED_SOURCES ${_scaffold_sources})
         if(ARG_DEFAULT_INSTALL_DIR)
             set(_default_install_dir "${ARG_DEFAULT_INSTALL_DIR}")
         else()
@@ -3776,6 +3891,8 @@ function(aros_add_library)
             "${_default_modsuffix}" "${ARG_MODSUFFIX}")
 
         add_executable(${ARG_MMAKE_ID} ${RESOLVED_SOURCES})
+        aros_attach_module_scaffolding("${ARG_MMAKE_ID}" _scaffold
+            "${ARG_DIRECTORY}" "${ARG_TARGET}")
         target_compile_definitions(${ARG_MMAKE_ID} PRIVATE
             LC_LIBDEFS_FILE="${ARG_TARGET}_libdefs.h"
             __AROS_LIBNAME__=${ARG_TARGET}
@@ -3893,11 +4010,20 @@ function(aros_add_device)
     aros_mark_preprocessed_asm(${RESOLVED_SOURCES})
 
     if(RESOLVED_SOURCES)
+        aros_module_scaffolding(_scaffold_sources _scaffold
+            MODTYPE device
+            TARGET "${ARG_TARGET}"
+            MMAKE_ID "${ARG_MMAKE_ID}"
+            DIRECTORY "${ARG_DIRECTORY}"
+            MODSUFFIX "${ARG_MODSUFFIX}")
+        list(APPEND RESOLVED_SOURCES ${_scaffold_sources})
         _aros_module_install_dir(_install_dir
             "${AROS_DEVS_DIR}" "${ARG_INSTALL_DIR}")
         _aros_module_output_name(_output_name "${ARG_MMAKE_ID}"
             "device" "${ARG_MODSUFFIX}")
         add_executable(${ARG_MMAKE_ID} ${RESOLVED_SOURCES})
+        aros_attach_module_scaffolding("${ARG_MMAKE_ID}" _scaffold
+            "${ARG_DIRECTORY}" "${ARG_TARGET}")
         target_compile_definitions(${ARG_MMAKE_ID} PRIVATE
             LC_LIBDEFS_FILE="${ARG_TARGET}_libdefs.h"
             __AROS_DEVNAME__=${ARG_TARGET}
@@ -3974,11 +4100,20 @@ function(aros_add_resource)
     aros_mark_preprocessed_asm(${RESOLVED_SOURCES})
 
     if(RESOLVED_SOURCES)
+        aros_module_scaffolding(_scaffold_sources _scaffold
+            MODTYPE resource
+            TARGET "${ARG_TARGET}"
+            MMAKE_ID "${ARG_MMAKE_ID}"
+            DIRECTORY "${ARG_DIRECTORY}"
+            MODSUFFIX "${ARG_MODSUFFIX}")
+        list(APPEND RESOLVED_SOURCES ${_scaffold_sources})
         _aros_module_install_dir(_install_dir
             "${AROS_RESOURCES_DIR}" "${ARG_INSTALL_DIR}")
         _aros_module_output_name(_output_name "${ARG_MMAKE_ID}"
             "resource" "${ARG_MODSUFFIX}")
         add_executable(${ARG_MMAKE_ID} ${RESOLVED_SOURCES})
+        aros_attach_module_scaffolding("${ARG_MMAKE_ID}" _scaffold
+            "${ARG_DIRECTORY}" "${ARG_TARGET}")
         target_compile_definitions(${ARG_MMAKE_ID} PRIVATE
             LC_LIBDEFS_FILE="${ARG_TARGET}_libdefs.h"
             __AROS_RESNAME__=${ARG_TARGET}
@@ -4055,11 +4190,20 @@ function(aros_add_hidd)
     aros_mark_preprocessed_asm(${RESOLVED_SOURCES})
 
     if(RESOLVED_SOURCES)
+        aros_module_scaffolding(_scaffold_sources _scaffold
+            MODTYPE hidd
+            TARGET "${ARG_TARGET}"
+            MMAKE_ID "${ARG_MMAKE_ID}"
+            DIRECTORY "${ARG_DIRECTORY}"
+            MODSUFFIX "${ARG_MODSUFFIX}")
+        list(APPEND RESOLVED_SOURCES ${_scaffold_sources})
         _aros_module_install_dir(_install_dir
             "${AROS_DRIVERS_DIR}" "${ARG_INSTALL_DIR}")
         _aros_module_output_name(_output_name "${ARG_MMAKE_ID}"
             "hidd" "${ARG_MODSUFFIX}")
         add_executable(${ARG_MMAKE_ID} ${RESOLVED_SOURCES})
+        aros_attach_module_scaffolding("${ARG_MMAKE_ID}" _scaffold
+            "${ARG_DIRECTORY}" "${ARG_TARGET}")
         target_compile_definitions(${ARG_MMAKE_ID} PRIVATE
             LC_LIBDEFS_FILE="${ARG_TARGET}_libdefs.h"
             __AROS_HIDDNAME__=${ARG_TARGET}
@@ -4094,6 +4238,7 @@ endfunction()
 # Macro: aros_add_datatype
 function(aros_add_datatype)
     aros_add_library(${ARGN}
+        DEFAULT_MODTYPE datatype
         DEFAULT_INSTALL_DIR "${AROS_DATATYPES_DIR}"
         DEFAULT_MODSUFFIX "datatype")
 endfunction()
@@ -4101,6 +4246,7 @@ endfunction()
 # Macro: aros_add_gadget
 function(aros_add_gadget)
     aros_add_library(${ARGN}
+        DEFAULT_MODTYPE gadget
         DEFAULT_INSTALL_DIR "${AROS_GADGETS_DIR}"
         DEFAULT_MODSUFFIX "gadget")
 endfunction()
@@ -4108,6 +4254,7 @@ endfunction()
 # Macro: aros_add_mcc
 function(aros_add_mcc)
     aros_add_library(${ARGN}
+        DEFAULT_MODTYPE mcc
         DEFAULT_INSTALL_DIR "${AROS_ZUNE_CLASSES_DIR}"
         DEFAULT_MODSUFFIX "mcc")
 endfunction()
@@ -4648,6 +4795,13 @@ function(aros_add_custom_target)
     if(NOT RESOLVED_SOURCES)
         return()
     endif()
+    aros_module_scaffolding(_scaffold_sources _scaffold
+        MODTYPE "${ARG_MODTYPE}"
+        TARGET "${ARG_TARGET}"
+        MMAKE_ID "${ARG_MMAKE_ID}"
+        DIRECTORY "${ARG_DIRECTORY}"
+        MODSUFFIX "${ARG_MODSUFFIX}")
+    list(APPEND RESOLVED_SOURCES ${_scaffold_sources})
     aros_mark_preprocessed_asm(${RESOLVED_SOURCES})
 
     add_executable(${ARG_MMAKE_ID} ${RESOLVED_SOURCES})
@@ -4655,6 +4809,8 @@ function(aros_add_custom_target)
         LC_LIBDEFS_FILE="${ARG_TARGET}_libdefs.h"
         __AROS_MODNAME__=${ARG_TARGET}
     )
+    aros_attach_module_scaffolding("${ARG_MMAKE_ID}" _scaffold
+        "${ARG_DIRECTORY}" "${ARG_TARGET}")
     set_target_properties(${ARG_MMAKE_ID} PROPERTIES
         OUTPUT_NAME "${_outname}"
         RUNTIME_OUTPUT_DIRECTORY "${_moddir}")
@@ -5146,6 +5302,11 @@ function(aros_add_module_simple)
     elseif(ARG_MODTYPE STREQUAL "printer")
         set(_default_install_dir "${AROS_PRINTERS_DIR}")
     endif()
+    # No scaffolding here. config/make.tmpl:1974 defines %build_module_simple
+    # with no genmodule step at all: it links its own objects and nothing else.
+    # Generating a start file for workbench/libs/gl added its whole 463-entry
+    # function table as undefined references, because this declaration is an ABI
+    # shell whose implementation lives in the Mesa port.
     _aros_module_install_dir(_install_dir
         "${_default_install_dir}" "${ARG_INSTALL_DIR}")
     _aros_module_output_name(_output_name "${ARG_MMAKE_ID}"
