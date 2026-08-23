@@ -408,7 +408,49 @@ We build one artefact per module and hand it to both purposes, so the members
 carry the default link set and their bases stay global. A second artefact per
 member is the work; the localisation step is the part that cannot be skipped.
 
-### 27d. WORK — the kernel hits an invalid opcode after the kickstart loads
+### 27e. WORK — a page fault inside the kernel entry
+
+`start64` runs -- the trace shows `cmpl $0x41524f53, %esi` at its first
+instruction, so the magic handshake with the bootstrap works -- and then:
+
+```
+v=0e e=0000 cpl=0 IP=0008:00000000013b3de1 SP=0010:000000000138e6c8
+            CR2=fffffffffffff490
+v=08 e=0000 cpl=0 IP=0008:00000000013b3de1  EAX=0000000000308030
+```
+
+`CR2` is -0xb70 as a signed value, so this is a null base plus a negative
+field offset rather than a wild address. The #DF follows because there is still
+no IDT at that point. Next step is mapping 0x13b3de1 to a source line, for
+which the load base is now known from the trace: `start64` sits at 0x13b8370.
+
+### 27d. RESOLVED — the entry point is the startup section, not the first code
+
+Fixed on `fix/elf-loader-startup-section-entry`, off the weak-symbol branch and
+so off `upstream/master`.
+
+`bootstrap/elfloader.c:676` took the first `SHF_EXECINSTR` section as the entry.
+That is a guess, and a module's generated start file breaks it: for a resource
+the start file holds only the Resident structure, so its `.text` is present and
+empty, which puts `.text` first in the linked image while `start64` stays in
+`.aros.startup` at section index 7. The bootstrap jumped to whatever was first
+in `.text` -- on x86_64 the file-scope `asm()` `delay` of
+`arch/x86_64-pc/kernel/kernel_startup.c:642`, which clang emits ahead of every
+function. It is `jmp`/`retq`, so the kernel returned to a stack slot holding no
+address and ran through zeroed memory to a stray `0x2f`.
+
+`.aros.startup` is not a guess: `__startup`
+(`compiler/arossupport/include/system.h:258`) exists to mark the startup code.
+A file without that section keeps the old behaviour.
+
+Found alongside: `config/make.tmpl:2681` puts the start files at the *head* of a
+module's object list and `:2712` passes the end object separately for the tail.
+We appended both. The end-last half is required by
+`tools/genmodule/writeend.c:44`, where the romtag's `rt_EndSkip` points at the
+marker, so the order is now stated explicitly in
+`aros_place_module_scaffolding`.
+
+### 27d-old. WORK — the kernel hits an invalid opcode after the kickstart loads
 
 With the loader fix the kickstart loads and the kernel runs. It then faults:
 

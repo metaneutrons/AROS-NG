@@ -3462,6 +3462,43 @@ function(aros_module_scaffolding out_sources out_prefix)
         "${_ms_RUNTIME_DEFINES}" PARENT_SCOPE)
 endfunction()
 
+# aros_place_module_scaffolding(<sources-var> <scaffold-list>)
+#
+# Order matters, and only in one direction: the generated start file has to come
+# first and the end file last.
+#
+# config/make.tmpl:2681 puts `$(addsuffix .o,$(_STARTFILES))` at the head of a
+# module's object list, and :2712 passes the end object separately so the link
+# rule can put it at the tail. Both are load-bearing:
+#
+#   bootstrap/elfloader.c:676  takes the first executable section of the
+#                              loaded image as the entry point, so the start
+#                              file's code must be the first code there
+#   tools/genmodule/writeend.c:44
+#                              the End marker must be the last thing in the
+#                              module, because the romtag's rt_EndSkip points
+#                              at it
+#
+# Appending both put kernel_init's text first in the kickstart, so the bootstrap
+# jumped into the middle of it. The trace ran off into zeroed memory and stopped
+# on a stray 0x2f:
+#
+#   v=06 IP=0008:000000000031052f
+function(aros_place_module_scaffolding sources_var scaffold)
+    list(LENGTH scaffold _count)
+    if(_count EQUAL 0)
+        return()
+    endif()
+    if(NOT _count EQUAL 2)
+        message(FATAL_ERROR
+            "aros_place_module_scaffolding: expected a start and an end file, got: ${scaffold}")
+    endif()
+    list(GET scaffold 0 _start)
+    list(GET scaffold 1 _end)
+    set(_sources "${_start}" ${${sources_var}} "${_end}")
+    set(${sources_var} "${_sources}" PARENT_SCOPE)
+endfunction()
+
 # aros_attach_module_scaffolding(<target> <prefix> <directory> <module>)
 #
 # Puts the private generated tree ahead of every other include path, so the
@@ -3969,7 +4006,7 @@ function(aros_add_library)
             MMAKE_ID "${ARG_MMAKE_ID}"
             DIRECTORY "${ARG_DIRECTORY}"
             MODSUFFIX "${ARG_MODSUFFIX}")
-        list(APPEND RESOLVED_SOURCES ${_scaffold_sources})
+        aros_place_module_scaffolding(RESOLVED_SOURCES "${_scaffold_sources}")
         if(ARG_DEFAULT_INSTALL_DIR)
             set(_default_install_dir "${ARG_DEFAULT_INSTALL_DIR}")
         else()
@@ -4129,7 +4166,7 @@ function(aros_add_device)
             MMAKE_ID "${ARG_MMAKE_ID}"
             DIRECTORY "${ARG_DIRECTORY}"
             MODSUFFIX "${ARG_MODSUFFIX}")
-        list(APPEND RESOLVED_SOURCES ${_scaffold_sources})
+        aros_place_module_scaffolding(RESOLVED_SOURCES "${_scaffold_sources}")
         _aros_module_install_dir(_install_dir
             "${AROS_DEVS_DIR}" "${ARG_INSTALL_DIR}")
         _aros_module_output_name(_output_name "${ARG_MMAKE_ID}"
@@ -4219,7 +4256,7 @@ function(aros_add_resource)
             MMAKE_ID "${ARG_MMAKE_ID}"
             DIRECTORY "${ARG_DIRECTORY}"
             MODSUFFIX "${ARG_MODSUFFIX}")
-        list(APPEND RESOLVED_SOURCES ${_scaffold_sources})
+        aros_place_module_scaffolding(RESOLVED_SOURCES "${_scaffold_sources}")
         _aros_module_install_dir(_install_dir
             "${AROS_RESOURCES_DIR}" "${ARG_INSTALL_DIR}")
         _aros_module_output_name(_output_name "${ARG_MMAKE_ID}"
@@ -4322,7 +4359,7 @@ function(aros_add_hidd)
             MMAKE_ID "${ARG_MMAKE_ID}"
             DIRECTORY "${ARG_DIRECTORY}"
             MODSUFFIX "${ARG_MODSUFFIX}")
-        list(APPEND RESOLVED_SOURCES ${_scaffold_sources})
+        aros_place_module_scaffolding(RESOLVED_SOURCES "${_scaffold_sources}")
         _aros_module_install_dir(_install_dir
             "${AROS_DRIVERS_DIR}" "${ARG_INSTALL_DIR}")
         _aros_module_output_name(_output_name "${ARG_MMAKE_ID}"
@@ -4977,7 +5014,7 @@ function(aros_add_custom_target)
         MMAKE_ID "${ARG_MMAKE_ID}"
         DIRECTORY "${ARG_DIRECTORY}"
         MODSUFFIX "${ARG_MODSUFFIX}")
-    list(APPEND RESOLVED_SOURCES ${_scaffold_sources})
+    aros_place_module_scaffolding(RESOLVED_SOURCES "${_scaffold_sources}")
     aros_mark_preprocessed_asm(${RESOLVED_SOURCES})
 
     add_executable(${ARG_MMAKE_ID} ${RESOLVED_SOURCES})
