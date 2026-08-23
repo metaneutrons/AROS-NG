@@ -121,53 +121,74 @@ by comparing two runs at different parallelism.
 A full CMake build of pc-x86_64 on 2026-08-23 after the Boost staging fix:
 16378 of 16611 steps completed, 887 steps failed, 1496 errors.
 
-### 32. WORK — nothing gathers the symbol sets, so every one of them is empty
+### 34. WORK — collect-aros adds inputs the first pass turns out to need
 
-This is the boot blocker, and it is not confined to the boot: 527 source files
-use an `ADD2*` macro, and 313 of 381 sampled built artefacts carry
-`.aros.set.*` sections that nothing reads.
+`collect_extra` (`tools/collect-aros/backend-generic.c:117`) reads the first
+pass's symbols and adds `OBJLIBDIR`-relative inputs to the second: the C++
+pure-virtual object when `__cxa_pure_virtual` is left weak, and `libpthread.a`
+when a `pthread_*` symbol is left undefined -- libgcc's emulated TLS pulls those
+in and they are in no auto-linked set, so they never reach the command line.
+
+Not ported with point 32. Whether it matters here is measurable rather than
+arguable: the symbol audit already lists what our links leave undefined, so the
+question is whether `__cxa_pure_virtual` or a `pthread_*` is among them.
+
+### 33. WORK — the library-version markers are still bare symbols
+
+`AROS_LIBREQ` emits `__aros_libreq_<base>.<version>` as a weak absolute
+(`symbolsets.h:158`). collect-aros's second pass reads those
+(`backend-generic.c:64`) and emits `PROVIDE(__aros_libreq_<base> = .);
+LONG(<version>)` (`gensets.c:167`), so the unversioned symbol becomes an address
+pointing at the required version, which is what the version check reads.
+
+Not ported with point 32, because it is a second mechanism with its own
+consequences: it changes what `__aros_libreq_*` means in our images, and both
+the symbol audit and the kickstart's localisation step (which localises
+`__aros_lib*`) touch those symbols today. Same script, same pass, separate step.
+
+### 32. RESOLVED — the symbol sets are collected
+
+This was the boot blocker and it was not confined to the boot: 527 source files
+use an `ADD2*` macro, and 313 of 381 sampled built artefacts carried
+`.aros.set.*` sections that nothing read.
 
 `ADD2INITLIB(cpu_Init, 10)` puts a pointer to `cpu_Init` into a section named
 `.aros.set.INITLIB.10`. `DEFINESET` declares the set itself as a *weak*
 two-pointer array, `__INITLIB_LIST__[] = {0, 0}`
 (`compiler/include/aros/symbolsets.h:39`), and nothing in the compiler or the
-linker connects the two. The connection is made by the linker: the AROS ELF
-linker is `collect-aros` (`scripts/aros-ld.in:5`, named by `*linker:` in
-`config/elf-specs.in` as `<cpu>-<arch>-elf-ld`), which scans the input objects
-for `.aros.set.*` and generates a script laying each set out as
-`[count][entries by priority][0]` between `__X_LIST__` and `__X_END__`
-(`tools/collect-aros/gensets.c:69`).
+linker connects the two. The connection is the linker's: for an AROS target the
+linker the spec names is `collect-aros` (`scripts/aros-ld.in:5`), and it links
+twice -- `ld -r` over the inputs, then `ld -r -T <generated script>` over that
+result, the script laying each set out as `[count][entries by priority][0]`
+between `__X_LIST__` and `__X_END__` (`tools/collect-aros/gensets.c:69`).
 
-Our link rule is `ld.lld -r` (`cmake/AROS.cmake:244`), which bypasses
-collect-aros. The bypass is documented there and was deliberate, but only its
-first job — producing relocatable modules — was in view. The set gathering is
-the second, and without it the weak `{0, 0}` stays. Measured in the built
-kickstart: three `__INITLIB_LIST__` symbols, one per member, each 16 bytes of
-zero with no relocation touching them; `graphics.library` likewise has five
-`.aros.set.*` sections and not one relocation landing on a set array.
+Our rule was `ld.lld -r` (`cmake/AROS.cmake:244`), which is exactly the mode
+collect-aros stops early in (`collect-aros.c:184`). `-Ur`, which the kickstart
+member and the kickstart link pass and which we had read as a GNU-ld spelling of
+`-r`, is the mode that does both passes (`:188`) -- half a mechanism, not a
+dialect. Measured before the fix: the three `__INITLIB_LIST__` symbols in the
+kickstart were 16 bytes of zero each with no relocation touching them, and
+`graphics.library` had five set sections and not one relocation landing on a set
+array.
 
-So no `INITLIB`, `EXPUNGELIB`, `OPENLIB`, `CLOSELIB`, `PREINITLIB`, `LIBS`,
-`INIT`, `CTORS` or `INIT_ARRAY` function has ever run in this build. The boot
-dies at the first thing that depends on one, which is point 27g.
+`aros-collect` is that second pass, and every AROS link now goes through it. The
+fork recorded here is decided: rather than making collect-aros releasable
+(point 4), the layout is ported, because the mechanism is one script and the
+tool it lives in carries build-local absolute paths we would have to unpick
+first. The `ld.lld -r -T` question that made the choice risky was settled by
+experiment before any code: lld accepts data commands in a relocatable link,
+resolves the forward reference to `__X_END__`, and lets a script assignment
+override the weak array.
 
-Two ways to fix it, and the choice is a real fork:
+What it changed on pc-x86_64: the kickstart's `.aros.sets` holds kernel's
+INITLIB with `Platform_Init` and `cpu_Init`, its `KERNEL__ACPISUPPORT` with
+three entries, exec's PREINITLIB and INITLIB, and task's INITLIB. `cpu_Init`
+runs, so `KrnCreateContext` no longer returns NULL and 27g's dead-end alert is
+gone; the trap handlers install, so a fault is reported by `core_IRQHandle`
+instead of triple-faulting, which confirms the missing IDT gate was the same
+cause. The boot now reaches `ictl_Initialize`, which is point 27i.
 
-  * **Build and use `collect-aros`.** Faithful, and it is the reference's own
-    answer. It is also the tool point 4 says is not releasable: it bakes in
-    absolute producer paths and `OBJLIBDIR`, has no runtime self-location, and
-    is not packaged by `producer.py`. Using it means fixing that first.
-  * **Gather the sets in our own link.** Port `gensets.c`'s layout, scan each
-    link's inputs for `.aros.set.*` section names, and emit the fragment as a
-    `-T` script. `ld.lld -r -T` is known to work — that is how
-    `config/kobj-romtag.ld` orders the kickstart members — but emitting data
-    words and computing `__X_END__ - __X_LIST__` inside a relocatable output is
-    the part to verify before committing to it. Needs a per-link section scan,
-    so a small helper rather than pure CMake.
-
-Either way it belongs at the module link, before the kickstart link, which is
-also why the kickstart's localisation step already lists `__*_LIST__` and
-`__*_END__` (`scripts/kickstart/localise-symbols.py`): in the reference those
-arrays exist per module by the time the members are joined.
+Two of collect-aros's other jobs are not ported: points 33 and 34.
 
 ### 22. WORK — ACPICA is a fetched Port that kernel-kernel needs
 
@@ -456,6 +477,34 @@ We build one artefact per module and hand it to both purposes, so the members
 carry the default link set and their bases stay global. A second artefact per
 member is the work; the localisation step is the part that cannot be skipped.
 
+### 27i. WORK — no APIC descriptor
+
+With the symbol sets collected the boot gets through `Exec_init`, through
+`InitCode(RTF_COLDSTART)`, and into the interrupt-controller setup:
+
+```
+AROS64 - The AROS Research OS
+64-bit build. Compiled Aug 23 2026
+
++------------------------------------------+
+|           Critical boot failure          |
+|      Failed to allocate APIC descriptor. |
++------------------------------------------+
+```
+
+`arch/all-pc/kernel/ictl.c:112`. On x86-64 an APIC is not optional, so
+`ictl_Initialize` panics when `pdata->kb_APIC` is still NULL after the ACPI scan
+and `core_APIC_Probe()`. Which of the two did not deliver is the first thing to
+find out: the ACPI path runs from the `KERNEL__ACPISUPPORT` set, which now has
+its three entries (`ACPI_PM_SUPPORT`, `ACPI_APIC_SUPPORT`, `ACPI_IOAPIC_SUPPORT`
+-- point 32), so it is reachable for the first time and may simply be failing;
+the probe path is independent of it.
+
+Note what the panic proves on the way: the trap handlers are installed, the boot
+console works, and `krnPanic` reaches the screen. Two faults follow it, both in
+the panic path -- a #PF with CR2=0 in the alert formatter, and the #GP of 27g
+repeating until a double fault ends it.
+
 ### 27h. WORK — a package module the loader refuses
 
 Booting with all four packages as multiboot modules stops before the kernel
@@ -478,7 +527,24 @@ module.
 Until it is fixed, a boot attempt has to pass the kickstart alone as its only
 module, which is what the recorded QEMU invocations do.
 
-### 27g. WORK — exec raises a dead-end alert, and the alert path faults
+### 27g. PARTLY RESOLVED — the alert is gone; the MemList walk still faults
+
+Two of the three findings below are settled by point 32. `cpu_Init` runs, so
+`KernelBase->kb_ContextSize` is set, `KrnCreateContext` returns a context and
+`Exec_init` no longer takes `goto execfatal`. And the trap handlers install, so
+the #GP is delivered and reported by `core_IRQHandle` rather than escalating
+through a missing IDT gate -- confirming that the absent gate for vector 13 was
+the same cause, not a defect of its own.
+
+What is left is the fault itself, unchanged and still unexplained: `FindMem`
+dereferences a MemList successor holding `48 8b 8a 70 04 30 00 48`, x86 code
+rather than a node. It now repeats about 150 times from supervisor mode before a
+double fault ends the run, because the panic path keeps calling `TypeOfMem`.
+Reading it needs guest memory, which the runner cannot do yet (point 31).
+
+The original entry follows.
+
+### 27g-old. WORK — exec raises a dead-end alert, and the alert path faults
 
 With the section ordering in place the boot reaches user mode and raises an
 alert. QEMU reports no exception until the alert is being *formatted*:
