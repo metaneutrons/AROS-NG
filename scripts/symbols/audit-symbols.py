@@ -77,6 +77,25 @@ def find_elf(root: pathlib.Path) -> list[pathlib.Path]:
     return out
 
 
+def declared_artefacts(manifest: pathlib.Path | None) -> set[pathlib.Path] | None:
+    """The artefacts this configuration produces, or None if not declared.
+
+    Nothing removes an artefact whose output name changed, so a tree that has
+    been reconfigured carries orphans: SYS/Libs/muimaster.library alongside
+    SYS/Libs/workbench-libs-muimaster.library from an earlier scheme. Measuring
+    both counts the module twice, and the stale copy is a snapshot of whatever
+    the build did when it was written, which makes the metric untrustworthy.
+    """
+    if manifest is None or not manifest.is_file():
+        return None
+    declared = set()
+    for line in manifest.read_text().splitlines():
+        line = line.strip()
+        if line:
+            declared.add(pathlib.Path(line).resolve())
+    return declared or None
+
+
 def symbols(nm: str, path: pathlib.Path) -> tuple[set[str], set[str], set[str]]:
     """(strong undefined, weak undefined, defined) for one object.
 
@@ -118,6 +137,10 @@ def main() -> int:
                     help="tab-separated load sets: <name> then the member "
                          "paths, as written by cmake/SymbolAudit.cmake from "
                          "aros_record_load_set()")
+    ap.add_argument("--artefacts", type=pathlib.Path,
+                    help="artefacts this configuration produces, one path per "
+                         "line; anything else under --root is an orphan and is "
+                         "reported rather than measured")
     ap.add_argument("--baseline", type=pathlib.Path,
                     help="pinned counts; the check fails when a number rises")
     ap.add_argument("--update-baseline", action="store_true",
@@ -132,6 +155,16 @@ def main() -> int:
         return 2
 
     objects = find_elf(args.root)
+    declared = declared_artefacts(args.artefacts)
+    orphans: list[pathlib.Path] = []
+    if declared is not None:
+        kept = []
+        for path in objects:
+            if path.resolve() in declared:
+                kept.append(path)
+            else:
+                orphans.append(path)
+        objects = kept
     if not objects:
         print(f"symbol audit: no ELF artefacts under {args.root}", file=sys.stderr)
         return 2
@@ -249,6 +282,10 @@ def main() -> int:
         # correct by construction, and moves with how much of the tree builds.
         "load_set_resolved": set_resolved,
         "load_sets": len(load_sets),
+        # Reported, never gated: an orphan is an old output name still on disk,
+        # which says nothing about the current build. Only worth watching so a
+        # rising number prompts a clean.
+        "orphan_artefacts": len(orphans),
     }
     # Ratcheted as a fraction, not as a count. The absolute rose from 998 to
     # 1003 on the first real improvement, purely because 16 more modules had
@@ -278,6 +315,9 @@ def main() -> int:
     write("expected-sysbase.txt", [
         f"{len(v):6d}  {m}"
         for m, v in sorted(expected.items(), key=lambda kv: (-len(kv[1]), kv[0]))
+    ])
+    write("orphan-artefacts.txt", [
+        str(path.resolve().relative_to(root)) for path in orphans
     ])
     write("no-provider-built.txt", [
         f"{c:6d}  {s}"

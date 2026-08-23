@@ -49,6 +49,38 @@ else()
     file(GENERATE OUTPUT "${AROS_SYMBOL_AUDIT_LOAD_SETS}" CONTENT "")
 endif()
 
+# Which artefacts this configuration actually produces.
+#
+# Walking SYS/ alone counts orphans: module output names have changed over time
+# (SYS/Libs/muimaster.library today, SYS/Libs/workbench-libs-muimaster.library
+# from an earlier scheme), and nothing removes the old file. Both were being
+# measured, so the same module was counted twice and its stale copy, linked
+# before the default link set existed, dominated the report.
+#
+# The set is every EXECUTABLE target, which is exactly the set of AROS
+# artefacts: host tools are never plain executable targets
+# (cmake/HostTools.cmake:11) and the kickstart is a custom command.
+set(AROS_SYMBOL_AUDIT_ARTEFACTS "${CMAKE_BINARY_DIR}/symbol-audit/artefacts.txt")
+_aros_collect_targets("${CMAKE_SOURCE_DIR}" _aros_audit_all_targets)
+set(_aros_audit_artefacts "")
+foreach(_aros_audit_target IN LISTS _aros_audit_all_targets)
+    get_target_property(_aros_audit_type "${_aros_audit_target}" TYPE)
+    if(_aros_audit_type STREQUAL "EXECUTABLE")
+        list(APPEND _aros_audit_artefacts
+            "$<TARGET_FILE:${_aros_audit_target}>")
+    endif()
+endforeach()
+if(_aros_audit_artefacts)
+    list(JOIN _aros_audit_artefacts "\n" _aros_audit_artefacts_body)
+    file(GENERATE OUTPUT "${AROS_SYMBOL_AUDIT_ARTEFACTS}"
+        CONTENT "${_aros_audit_artefacts_body}\n")
+    list(LENGTH _aros_audit_artefacts _aros_audit_count)
+    message(STATUS
+        "🧾 AROS-NG: ${_aros_audit_count} artefact(s) declared for the symbol audit")
+else()
+    file(GENERATE OUTPUT "${AROS_SYMBOL_AUDIT_ARTEFACTS}" CONTENT "")
+endif()
+
 if(AROS_AUDIT_PYTHON3 AND AROS_AUDIT_NM AND EXISTS "${AROS_SYMBOL_AUDIT_SCRIPT}")
     add_custom_target(symbol-audit
         COMMAND "${AROS_AUDIT_PYTHON3}" -B "${AROS_SYMBOL_AUDIT_SCRIPT}"
@@ -57,6 +89,7 @@ if(AROS_AUDIT_PYTHON3 AND AROS_AUDIT_NM AND EXISTS "${AROS_SYMBOL_AUDIT_SCRIPT}"
                 --report-dir "${CMAKE_BINARY_DIR}/symbol-audit"
                 --libbases "${AROS_SYMBOL_AUDIT_LIBBASES}"
                 --load-sets "${AROS_SYMBOL_AUDIT_LOAD_SETS}"
+                --artefacts "${AROS_SYMBOL_AUDIT_ARTEFACTS}"
                 --baseline "${AROS_SYMBOL_AUDIT_BASELINE}"
         COMMENT "Auditing undefined symbols in the built modules"
         USES_TERMINAL
@@ -68,6 +101,7 @@ if(AROS_AUDIT_PYTHON3 AND AROS_AUDIT_NM AND EXISTS "${AROS_SYMBOL_AUDIT_SCRIPT}"
                 --report-dir "${CMAKE_BINARY_DIR}/symbol-audit"
                 --libbases "${AROS_SYMBOL_AUDIT_LIBBASES}"
                 --load-sets "${AROS_SYMBOL_AUDIT_LOAD_SETS}"
+                --artefacts "${AROS_SYMBOL_AUDIT_ARTEFACTS}"
                 --baseline "${AROS_SYMBOL_AUDIT_BASELINE}"
                 --update-baseline
         COMMENT "Re-pinning the symbol audit baseline"
