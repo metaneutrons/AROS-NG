@@ -1,0 +1,9 @@
+{
+  "artefacts": 1011,
+  "modules_with_undefined": 998,
+  "references_total": 25006,
+  "symbols_distinct": 2710,
+  "symbols_no_artefact_defines": 2166,
+  "symbols_some_artefact_defines": 544,
+  "weak_references": 77
+}

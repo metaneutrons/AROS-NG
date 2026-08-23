@@ -550,6 +550,10 @@ endif()
 #    package definitions reference the transpiled module targets.
 include("${CMAKE_SOURCE_DIR}/cmake/Kickstart.cmake")
 
+# 8. Symbol audit. Answers the one question a green build cannot: whether a
+#    module has any undefined symbols left, and so any chance of loading.
+include("${CMAKE_SOURCE_DIR}/cmake/SymbolAudit.cmake")
+
 # 8. Explicit, opt-in roots for the boot core and distribution closure. These
 #    are deliberately separate from `all`: broadening the default build would
 #    hide rather than expose the remaining direct-recipe/output gaps.
