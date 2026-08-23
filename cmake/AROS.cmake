@@ -7,6 +7,11 @@ include("${CMAKE_CURRENT_LIST_DIR}/GenmoduleTargets.cmake")
 include("${CMAKE_CURRENT_LIST_DIR}/GenmoduleHeaders.cmake")
 include("${CMAKE_CURRENT_LIST_DIR}/PythonGenerators.cmake")
 include("${CMAKE_CURRENT_LIST_DIR}/TransitiveHeaderBindings.cmake")
+# aros_add_program calls aros_standalone_link_wanted, so the module that
+# defines it belongs here rather than only in the top-level CMakeLists: a
+# fixture that includes AROS.cmake on its own got "Unknown CMake command"
+# (OPEN-POINTS 45). include_guard makes the top-level include a no-op.
+include("${CMAKE_CURRENT_LIST_DIR}/StandaloneLink.cmake")
 # The arch/ subdirectories this configuration may build from. Directory names
 # there are <cpu>-<platform> with "all" as a wildcard, plus "native" as a
 # pseudo-platform shared by every non-hosted target.
@@ -255,6 +260,17 @@ if(AROS_LLD_BIN)
     # (collect-aros.c:184), so every symbol set in this build was the empty weak
     # `{0, 0}` of DEFINESET and no INITLIB, OPENLIB, LIBS or CTORS function had
     # ever run. OPEN-POINTS point 32 has the measurements.
+    # Whoever includes this module needs the same default the top-level
+    # CMakeLists has. Six fixtures include AROS.cmake directly and went red the
+    # day this rule started requiring aros-collect, because nothing gave them a
+    # value (OPEN-POINTS 45). Derived from this module's own location: in a
+    # fixture, CMAKE_SOURCE_DIR is the fixture, not the repository.
+    if(NOT AROS_COLLECT_BIN)
+        get_filename_component(_aros_module_repo "${CMAKE_CURRENT_LIST_DIR}/.."
+            ABSOLUTE)
+        set(AROS_COLLECT_BIN
+            "${_aros_module_repo}/tools/aros-tools/target/release/aros-collect")
+    endif()
     if(NOT EXISTS "${AROS_COLLECT_BIN}" OR IS_DIRECTORY "${AROS_COLLECT_BIN}"
        OR NOT IS_EXECUTABLE "${AROS_COLLECT_BIN}")
         message(FATAL_ERROR

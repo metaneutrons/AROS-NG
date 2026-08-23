@@ -77,6 +77,12 @@ aros_add_linklib(
     DIRECTORY "${CMAKE_CURRENT_LIST_DIR}"
     EMPTY_ARCHIVE
     OUTPUT_DIR "${_private_dir}")
+# The host AppleClang contributes `-Wl,-search_paths_first
+# -Wl,-headerpad_max_install_names`, and ld.lld rejects both. A real build never
+# sees them because it configures with a cross toolchain; this fixture uses the
+# host compiler deliberately, to exercise our own archive and link rules, so it
+# drops the host defaults (OPEN-POINTS 45).
+set(CMAKE_C_LINK_FLAGS "")
 add_executable(empty-consumer "${CMAKE_CURRENT_LIST_DIR}/empty_consumer.c")
 aros_link_libraries(empty-consumer empty-provider)
 

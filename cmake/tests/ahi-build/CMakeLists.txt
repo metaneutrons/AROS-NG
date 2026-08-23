@@ -45,9 +45,16 @@ file(COPY_FILE "${CMAKE_CURRENT_LIST_DIR}/mock-flexcat.sh"
 file(CHMOD "${CMAKE_BINARY_DIR}/hosttools/flexcat" PERMISSIONS
     OWNER_READ OWNER_WRITE OWNER_EXECUTE
     GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE)
+# aros_build_ahi asks each link-library target where its archive is, so the
+# fixture declares targets rather than only staging files. Imported archives
+# are the honest stand-in: this fixture's C compiler is a mock, so it cannot
+# build a real one.
 foreach(_name IN ITEMS amiga libm mui)
     file(CONFIGURE OUTPUT "${CMAKE_BINARY_DIR}/liblinklibs-${_name}.a"
         CONTENT "fixture ${_name} archive\n")
+    add_library("linklibs-${_name}" STATIC IMPORTED)
+    set_target_properties("linklibs-${_name}" PROPERTIES
+        IMPORTED_LOCATION "${CMAKE_BINARY_DIR}/liblinklibs-${_name}.a")
 endforeach()
 
 if(AHI_FIXTURE_CASE STREQUAL "symlink-binary")

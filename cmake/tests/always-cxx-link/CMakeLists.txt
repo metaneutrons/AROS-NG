@@ -24,12 +24,19 @@ if(TEST_LOCKED_TOOLCHAIN)
     # It separately checks the release-only direct-link template below.
     set_property(TARGET aros-cxx-startup-objects PROPERTY COMPILE_OPTIONS "")
     aros_bind_cxx_startup_target("linklibs-startup")
-    if(NOT CMAKE_C_LINK_EXECUTABLE MATCHES
-            "^${AROS_CROSS_TOOLCHAIN_ROOT}/bin/ld[.]lld -r" OR
+    # Every link goes through aros-collect, which runs the prefix-owned ld.lld
+    # twice; the second pass is what turns the .aros.set.* sections into the
+    # arrays the code reads. The rule used to start with ld.lld directly, and
+    # this expectation still said so, which is why this fixture was red from
+    # the day that rule changed (OPEN-POINTS 45). What matters here is
+    # unchanged: the locked release links with its own linker, under its own
+    # sysroot, partially.
+    set(_expected_link_prefix
+        "^\"[^\"]*/aros-collect\" --ld \"${AROS_CROSS_TOOLCHAIN_ROOT}/bin/ld[.]lld\" -- -r")
+    if(NOT CMAKE_C_LINK_EXECUTABLE MATCHES "${_expected_link_prefix}" OR
        NOT CMAKE_C_LINK_EXECUTABLE MATCHES
             "--sysroot=.*/SYS/Developer" OR
-       NOT CMAKE_CXX_LINK_EXECUTABLE MATCHES
-            "^${AROS_CROSS_TOOLCHAIN_ROOT}/bin/ld[.]lld -r" OR
+       NOT CMAKE_CXX_LINK_EXECUTABLE MATCHES "${_expected_link_prefix}" OR
        NOT CMAKE_CXX_LINK_EXECUTABLE MATCHES
             "--sysroot=.*/SYS/Developer" OR
        NOT CMAKE_CXX_LINK_EXECUTABLE MATCHES
