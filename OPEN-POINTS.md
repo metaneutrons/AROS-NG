@@ -172,53 +172,71 @@ Failed build steps 1083 -> 1078, generated-file rules 21 -> 20, missing sources
 94 -> 93, `aros-base.pkg` built with all 26 members. The boot then moved on to
 the next dangling symbol, which is point 38.
 
-### 40. WORK — gfx.hidd's SIMD lanes are the last blocker
+### 41. WORK — a NULL library base, once every package loads
 
-One staged package member still has undefined symbols, and it is the only thing
-between here and a boot that reaches dos.library:
-
-```
-[ELF Loader] Undefined symbol 'convert_XRGB32_BGRA32_SSE2'
-gfx.hidd: Relocation error in section 3!
-```
-
-18 symbols, all `convert_*_SSE2`, `_SSE3` or `_AVX`. They come from
-`arch/i386-all/hidd/gfx/mmakefile.src`, which has three `%build_archspecific`
-declarations for one module:
+No staged package member has an undefined symbol any more -- the count is zero
+for the first time -- so every package loads and the boot is past *loading* and
+into *running* the full module set:
 
 ```
-USER_CFLAGS :=                       ; %build_archspecific ... files=rgbconv_arch arch=i386
-USER_CFLAGS := $(HIDDGFX_SSE_CFLAGS) ; %build_archspecific ... files=rgbconv_sse  arch=x86_sse
-USER_CFLAGS := $(HIDDGFX_AVX_CFLAGS) ; %build_archspecific ... files=rgbconv_avx  arch=x86_avx
+[Kernel] core_IRQHandle(14): Exception error code 00000000
+[PF-DBG] CR2=fffffffffffff570 IP=000000000198f711 SP=00000000017ae558
+[PF-DBG] access=read mode=supervisor present=not-present
 ```
 
-`x86_sse` and `x86_avx` are not architectures. They are lane names, and what
-attaches them is a MetaMake edge in the x86_64 file:
+`CR2` is `-0xa90`, a negative offset from a null base: the signature of a jump
+through a library base's LVO table when the base is NULL. It is the same shape as
+the StdCBase fault of 27e, and the same method applies -- derive the load base
+from the trace, resolve the IP to a symbol, and read which base the caller
+expected to have.
 
-    #MM- kernel-hidd-gfx-x86_64 : kernel-hidd-gfx-x86_sse kernel-hidd-gfx-x86_avx
+What makes this one different from every fault before it is that the module set
+is now complete. A NULL base here is a *runtime* order problem -- a library
+opened before it exists, or an OpenLibrary whose failure nobody checked -- rather
+than a missing artefact.
 
-The transpiler carries all five lanes to CMake, and `aros_resolve_arch_sources`
-selects by matching the tag against `AROS_ARCH_INCLUDE_TAGS`, so the two lane
-names match nothing and their sources are dropped. The dispatcher in
-`arch/x86_64-all/hidd/gfx/rgbconv_arch.c` then references implementations that
-were never compiled -- and its own comment says why it must: "no ISA
-preprocessor guards here... the SSE/AVX implementation modules are always linked
-on x86_64".
+### 40. RESOLVED — the SIMD lanes compile, and each with its own flags
 
-Two parts, and the second is why this is not a one-liner:
+`arch=` is not always an architecture. `arch/i386-all/hidd/gfx` declares three
+lanes for one module, and `x86_sse` and `x86_avx` are names: what attaches them is
 
-  * **Selection.** A lane whose tag is not an architecture is selected when a
-    `#MM-` edge attaches it to a selected lane, the convention being
-    `<mainmmake>-<tag>`. The transpiler knows both the edge and the lane names,
-    so it can retag such a lane with the puller's tag rather than teach CMake to
-    walk the meta graph -- CMake reads the declarations before the meta edges
-    exist.
-  * **Flags.** Each lane sets `USER_CFLAGS` before its declaration: `-msse2` for
-    the SSE lane, `-mavx2` for the AVX one. Nothing carries them today (the gfx
-    declaration has no `ARCH_COMPILE_OPTIONS` at all), and without them
-    `rgbconv_avx.c` cannot compile. `arch_compile_options` exists on the target
-    model; what is missing is attributing an assignment to the declaration that
-    follows it.
+```text
+#MM- kernel-hidd-gfx-x86_64 : kernel-hidd-gfx-x86_sse kernel-hidd-gfx-x86_avx
+```
+
+CMake selected a lane by matching its tag against the target's tags, so those two
+matched nothing and their sources were dropped. The dispatcher then referenced 18
+implementations that were never compiled.
+
+Both halves were needed, and the second turned out to constrain the first.
+
+**Selection.** The rule is structural and closed over the declarations at hand:
+when a `#MM` edge attaches `<mainmmake>-<a>` to `<mainmmake>-<b>` and both are
+tags of lanes of that mainmmake, lane `a` is also a lane of `b`. Retagged in the
+transpiler, because CMake reads the declarations before the meta edges exist.
+Seven attachments in the tree, all reported in
+`generated_targets.arch-lane-attachments.txt`: gfx's two, exec's `riscv64` into
+`opensbi-riscv64`, the kernel's `native-ppc` into three ppc boards and
+`unix-support` into `unix`.
+
+**Flags.** Two problems, one after the other. The lane's flags were read
+file-wide, and one file holds three lanes with three different `USER_CFLAGS`, so
+they had to be read at the declaration's own line -- which needed the declaration
+to record its line, and needed the sources to be collected from the *joined* text,
+because `scope` is built from that and a raw-file line number drifts with every
+continuation. Then `-msse2` and `-mavx2` were being rejected by the flag
+classifier, which kept `-march=` for exactly the reason it should have kept these.
+
+And once retagged, the flags could no longer be per tag: applying a lane's
+options to the whole target would put `-mavx2` on the baseline dispatcher whose
+own comment forbids it, and after attachment two lanes with different flags share
+one tag. So an option is keyed by (tag, directory, file) and applied where the
+file is resolved. Verified in the ninja file: `-mavx2` only on
+`rgbconv_avx.c.obj`, `-msse2` only on `rgbconv_sse.c.obj`, nothing on
+`rgbconv_arch.c.obj`.
+
+Failed build steps 1066 -> 1064; the audit 40 -> 39 per mille and 376 -> 358
+symbols with no provider. The boot goes on to point 41.
 
 ### 39. RESOLVED — DEFAULT_MODTYPE was read but never declared
 
