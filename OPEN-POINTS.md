@@ -133,18 +133,69 @@ Not ported with point 32. Whether it matters here is measurable rather than
 arguable: the symbol audit already lists what our links leave undefined, so the
 question is whether `__cxa_pure_virtual` or a `pthread_*` is among them.
 
-### 33. WORK — the library-version markers are still bare symbols
+### 35. WORK — `aros/config.h` is hand-authored, and 15 of its 20 values are absent
 
-`AROS_LIBREQ` emits `__aros_libreq_<base>.<version>` as a weak absolute
-(`symbolsets.h:158`). collect-aros's second pass reads those
-(`backend-generic.c:64`) and emits `PROVIDE(__aros_libreq_<base> = .);
-LONG(<version>)` (`gensets.c:167`), so the unversioned symbol becomes an address
-pointing at the required version, which is what the version check reads.
+`cmake/BootstrapSDK.cmake:170` writes the header from a string literal.
+`config/config.h.in` substitutes 20 values; ours states five, and one of those
+was wrong for every target (point 27i). A macro that is absent is silently zero
+in `#if`, so each of the following is a branch nobody chose:
 
-Not ported with point 32, because it is a second mechanism with its own
-consequences: it changes what `__aros_libreq_*` means in our images, and both
-the symbol audit and the kickstart's localisation step (which localises
-`__aros_lib*`) touch those symbols today. Same script, same pass, separate step.
+| absent macro | configure derivation | what it decides |
+|---|---|---|
+| `AROS_NESTING_SUPERVISOR` | `aros_nesting_supervisor=0` | whether Supervisor/Disable nest |
+| `@PLATFORM_EXECSMP@` | `#define __AROSPLATFORM_SMP__` for x86_64 and aarch64 | SMP-capable platform code |
+| `@ENABLE_EXECSMP@` | `#define __AROSEXEC_SMP__` only for the `smp` variant | the SMP scheduler |
+| `@PLATFORM_EXECWXSEG@` | aarch64/darwin only | W^X seglist allocation |
+| `@CLASSIC_VARIANT_DEFINE@` | `classic` variant only | `AROS_VARIANT_CLASSIC` |
+| `USE_MMU` | `aros_enable_mmu` defaults to yes, so 1 | MMU support |
+| `AROS_MUNGWALL_DEBUG`, `AROS_STACK_DEBUG` | `--enable-*` options | allocation and stack checks |
+| `AROS_PALM_DEBUG_HACK` | 0 | palm-only |
+| `USE_XSHM`, `USE_VIDMODE`, `ENABLE_DBUS`, `ENABLE_X11` | hosted only, 0 for pc | hosted display and dbus |
+
+Three of the five values we do state also disagree with what configure would
+produce for pc-x86_64, and each needs its own check rather than a bulk
+correction: `AROS_NOMINAL_DEPTH` is 8 here and 4 there; `AROS_SERIAL_DEBUG` is 1
+here and 0 there, and turning it off may be what silences the boot console this
+branch debugs with; `USE_MMU` is absent here and 1 there, which changes memory
+management.
+
+The shape of the fix is not a longer literal. Substitute `config/config.h.in`
+itself, so the set of macros comes from the reference and a new one cannot go
+missing, and fail the configure on any placeholder without a value. The values
+then come from one readable table with the configure line each is taken from,
+the way `dirs.rs` handles `config/make.cfg.in`.
+
+### 33. WORK — the library-version markers are the current boot blocker
+
+`AROS_LIBREQ` emits `__aros_libreq_<base>.<version>` as an absolute symbol whose
+*value* is the version (`symbolsets.h:158`). collect-aros's second pass reads
+those (`backend-generic.c:64`) and emits `PROVIDE(__aros_libreq_<base> = .);
+LONG(<version>)` (`gensets.c:167`): the unversioned name becomes the address of a
+word holding the required version, which is what the generated version check
+reads.
+
+Deferred when point 32 landed, and the boot then walked straight into it.
+genmodule's `Task_InitLib` compares `SysBase->lib_Version` against that word:
+
+```
+223a6: movzwl 0x26(%rdx), %eax          ; SysBase->lib_Version
+223aa: cmpl   %eax, (%rip)              ; 0x223ac R_X86_64_PC32
+                                        ;   __aros_libreq_SysBase - 4
+```
+
+Nothing defines the unversioned symbol, so the operand address is 0 and the read
+faults with CR2=0. 1210 of 1238 built artefacts reference a libreq marker, 265
+distinct ones, so this is the whole tree and not one module.
+
+One decision to make when porting it. The reference prepends a node per `nm`
+line and `PROVIDE` binds the name to the first, so which version wins is
+symbol-table order. Where several requirements for one base meet in a single
+link -- the kickstart has `__aros_libreq_SysBase` at 0, 33, 36 and 50 -- the
+semantically correct answer is the maximum, because the check has to satisfy
+every requirement. Taking the maximum diverges from the reference in a way that
+is safe and statable; reproducing its order dependence is faithful and fragile.
+The divergence needs saying either way, and a base with more than one version in
+one link is worth reporting.
 
 ### 32. RESOLVED — the symbol sets are collected
 
@@ -477,7 +528,7 @@ We build one artefact per module and hand it to both purposes, so the members
 carry the default link set and their bases stay global. A second artefact per
 member is the work; the localisation step is the part that cannot be skipped.
 
-### 27i. WORK — no APIC descriptor
+### 27i. RESOLVED — the APIC panic was a wrong AROS_FLAVOUR
 
 With the symbol sets collected the boot gets through `Exec_init`, through
 `InitCode(RTF_COLDSTART)`, and into the interrupt-controller setup:
@@ -492,18 +543,39 @@ AROS64 - The AROS Research OS
 +------------------------------------------+
 ```
 
-`arch/all-pc/kernel/ictl.c:112`. On x86-64 an APIC is not optional, so
-`ictl_Initialize` panics when `pdata->kb_APIC` is still NULL after the ACPI scan
-and `core_APIC_Probe()`. Which of the two did not deliver is the first thing to
-find out: the ACPI path runs from the `KERNEL__ACPISUPPORT` set, which now has
-its three entries (`ACPI_PM_SUPPORT`, `ACPI_APIC_SUPPORT`, `ACPI_IOAPIC_SUPPORT`
--- point 32), so it is reachable for the first time and may simply be failing;
-the probe path is independent of it.
+`arch/all-pc/kernel/ictl.c:112`. The `in_asm` trace resolved it without
+guesswork: `core_APIC_Probe` allocated its descriptor, called `SuperState`
+through LVO 25, and got back a function that was eight bytes long --
+`push rbp; mov rsp,rbp; xor eax,eax; pop rbp; ret`. So it freed the descriptor
+and returned NULL (`arch/all-pc/kernel/apic.c:41`).
 
-Note what the panic proves on the way: the trap handlers are installed, the boot
-console works, and `krnPanic` reaches the screen. Two faults follow it, both in
-the panic path -- a #PF with CR2=0 in the alert formatter, and the #GP of 27g
-repeating until a double fault ends it.
+`rom/exec/superstate.c` has its whole body inside
+`#if (AROS_FLAVOUR & AROS_FLAVOUR_STANDALONE)`, and
+`cmake/BootstrapSDK.cmake` wrote `AROS_FLAVOUR_NATIVE` into `aros/config.h` for
+every target. 1 & 2 = 0, so the body was gone. configure derives the flavour per
+platform case -- `pc)` at `configure:10727` and `r*pi)` at `:11213` both set
+standalone -- and NATIVE is what it picks for classic Amiga-like ports. The
+value was wrong for all three presets. The same `#if` also gates the XSAVE/AVX
+context path (`arch/x86_64-all/kernel/cpu_init.c:26`), which is why `cpu_Init`
+was 21 bytes rather than 182.
+
+With the flavour right the boot gets an APIC:
+
+```
+[Kernel:APIC-IA32] MSI Interrupts Allocatable
+[Kernel:APIC-IA32]     start = 16
+[Kernel:APIC-IA32]     total = 198
+```
+
+and the next stop is point 33, with the evidence recorded there. The rest of
+`aros/config.h` is point 35.
+
+Two things worth keeping from the way this was found. The trap handlers, the
+boot console and `krnPanic` all work, so a panic now reaches the screen and says
+what it is. And the full build never relinks the kickstart -- neither the
+kickstart target nor its `-file` companion is in `all`, so the recompiled
+members sat there while the old image kept booting. The 1083-failed-step figure
+has never covered the kickstart; it has to be asked for by name.
 
 ### 27h. WORK — a package module the loader refuses
 
