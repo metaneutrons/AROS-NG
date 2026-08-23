@@ -281,23 +281,69 @@ time. Any fix has to decide one of
 
 Reported in `generated_targets.partial-source-lists.txt`.
 
-### 26e. WORK — kernel.resource has 26 undefined symbols in three groups
+### 26f. WORK — 258 modules get none of their generated scaffolding
 
-Down from 33 after `13d8e9c5b5`. What is left splits cleanly:
+Only `aros_add_library` and `aros_add_module_abi` call
+`_aros_generate_module_support` (`cmake/AROS.cmake:3415`, `:3335`), so the
+generated `<mod>_start.c`, `<mod>_end.c` and function table exist for the 100
+library targets and for nobody else:
 
-  * `con_*`, `scr_*`, `fb_*`, `print_crash_info` — `linklibs-bootconsole`.
-  * `ACPICABase`, `Acpi*` — `libacpica.a`, the acpica client archive.
-  * `kernel_End`, `kernel_FuncTable`, `_binary_smpbootstrap_*` — the kickstart
-    link and the `smpboot.bin.o` blob that
-    `arch/x86_64-pc/kernel/mmakefile.src:79` builds with objcopy, which we do
-    not.
+  | builder                  | targets | gets the generated sources |
+  |--------------------------|--------:|----------------------------|
+  | `aros_add_library`       |     100 | yes                        |
+  | `aros_add_hidd`          |      80 | no                         |
+  | `aros_add_device`        |      58 | no                         |
+  | `aros_add_resource`      |      32 | no                         |
+  | `aros_add_module_simple` |      28 | no                         |
+  | `aros_add_gadget`        |      24 | no                         |
+  | `aros_add_datatype`      |      21 | no                         |
+  | `aros_add_mcc`           |      15 | no                         |
 
-Neither `rom/kernel/mmakefile.src:71` nor `%build_archspecific` (which has no
-`uselibs=` parameter at all) links the first two, and
-`arch/x86_64-pc/boot/mmakefile.src:27` passes no `uselibs=` to
-`%link_kickstart` either. So how the reference build resolves them is not yet
-established; `%define link_kickstart` (config/make.tmpl:3850) and the
-bootstrap's own link are the places to read next. Not guessed at here.
+Measured, not inferred. `muimaster.library` defines `MUIMaster_Copyright`,
+`MUIMaster_End`, `MUIMaster_FuncTable`, `MUIMaster_InitLib` and
+`MUIMaster_InitTable`; `kernel-task.resource` defines no counterpart of any of
+them. Its LVO wrappers (`Task_10_AddTaskHook` and the like) come from its own
+sources, so their presence says nothing about the scaffolding.
+
+This is not a symbol-count problem. `<mod>_start.c` carries the romtag and the
+init entry (`tools/genmodule/writestart.c`), and `<mod>_end.c` the `End` marker
+the romtag scanner leaps to (`tools/genmodule/writeend.c:44`). A module without
+them has no entry point, whatever its symbol table looks like. It is how
+`kernel_End` and `kernel_FuncTable` come to be undefined in
+`kernel.resource`: `rom/kernel/kernel_init.c` references its own romtag end
+marker, and nothing generates it.
+
+Scope note before anyone starts: the machinery already exists and is used by
+the library path, so this is plumbing seven builders into it rather than new
+generation. What needs deciding is the module type each builder passes and
+whether the ABI/includes half applies too.
+
+### 26e. PARTLY RESOLVED — kernel.resource is down from 33 undefined to 4
+
+Two of the three groups are closed by `a33237bffa`.
+
+The boot console and ACPICA came from `arch/all-pc/kernel/make.opts:1`,
+`USER_LDFLAGS := -L$(GENDIR)/lib -lbootconsole -lacpica`, which the make.opts
+reader dropped: it took defines, compile options and include paths and ignored
+link options. `print_crash_info` was a different fault in the same file:
+`arch/x86_64-pc/kernel/mmakefile.src` sets `KERNEL_USE_EARLYTRAP=` empty on its
+own line 5, so the reference build never compiles `kernel_early.c`, and the
+arch collector applied the `ifneq` branch anyway.
+
+What remains, both real work:
+
+  * `kernel_End`, `kernel_FuncTable` — point 26f. Not a kickstart-link
+    artefact, as previously assumed: they are genmodule's romtag scaffolding,
+    which no resource gets.
+  * `_binary_smpbootstrap_start`, `_binary_smpbootstrap_size` — the objcopy'd
+    blob from `%rule_link_binary` at
+    `arch/x86_64-pc/kernel/mmakefile.src:87`, which is not modelled.
+
+Also settled, for the record: the kickstart link is
+`$(TARGET_CC) ... $(KOBJS) $(LDFLAGS) $(LDLIBS)` (config/make.tmpl:3904), so
+the compiler spec applies there too, with `-lexec` suppressed by `-nosysbase`.
+Its `uselibs=` is empty for pc-x86_64, so it contributes no libraries of its
+own.
 
 ### 27. WORK — no reproducible boot attempt exists
 
