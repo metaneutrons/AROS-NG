@@ -1,6 +1,7 @@
 include_guard(GLOBAL)
 
 include(CMakeParseArguments)
+include("${CMAKE_CURRENT_LIST_DIR}/LinklibArchive.cmake")
 
 # Closed CMake boundary for AHI's remaining %build_with_configure declaration.
 # It is intentionally not included from AROS.cmake until the transpiler selects
@@ -476,44 +477,20 @@ function(aros_build_ahi)
     endforeach()
 
     # The three link libraries this build links against, asked of their own
-    # targets.
-    #
-    # These used to be spelled as `<build root>/liblinklibs-<mmake>.a`, which is
-    # what a link library is called only while nothing names it: a linklib moves
-    # to `SYS/Developer/lib/lib<name>.a` the moment a consumer does, and the
-    # transpiler promotes it then. Carrying `conffile=` made four declarations
-    # real -- the ipv4 network module, the VMM handler and two SysExplorer
-    # modules -- each of them states `uselibs=amiga`, and rpi-aarch64 stopped
-    # producing a buildable graph:
+    # targets rather than spelled as `<build root>/liblinklibs-<mmake>.a`.
+    # Carrying `conffile=` made four declarations real -- the ipv4 network
+    # module, the VMM handler and two SysExplorer modules -- each of them
+    # states `uselibs=amiga`, so linklibs-amiga became canonical and
+    # rpi-aarch64 stopped producing a buildable graph:
     #
     #   ninja: error: 'liblinklibs-amiga.a', needed by 'SYS/Prefs/AHI',
     #          missing and no known rule to make it
     #
-    # Right now the three are not even in the same place: linklibs-libm is
-    # private while linklibs-amiga and linklibs-mui are canonical. So no
-    # filename pattern is correct, and the target is the only thing that knows.
+    # aros_linklib_archive_path carries the reasoning and the checks.
     set(_dependency_lexical "")
     foreach(_linklib IN ITEMS linklibs-amiga linklibs-libm linklibs-mui)
-        if(NOT TARGET "${_linklib}")
-            message(FATAL_ERROR
-                "AHI: required link library target ${_linklib} does not exist")
-        endif()
-        get_target_property(_linklib_type "${_linklib}" TYPE)
-        if(NOT _linklib_type STREQUAL "STATIC_LIBRARY")
-            message(FATAL_ERROR
-                "AHI: ${_linklib} is a ${_linklib_type}, not an archive")
-        endif()
-        get_target_property(_linklib_name "${_linklib}" OUTPUT_NAME)
-        if(NOT _linklib_name OR _linklib_name STREQUAL "_linklib_name-NOTFOUND")
-            set(_linklib_name "${_linklib}")
-        endif()
-        get_target_property(_linklib_dir "${_linklib}" ARCHIVE_OUTPUT_DIRECTORY)
-        if(NOT _linklib_dir OR _linklib_dir STREQUAL "_linklib_dir-NOTFOUND")
-            # CMake's default for a target declared in the top-level list.
-            set(_linklib_dir "${CMAKE_CURRENT_BINARY_DIR}")
-        endif()
-        list(APPEND _dependency_lexical
-            "${_linklib_dir}/${CMAKE_STATIC_LIBRARY_PREFIX}${_linklib_name}${CMAKE_STATIC_LIBRARY_SUFFIX}")
+        aros_linklib_archive_path("${_linklib}" _linklib_archive)
+        list(APPEND _dependency_lexical "${_linklib_archive}")
     endforeach()
     set(_dependency_products "")
     foreach(_dependency IN LISTS _dependency_lexical)

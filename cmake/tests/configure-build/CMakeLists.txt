@@ -85,12 +85,23 @@ endforeach()
 list(APPEND _host_installed "${_host_prefix}/lib/pkgconfig/adflib.pc")
 list(APPEND _target_installed "${_target_prefix}/lib/pkgconfig/adflib.pc")
 
+# aros_build_configure asks a link-library target where its archive is, so
+# the fixture has to be a target rather than a bare path. An imported archive
+# is the honest stand-in here: the fixture stages the file with a custom
+# command and cannot compile a real one, because its C compiler is a mock.
 set(_mui_archive "${CMAKE_BINARY_DIR}/liblinklibs-mui.a")
+# Not an empty file: the runner rejects an empty dependency archive, and an
+# `!<arch>` header is what a real one starts with.
+set(_mui_stub "${CMAKE_BINARY_DIR}/fixture-mui-stub")
+file(WRITE "${_mui_stub}" "!<arch>\n")
 add_custom_command(
     OUTPUT "${_mui_archive}"
-    COMMAND "${CMAKE_COMMAND}" -E touch "${_mui_archive}"
+    COMMAND "${CMAKE_COMMAND}" -E copy "${_mui_stub}" "${_mui_archive}"
     VERBATIM)
 add_custom_target(configure-fixture-mui DEPENDS "${_mui_archive}")
+add_library(linklibs-mui STATIC IMPORTED)
+set_target_properties(linklibs-mui PROPERTIES
+    IMPORTED_LOCATION "${_mui_archive}")
 
 aros_build_configure(
     MMAKE_ID "${_host_id}"
@@ -133,4 +144,4 @@ aros_build_configure(
         "${_wireless_binary}/source/wpa_supplicant/wpa_passphrase"
         "${_wireless_binary}/source/wpa_supplicant/wpa_cli"
     INSTALL_PRODUCTS "${_wireless_prefix}/C/WirelessManager"
-    DEPENDENCY_PRODUCTS "${_mui_archive}")
+    DEPENDENCY_TARGETS linklibs-mui)

@@ -281,7 +281,23 @@ else()
         string(APPEND _cc_command " '${_quoted}'")
     endforeach()
     string(STRIP "${_cc_command}" _cc_command)
+    # The Makefile's own `LIBS += -lmui` is replaced, not extended, by a make
+    # command-line variable, so exactly one archive may arrive here and it has
+    # to be a real file. Element 0 of an unchecked list would otherwise take
+    # whatever the contract happened to carry.
+    list(LENGTH CB_DEPENDENCY_PRODUCTS _dependency_count)
+    if(NOT _dependency_count EQUAL 1)
+        message(FATAL_ERROR
+            "WirelessManager expects one dependency archive, got ${_dependency_count}")
+    endif()
     list(GET CB_DEPENDENCY_PRODUCTS 0 _mui_archive)
+    if(NOT EXISTS "${_mui_archive}")
+        message(FATAL_ERROR "WirelessManager dependency is missing: ${_mui_archive}")
+    endif()
+    file(SIZE "${_mui_archive}" _mui_size)
+    if(_mui_size EQUAL 0)
+        message(FATAL_ERROR "WirelessManager dependency is empty: ${_mui_archive}")
+    endif()
     _cb_run("building WirelessManager"
         "${CB_MAKE}" -j4 -C "${_wireless_dir}"
         "CC=${_cc_command}"

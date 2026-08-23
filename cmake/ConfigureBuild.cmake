@@ -1,6 +1,7 @@
 include_guard(GLOBAL)
 
 include(CMakeParseArguments)
+include("${CMAKE_CURRENT_LIST_DIR}/LinklibArchive.cmake")
 
 # Resolve existing path components physically, including the common macOS
 # /tmp -> /private/tmp symlink, then append a non-existing tail.  CMake's
@@ -40,7 +41,7 @@ endfunction()
 #     INPUT_MANIFEST_SHA256 <digest>
 #     PRIVATE_PRODUCTS <paths...>
 #     INSTALL_PRODUCTS <paths...>
-#     [DEPENDENCY_PRODUCTS <paths...>]
+#     [DEPENDENCY_TARGETS <link-library targets...>]
 #     [PROVIDED_LIBRARY <uselibs-name>])
 #
 # Closed counterpart for the three audited local `%build_with_configure`
@@ -50,7 +51,8 @@ endfunction()
 function(aros_build_configure)
     set(oneValueArgs MMAKE_ID MODE SOURCE_DIR BINARY_DIR INSTALL_PREFIX
         INPUT_MANIFEST INPUT_MANIFEST_SHA256 PROVIDED_LIBRARY)
-    set(multiValueArgs PRIVATE_PRODUCTS INSTALL_PRODUCTS DEPENDENCY_PRODUCTS)
+    set(multiValueArgs PRIVATE_PRODUCTS INSTALL_PRODUCTS
+        DEPENDENCY_TARGETS)
     cmake_parse_arguments(PARSE_ARGV 0 CB "" "${oneValueArgs}" "${multiValueArgs}")
 
     if(CB_UNPARSED_ARGUMENTS OR CB_KEYWORDS_MISSING_VALUES)
@@ -334,7 +336,18 @@ function(aros_build_configure)
     # graph node as its physical /private/tmp counterpart. The runner contract
     # below receives only the separately checked physical path.
     set(_dependency_build_dependencies "")
-    foreach(_raw_dependency IN LISTS CB_DEPENDENCY_PRODUCTS)
+    # DEPENDENCY_TARGETS names link libraries and asks each target where it
+    # writes. The path used to be spelled out, here and in the transpiler's
+    # declaration, as `<build root>/liblinklibs-mui.a`; both went stale when
+    # linklibs-mui became canonical, and the build only kept working because a
+    # file from an earlier configuration was still lying in the build root
+    # (OPEN-POINTS 44).
+    set(_dependency_paths "")
+    foreach(_dependency_target IN LISTS CB_DEPENDENCY_TARGETS)
+        aros_linklib_archive_path("${_dependency_target}" _dependency_archive)
+        list(APPEND _dependency_paths "${_dependency_archive}")
+    endforeach()
+    foreach(_raw_dependency IN LISTS _dependency_paths)
         if(_raw_dependency MATCHES "[;\"$\\\r\n]")
             message(FATAL_ERROR
                 "${CB_MMAKE_ID}: unsafe configure dependency '${_raw_dependency}'")
@@ -384,10 +397,16 @@ function(aros_build_configure)
             "${_binary_dir}/source/wpa_supplicant/wpa_passphrase"
             "${_binary_dir}/source/wpa_supplicant/wpa_cli")
         set(_expected_install "${_install_prefix}/C/WirelessManager")
-        set(_expected_dependency "${_build_root}/liblinklibs-mui.a")
+        # The audited fact is which link library wpa_supplicant links, not
+        # where that library keeps its archive: this expectation was the third
+        # place spelling `<build root>/liblinklibs-mui.a`, and it went stale
+        # with the other two.
+        set(_expected_dependency_targets "linklibs-mui")
+        list(LENGTH _dependency_products _resolved_dependency_count)
         if(NOT "${_private_products}" STREQUAL "${_expected_private}" OR
            NOT "${_install_products}" STREQUAL "${_expected_install}" OR
-           NOT "${_dependency_products}" STREQUAL "${_expected_dependency}" OR
+           NOT "${CB_DEPENDENCY_TARGETS}" STREQUAL "${_expected_dependency_targets}" OR
+           NOT _resolved_dependency_count EQUAL 1 OR
            CB_PROVIDED_LIBRARY)
             message(FATAL_ERROR
                 "${CB_MMAKE_ID}: WirelessManager product/dependency contract differs from the audited capability")
