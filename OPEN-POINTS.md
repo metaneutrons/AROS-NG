@@ -121,6 +121,54 @@ by comparing two runs at different parallelism.
 A full CMake build of pc-x86_64 on 2026-08-23 after the Boost staging fix:
 16378 of 16611 steps completed, 887 steps failed, 1496 errors.
 
+### 32. WORK — nothing gathers the symbol sets, so every one of them is empty
+
+This is the boot blocker, and it is not confined to the boot: 527 source files
+use an `ADD2*` macro, and 313 of 381 sampled built artefacts carry
+`.aros.set.*` sections that nothing reads.
+
+`ADD2INITLIB(cpu_Init, 10)` puts a pointer to `cpu_Init` into a section named
+`.aros.set.INITLIB.10`. `DEFINESET` declares the set itself as a *weak*
+two-pointer array, `__INITLIB_LIST__[] = {0, 0}`
+(`compiler/include/aros/symbolsets.h:39`), and nothing in the compiler or the
+linker connects the two. The connection is made by the linker: the AROS ELF
+linker is `collect-aros` (`scripts/aros-ld.in:5`, named by `*linker:` in
+`config/elf-specs.in` as `<cpu>-<arch>-elf-ld`), which scans the input objects
+for `.aros.set.*` and generates a script laying each set out as
+`[count][entries by priority][0]` between `__X_LIST__` and `__X_END__`
+(`tools/collect-aros/gensets.c:69`).
+
+Our link rule is `ld.lld -r` (`cmake/AROS.cmake:244`), which bypasses
+collect-aros. The bypass is documented there and was deliberate, but only its
+first job — producing relocatable modules — was in view. The set gathering is
+the second, and without it the weak `{0, 0}` stays. Measured in the built
+kickstart: three `__INITLIB_LIST__` symbols, one per member, each 16 bytes of
+zero with no relocation touching them; `graphics.library` likewise has five
+`.aros.set.*` sections and not one relocation landing on a set array.
+
+So no `INITLIB`, `EXPUNGELIB`, `OPENLIB`, `CLOSELIB`, `PREINITLIB`, `LIBS`,
+`INIT`, `CTORS` or `INIT_ARRAY` function has ever run in this build. The boot
+dies at the first thing that depends on one, which is point 27g.
+
+Two ways to fix it, and the choice is a real fork:
+
+  * **Build and use `collect-aros`.** Faithful, and it is the reference's own
+    answer. It is also the tool point 4 says is not releasable: it bakes in
+    absolute producer paths and `OBJLIBDIR`, has no runtime self-location, and
+    is not packaged by `producer.py`. Using it means fixing that first.
+  * **Gather the sets in our own link.** Port `gensets.c`'s layout, scan each
+    link's inputs for `.aros.set.*` section names, and emit the fragment as a
+    `-T` script. `ld.lld -r -T` is known to work — that is how
+    `config/kobj-romtag.ld` orders the kickstart members — but emitting data
+    words and computing `__X_END__ - __X_LIST__` inside a relocatable output is
+    the part to verify before committing to it. Needs a per-link section scan,
+    so a small helper rather than pure CMake.
+
+Either way it belongs at the module link, before the kickstart link, which is
+also why the kickstart's localisation step already lists `__*_LIST__` and
+`__*_END__` (`scripts/kickstart/localise-symbols.py`): in the reference those
+arrays exist per module by the time the members are joined.
+
 ### 22. WORK — ACPICA is a fetched Port that kernel-kernel needs
 
     GENINCDIR/libraries/acpica.h:47:10:
@@ -430,36 +478,56 @@ module.
 Until it is fixed, a boot attempt has to pass the kickstart alone as its only
 module, which is what the recorded QEMU invocations do.
 
-### 27g. WORK — a #GP inside FindMem, and no IDT gate to take it
+### 27g. WORK — exec raises a dead-end alert, and the alert path faults
 
-With the section ordering in place the boot reaches user mode. QEMU reports no
-exception at all until:
+With the section ordering in place the boot reaches user mode and raises an
+alert. QEMU reports no exception until the alert is being *formatted*:
 
 ```
 check_exception old: 0xffffffff new 0xd
   v=0d e=0000 cpl=3 IP=002b:00000000013adfa3
-  RAX=48003004708a8b48 R14=48003004708a8b48
+  RAX=48003004708a8b48
 check_exception old: 0xd new 0xb
   v=08 (double fault)
 ```
 
-`cpl=3` means exec's ExecBase exists, `InitCode(RTF_COLDSTART)` ran and a task
-is running. The kickstart's `.text` is loaded at `0x1391000`, so the faulting
-instruction is `.text+0x1cfa3`, inside `FindMem`
-(`rom/exec/memory.c:24`) at `mh = mh->mh_Node.ln_Succ`. `RAX` is the pointer
-being dereferenced and it holds `48 8b 8a 70 04 30 00 48`, which is x86 code,
-not a node: the MemList chain walks into the code segment. So either
-`SysBase->MemList` is built wrong or `FindMem` is reached with a SysBase that
-is not one.
+Read from the `in_asm` trace with the kickstart's `.text` at `0x1391000`, the
+call chain is
 
-Two separate things to read, and the second is not a consequence of the first:
+    Exec_12_InitCode -> Exec_17_InitResident -> Exec_init
+      Exec_33_AllocMem            (twice, both succeed)
+      Kernel_18_KrnCreateContext  -> Exec_33_AllocMem
+      Exec_18_Alert -> Exec_ExtAlert -> Exec_SystemAlert
+        FormatAlert -> FormatLocation -> FormatAlertExtra
+          Exec_89_TypeOfMem -> FindMem -> tlsf_in_bounds -> #GP
 
-  * why the MemList head or a successor points into `.text`;
-  * why the #GP cannot be delivered. `check_exception ... new 0xb` is #NP, so
-    the IDT gate for vector 13 has its present bit clear. `IDT=0x1400100
-    limit=0xfff` is the full 256 entries, so the table is sized and installed
-    but entry 13 is not filled in. A #GP in a user task must become an alert,
-    never a triple fault, so this is a defect of its own.
+so two separate failures, and the first is the one that matters.
+
+**The alert.** `KrnCreateContext()` returned NULL, so `Exec_init` took
+`goto execfatal` and raised `Alert(AT_DeadEnd | AG_NoMemory | AN_ExecLib)`
+(`rom/exec/exec_init.c:159` and `:296`). The context allocation is
+`AllocMem(KernelBase->kb_ContextSize, MEMF_CLEAR)`
+(`rom/kernel/kernel_objects.h:11`), and `kb_ContextSize` is set by `cpu_Init`
+(`arch/x86_64-all/kernel/cpu_init.c:17`), which is an `ADD2INITLIB` entry. It
+never ran, because point 32 means no INITLIB entry ever runs. `AllocMem(0)`
+returns NULL. So 27g is a symptom of 32, not a defect of its own.
+
+**The fault, which is a defect of its own.** `FormatAlertExtra` prints a stack
+trace and calls `TypeOfMem` on each frame, which walks `SysBase->MemList`. The
+faulting instruction is `.text+0x1cfa3` in `FindMem` (`rom/exec/memory.c:60`,
+`mh = mh->mh_Node.ln_Succ`), and the pointer it dereferences holds
+`48 8b 8a 70 04 30 00 48`, x86 code rather than a node. A TLSF header was
+examined first, so `tlsf_in_bounds` ran and returned; the successor after it is
+what is wrong. Whether the list is genuinely corrupt or `FindMem` is reached
+with a SysBase that is not one needs guest memory, which the runner cannot read
+yet — see point 31.
+
+**And a third.** `check_exception ... new 0xb` is #NP, so the IDT gate for
+vector 13 has its present bit clear. `IDT=0x1400100 limit=0xfff` is the full
+256 entries, so the table is sized and installed but entry 13 is not filled in.
+A #GP in a user task must become an alert, never a triple fault. Very likely
+another consequence of 32, since the trap handlers are installed from an
+INITLIB entry, but worth confirming once the sets work.
 
 ### 27f. RESOLVED — every kickstart module's sections are ordered, not only m68k's
 
