@@ -408,7 +408,53 @@ We build one artefact per module and hand it to both purposes, so the members
 carry the default link set and their bases stay global. A second artefact per
 member is the work; the localisation step is the part that cannot be skipped.
 
-### 27c. WORK — the kickstart fails to load on one weak undefined symbol
+### 27d. WORK — the kernel hits an invalid opcode after the kickstart loads
+
+With the loader fix the kickstart loads and the kernel runs. It then faults:
+
+```
+v=06 e=0000 cpl=0 IP=0008:000000000031052f EAX=0000000080000001   #UD
+v=0d e=0032 cpl=0 IP=0008:000000000031052f                        #GP
+v=08 e=0000 cpl=0 IP=0008:000000000031052f                        #DF
+```
+
+`qemu-system-x86_64 ... -d int`. Established so far:
+
+  * Not a missing CPU feature: `-cpu max` faults identically, so the bytes at
+    that address are not a valid instruction rather than an unsupported one.
+  * The repeated IP across all three vectors means the #UD handler faults too,
+    so no usable IDT is in place yet.
+  * `EAX=0x80000001` is a CPUID leaf, so the fault is at or just after a CPUID
+    sequence.
+  * Not an unhandled relocation: the kickstart contains only R_X86_64_64,
+    _PLT32, _PC32, _32 and _32S, and `bootstrap/elfloader.c:239` handles all
+    five.
+
+What has not been done: mapping 0x31052f back to a kickstart offset, which
+needs the load base the bootstrap chose. That is the next step, not more
+guessing.
+
+### 27c. RESOLVED — an unresolved weak symbol has the value zero
+
+Fixed in both loaders on `fix/elf-loader-weak-undefined-symbols`, off
+`upstream/master`, since both files were byte-identical to it.
+
+They treated every `SHN_UNDEF` as an error. ELF does not: the link editor
+leaves an unresolved weak symbol undefined on purpose and its value is zero.
+`__aros_libreq_<base>` is the case -- every module's generated start file reads
+it weakly to compare the library version it needs
+(`tools/genmodule/writestart.c:788`), and only a module using `ADD2LIBS`
+(`symbolsets.h:149`) defines it, so zero is the intended answer for "no version
+required".
+
+Worth recording: this only became reachable because the generated start files
+started being built at all (`de38eaba51`). The reference has always put
+`<mod>_start.o` in the kickstart object (`config/make.tmpl:2681` folds
+`_STARTFILES` into `_OBJS`, and `:2756` takes `_OBJS`), so upstream carries the
+same weak-undefined reference and the same loader would refuse it. Nothing in
+either file differs from upstream.
+
+### 27c-old. WORK — the kickstart fails to load on one weak undefined symbol
 
 The first QEMU run got this far, which is the first AROS-NG code to execute:
 
