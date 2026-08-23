@@ -168,6 +168,35 @@ function(aros_bootstrap_sdk_includes)
     # silently differ before the target's ports-includes closure had run.
 
     # 6. Generate aros/config.h
+    #
+    # The flavour follows the target, as configure derives it from the platform
+    # case: `pc)` at configure:10727 sets aros_flavour="standalone" for both
+    # i386 and x86_64, and `r*pi)` at :11213 sets it for arm and aarch64.
+    # AROS_FLAVOUR_NATIVE, which this file used to state for every target, is
+    # what configure picks for classic Amiga-like ports, and it is wrong for all
+    # three presets here.
+    #
+    # It is not a cosmetic difference. Whole function bodies are inside
+    # `#if (AROS_FLAVOUR & AROS_FLAVOUR_STANDALONE)`: with NATIVE the mask is
+    # 1 & 2 = 0, so rom/exec/superstate.c compiled down to `return NULL` and
+    # `core_APIC_Probe` (arch/all-pc/kernel/apic.c:41) freed its descriptor and
+    # returned NULL, which made ictl_Initialize panic with "Failed to allocate
+    # APIC descriptor". arch/x86_64-all/kernel/cpu_init.c:26 silently skipped
+    # the XSAVE/AVX context path for the same reason.
+    #
+    # A platform this does not know must not inherit a flavour by accident.
+    if(AROS_TARGET_PLATFORM STREQUAL "pc" OR AROS_TARGET_PLATFORM STREQUAL "raspi")
+        set(_aros_flavour "AROS_FLAVOUR_STANDALONE")
+    else()
+        message(FATAL_ERROR
+            "No AROS_FLAVOUR is known for platform '${AROS_TARGET_PLATFORM}'. "
+            "configure derives it per platform case (see configure:10727 for pc "
+            "and :11213 for raspi); add this one rather than letting it default.")
+    endif()
+
+    # 15 of the 20 values config/config.h.in substitutes are still missing from
+    # this file, and a missing macro is silently zero in `#if`. See OPEN-POINTS
+    # point 35 for the list and what each one would change.
     set(CONFIG_H "${SDK_INC}/aros/config.h")
     file(GENERATE OUTPUT "${CONFIG_H}" CONTENT
 "/* AROS-NG v0.1.0: Auto-generated aros/config.h */
@@ -176,7 +205,10 @@ function(aros_bootstrap_sdk_includes)
 
 #define AROS_FLAVOUR_NATIVE             1
 #define AROS_FLAVOUR_STANDALONE         2
-#define AROS_FLAVOUR                    AROS_FLAVOUR_NATIVE
+#define AROS_FLAVOUR_EMULATION          4
+#define AROS_FLAVOUR_LINKLIB            8
+#define AROS_FLAVOUR_BINCOMPAT          16
+#define AROS_FLAVOUR                    ${_aros_flavour}
 #define AROS_DOS_PACKETS                1
 #define AROS_AMIGAOS_COMPLIANCE         1
 
