@@ -1186,6 +1186,99 @@ whether it is still needed is unchecked.
 
 ## Quality gates
 
+### 45. RESOLVED — the CMake fixture suite was in no gate, and a third of it was red
+
+`cmake/tests/` holds 21 `cmake -P …Test.cmake` fixtures. Nothing runs them.
+`toolchains/HANDOFF.md`'s five-check gate does not, and neither does anything
+else, so they were only ever run by hand. Seven were red, from five causes, and
+every one of them was introduced by this branch's own commits:
+
+  * `AROS_COLLECT_BIN` had a default only in the top-level `CMakeLists.txt`,
+    while the requirement lives in `AROS.cmake`'s linker rule. Six fixtures
+    include that module directly and got
+    `AROS-NG requires the executable Rust aros-collect at .` The default now
+    sits next to the requirement, derived from the module's own location,
+    because in a fixture `CMAKE_SOURCE_DIR` is the fixture.
+  * `aros_add_program` calls `aros_standalone_link_wanted`, which
+    `StandaloneLink.cmake` defines and only the top-level included:
+    `Unknown CMake command`. `AROS.cmake` includes it now; `include_guard`
+    makes the top-level include a no-op.
+  * `always-cxx-link` pinned the locked-release link rule as starting with
+    `<toolchain>/bin/ld.lld -r`. Every link goes through `aros-collect` since
+    point 32. Re-pinned on what the fixture is actually about: own linker, own
+    sysroot, partial link.
+  * `private-linklib-output` links a host executable, so AppleClang's
+    `-Wl,-search_paths_first -Wl,-headerpad_max_install_names` reached ld.lld,
+    which rejects both. A real build never sees them because it configures with
+    a cross toolchain; the fixture drops the host defaults.
+  * `ahi-build` and `configure-build` staged their link-library archives as
+    files, which stopped being enough when points 42 and 44 made the helpers
+    ask the target. Both declare imported archives now, which is what a fixture
+    with a mock C compiler can offer honestly.
+
+Two of those are today's own work (`1b22815bc5` broke `AhiBuildTest` and the
+session reported "all tests green" on the strength of `cargo test` alone), and
+four had been red for longer without anyone knowing.
+
+All 21 pass now, measured: 300 seconds for the sweep, 254 of them
+`GrubBuildTest` and 21 `AhiBuildTest`; fourteen of the remaining nineteen take
+under three seconds each. That cost is worth naming, because a five-minute gate
+gets skipped: GrubBuildTest is the one to run separately, the other twenty take
+45 seconds together. The sweep belongs in the gate with `cargo fmt --check`
+(point 8) and `cargo test -p aros-verify` (point 7).
+
+### 44. RESOLVED — WirelessManager pinned the same archive name, in three places
+
+Point 42 was not the only consumer that spelled a link library's archive out.
+The configure-style declaration for `workbench-network-wirelessmanager` named
+`${AROS_BUILD_DIR}/liblinklibs-mui.a` as its build dependency, and it linked
+against it: `RunConfigureBuild.cmake` passes it as `LIBS=` to the wpa_supplicant
+Makefile, which replaces that Makefile's own `LIBS += -lmui` (line 67).
+
+`linklibs-mui` is canonical, so its archive is `SYS/Developer/lib/libmui.a`.
+The pinned path existed anyway, as a leftover: 9 444 bytes dated 10:11 next to
+the canonical one of the same size dated 22:23. Removing the leftover gives
+
+```
+ninja: error: 'liblinklibs-mui.a', needed by
+       'gen/configure/workbench/network/WirelessManager/.aros-...-installed',
+       missing and no known rule to make it
+```
+
+which is worse than point 42's case: no rule produces that path at all, so the
+declaration had no working edge, only a stale file.
+
+The same string was pinned three times: the transpiler's declaration,
+`ConfigureBuild.cmake`'s independent audit of the "audited capability", and the
+`cmake/tests/configure-build` fixture. All three went stale together, and the
+audit could not catch the declaration because both said the same wrong thing.
+
+Fixed by asking the target, as in point 42, and by putting that question in one
+place:
+
+  * `cmake/LinklibArchive.cmake` is new and holds `aros_linklib_archive_path`,
+    used by `AhiBuild.cmake`, `ConfigureBuild.cmake` and the two fixtures. It
+    also handles an imported archive, which is what a fixture can offer when
+    its C compiler is a mock.
+  * `aros_build_configure` takes `DEPENDENCY_TARGETS`; the `DEPENDENCY_PRODUCTS`
+    keyword is gone, because nothing needed a bare path once the fixture
+    declared a target. The runner contract still carries resolved paths under
+    the old name.
+  * the audit now checks *which* link library is linked, not where its archive
+    sits, plus that exactly one archive resolved.
+  * `RunConfigureBuild.cmake` checks the count, existence and size instead of
+    taking element 0 of an unchecked list.
+  * the declaration is emitted after the concrete targets, in its own block,
+    because `aros_build_configure` cannot ask a target that does not exist yet.
+    A configure build that publishes an archive interface still has to precede
+    its consumers, so the generator splits the list; if one declaration ever
+    needs both orderings it writes a `message(FATAL_ERROR)` into the generated
+    file rather than guessing.
+
+`SYS/C/WirelessManager` (1 487 016 bytes) now builds after
+`Linking C static library SYS/Developer/lib/libmui.a`, in that order. Before
+this it had never been built from a working edge.
+
 ### 43. WORK — what the other two presets look like
 
 Checked after a session of pc-x86_64-only work, because several changes were
@@ -1410,15 +1503,34 @@ Two lessons for whatever replaces this:
 `toolchains/HANDOFF.md`'s five-check gate still does not include
 `cargo test -p aros-verify`, which is how a red suite passed for a green state.
 
-### 8. WORK — three clippy deny-level errors
+### 8. RESOLVED — clippy compiles the workspace again
 
-    error: using tabs in doc comments      crates/aros-transpiler/src/flexcat.rs:9
-    error: very complex type used          crates/aros-transpiler/src/flexcat.rs:273
-    error: useless use of `format!`        crates/aros-transpiler/src/parser.rs:2953
+`685247143c`. The three deny-level errors are gone and
+`cargo clippy --workspace --all-targets` compiles for the first time since they
+appeared.
 
-`cargo clippy --workspace --all-targets` does not compile until these are
-fixed. Roughly 44 further warn-level lints exist; the workspace sets
-`clippy::all = deny` with `pedantic`, `nursery` and `cargo` at warn.
+What they were hiding is the point. cargo stops dependent crates once one
+fails, so `aros-cli` was never linted at all; fixing the three surfaced a
+fourth (`trim()` before `split_whitespace()` in `boot.rs`) that no run had ever
+reported. That is the same masking as point 7, in a different gate.
+
+  * `flexcat.rs:9` documented a Make recipe with the tab Make requires. Spelled
+    with spaces now, with the tab named in the text.
+  * `flexcat.rs` `catalog_outputs` returned four `Option`s in a tuple that the
+    caller immediately flattened; a named `CatalogOutputs` with `Default` says
+    it.
+  * `parser.rs` `Err(format!("<literal>"))`.
+  * `boot.rs` `rest.trim().split_whitespace()`.
+
+The generated CMake is byte-identical across the change: two distinct release
+binaries (`17e475d2` before, `6b003710` after) produce the same 3 153 981
+bytes, sha256
+`75d280ed88f4cf7b0dc01386f61706f529d1f8d55b63c4e48286c845ac9320c3`.
+
+42 warn-level lints remain, three of which point 9 records as false positives.
+`cargo fmt` also had nine files to reformat (`e42e0fc3d0`), all of them written
+today in this branch's own commits, so `cargo fmt --check` is not part of what
+we run before committing either.
 
 ### 9. WORK — three clippy warnings are false positives
 
