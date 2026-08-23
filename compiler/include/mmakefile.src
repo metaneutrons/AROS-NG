@@ -102,7 +102,7 @@ INCL_DIRS     := $(foreach dir,$(INCSUBDIRS) $(INCEMPTYDIRS),$(AROS_INCLUDES)/$(
 # includes-copy and the generated architecture headers and drops only the
 # per-library header steps.
 #MM- sdk-includes-0 : includes includes-copy
-#MM- sdk-includes-1 : includes-generate-deps kernel-exec-includes compiler-boost-sdk-subset
+#MM- sdk-includes-1 : includes-generate-deps kernel-exec-includes compiler-boost-sdk-subset kernel-acpica-sdk-subset
 #MM- includes-generate : includes-generate-deps
 #MM- includes-generate-deps : includes-copy $(CROSSTOOLS_PORTS_INCLUDES) includes-$(ARCH)-$(CPU) includes-$(FAMILY)-$(CPU)
 # ports-includes aggregates headers/pkgconfig files installed from fetched

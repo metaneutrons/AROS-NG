@@ -189,9 +189,11 @@ aros_copy_includes(
 set(_boost_subset "${CMAKE_SOURCE_DIR}/compiler/boost/include/boost")
 if(IS_DIRECTORY "${_boost_subset}")
     foreach(_root "${AROS_SDK_INCLUDE_DIR}" "${AROS_GENINC_DIR}")
-        if(NOT IS_DIRECTORY "${_root}/boost")
-            file(COPY "${_boost_subset}" DESTINATION "${_root}")
-        endif()
+        # Unconditional: file(COPY) is copy-if-different, and guarding on the
+        # directory existing left it half filled where another rule had already
+        # staged part of it. SDK/include/acpica had the Port's 40 top-level
+        # headers and no platform/, which fails just as hard as having none.
+        file(COPY "${_boost_subset}" DESTINATION "${_root}")
     endforeach()
     file(GLOB_RECURSE _boost_staged "${AROS_SDK_INCLUDE_DIR}/boost/*")
     list(LENGTH _boost_staged _n_boost)
@@ -200,4 +202,37 @@ else()
     message(WARNING
         "compiler/boost/include/boost is missing; every source reaching "
         "proto/posixc.h will fail on boost/preprocessor")
+endif()
+
+# -----------------------------------------------------------------------------
+# The vendored ACPICA headers
+# -----------------------------------------------------------------------------
+#
+# Four arch/all-pc/kernel sources include libraries/acpica.h, which needs eight
+# headers from ACPICA's source/include. They normally arrive with the fetched
+# Port; a plain configure does not fetch Ports, so the build stopped at
+#
+#     GENINCDIR/libraries/acpica.h:47:10:
+#         fatal error: 'acpica/actypes.h' file not found
+#
+# and with it kernel-kernel and everything downstream of the kernel.
+#
+# arch/all-native/acpica/include/acpica carries them; see the README there.
+# Copied at configure time for the same reason the Boost subset above is.
+set(_acpica_subset "${CMAKE_SOURCE_DIR}/arch/all-native/acpica/include/acpica")
+if(IS_DIRECTORY "${_acpica_subset}")
+    foreach(_root "${AROS_SDK_INCLUDE_DIR}" "${AROS_GENINC_DIR}")
+        # Unconditional: file(COPY) is copy-if-different, and guarding on the
+        # directory existing left it half filled where another rule had already
+        # staged part of it. SDK/include/acpica had the Port's 40 top-level
+        # headers and no platform/, which fails just as hard as having none.
+        file(COPY "${_acpica_subset}" DESTINATION "${_root}")
+    endforeach()
+    file(GLOB_RECURSE _acpica_staged "${AROS_SDK_INCLUDE_DIR}/acpica/*")
+    list(LENGTH _acpica_staged _n_acpica)
+    message(STATUS "🧵 AROS-NG: staged ${_n_acpica} vendored ACPICA header(s)")
+else()
+    message(WARNING
+        "arch/all-native/acpica/include/acpica is missing; kernel-kernel will "
+        "fail on acpica/actypes.h")
 endif()
