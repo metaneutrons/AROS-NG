@@ -174,7 +174,14 @@ if(NOT TRANSPILER_RES EQUAL 0 OR NOT EXISTS "${GENERATED_TARGETS_CMAKE}")
         "AROS-NG transpiler failed (${TRANSPILER_RES}) and did not produce "
         "${GENERATED_TARGETS_CMAKE}.\n${_aros_transpiler_error}")
 endif()
+include("${CMAKE_SOURCE_DIR}/cmake/DefaultLinkSet.cmake")
 include("${GENERATED_TARGETS_CMAKE}")
+
+# The target compiler's spec appends a default set of archives to every link,
+# and our rule invokes ld.lld directly, so nothing else would. This runs here
+# because generated_targets.cmake creates both the archives and the artefacts
+# that consume them.
+aros_apply_default_link_set()
 
 # compiler/startup's raw object rules are outside the generated declarations.
 # Locked C++ partial links explicitly consume cxx-startup.o, so make the

@@ -208,12 +208,56 @@ Calibration worth keeping: kernel-exec.library itself lists AllocMem as
 undefined, because exec does not export its API as global ELF symbols. A reader
 who takes the by-symbol report as "exec is missing" is misreading it.
 
-### 26b. RISK — the audit does not model a load set
+### 26b. RESOLVED — load sets are modelled, and they explain almost nothing
 
-Each artefact is checked on its own. That is the right contract for a
-separately loaded module, and conservative for a package or the kickstart,
-whose members may legitimately resolve against each other. Modelling those load
-sets would lower the count somewhat without changing the conclusion above.
+`aros_record_load_set` records each package and the kickstart at configure
+time, and the audit resolves against the union of a set (`6244923349`).
+Measured effect: 10 references out of 9221. So the members do not in practice
+resolve against each other, and the earlier expectation that this would "lower
+the count somewhat" was wrong.
+
+The useful part of that work was the KIND column, which forced the two loaders
+to be read, and that refuted the blanket library-base excuse of `260e7a400d`:
+
+  * `rom/dos/internalloadseg_elf.c:509` — every undefined symbol is fatal,
+    `ERROR_BAD_HUNK`, no exception.
+  * `bootstrap/elfloader.c:157` — a kickstart member may leave `SysBase`
+    undefined and the loader substitutes `DefSysBase`; anything else fails.
+
+So `DOSBase`, `IntuitionBase` and `UtilityBase` left undefined are defects, and
+removing the excuse raised the honest count from 7330 to 9221 references.
+
+### 26c. RESOLVED — the dominant cause is the compiler spec, not the generator
+
+Point 26 named "the link-library generator" as the single cause. That was half
+right. The generator works; what was missing is that nothing applied the
+default link set the target compiler's spec appends to every link, because our
+rule is `ld.lld -r` invoked directly (`cmake/AROS.cmake:244`).
+
+  * `config/elf-specs.in:19` — `*lib:` is `%(autolib)`, then the C runtime,
+    then `%{!nosysbase:-lexec}`.
+  * `compiler/autoinit/auto` — `*autolib:` names 28 archives, `-ldos` and
+    `-lutility` among them.
+  * `compiler/include/aros/symbolsets.h:118` — `AROS_LIBSET` in
+    `<mod>_autoinit.c` is what *defines* a library base; that object lives in
+    `lib<mod>.a`.
+  * `rom/exec/exec_autoinit.c:22` — `struct ExecBase *SysBase;`, archived into
+    `libexec.a` via `linklibfiles=exec_autoinit`.
+  * `configure.in:3468` — modules link with `-nostartfiles`, which suppresses
+    `*startfile:` only, so a module gets the same set a program does.
+
+Two of our defects followed from never modelling this. The client archive was
+keyed on `linklibname=` instead of on `<mod>_LINKLIBFILES` being non-empty, so
+88 of 101 archives were never built (`7c5fec1f97`). And because nothing in the
+mmakefile tree links `-lamiga`, `linklibs-amiga` was never promoted to its
+canonical name and produced `liblinklibs-amiga.a` instead of `libamiga.a`.
+
+`aros-transpiler` now reads the spec (`default_link_set.rs`) and resolves all
+33 items to concrete archives; `cmake/DefaultLinkSet.cmake` applies them.
+
+Open within this: `rom/timer` states `options autoinit` without being
+`modtype=library`, so upstream builds `libtimer.a` for it and we do not. It is
+reported in `generated_targets.skipped-client-archives.txt`.
 
 ### 27. WORK — no reproducible boot attempt exists
 
