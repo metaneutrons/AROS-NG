@@ -1186,7 +1186,92 @@ whether it is still needed is unchecked.
 
 ## Quality gates
 
-### 30. WRONG — `aros-cli test` reports a verified boot it never looked at
+### 43. WORK — what the other two presets look like
+
+Checked after a session of pc-x86_64-only work, because several changes were
+target-shaped: the flavour mapping, `aros/config.h`, and the lane attachments
+touched riscv, ppc and unix lanes.
+
+`arm-raspi` configures and builds: 1077 failed steps out of 17106, and the top of
+the list is the same ports as on pc-x86_64 (dbus 221, lzma 200, arostcp 34). No
+sign of a regression from this session's work: no genmodule modtype error, no
+missing-config error, and the 490 `aros-collect` lines are all the ordinary
+multi-version reports. Its flavour is `AROS_FLAVOUR_STANDALONE`, as configure
+derives for `r*pi`.
+
+One pre-existing failure there is worth naming, because it is already reported
+and still built: `kernel-bootstrap-pc-objs` is compiled on an arm target with the
+ARM global options *and* its own `--target=i386-pc-linux-gnu`, so clang refuses
+`-mcpu=cortex-a7`. It is listed in
+`generated_targets.foreign-arch-targets.txt`, which is the report saying a target
+declared under `arch/all-pc` could not be gated off. Seven steps.
+
+`rpi-aarch64` configures but does not produce a buildable graph, for the reason
+in point 42.
+
+### 42. DECIDE — the AHI contract pins a filename that ownership can change
+
+`rpi-aarch64` no longer configures into a buildable graph:
+
+```
+ninja: error: 'liblinklibs-amiga.a', needed by 'SYS/Prefs/AHI',
+       missing and no known rule to make it
+```
+
+`cmake/AhiBuild.cmake:479` and `cmake/RunAhiBuild.cmake:329` both pin three
+archive paths literally, as an audited contract compared on each side:
+
+```
+<build root>/liblinklibs-amiga.a
+<build root>/liblinklibs-libm.a
+<build root>/liblinklibs-mui.a
+```
+
+`liblinklibs-<mmake>.a` is what a link library is called when it is *not*
+canonical. A linklib becomes canonical, and so moves to
+`SYS/Developer/lib/lib<name>.a`, the moment any consumer names it -- that is
+`promote_canonical` in the transpiler's graph. So the contract pins a filename
+that depends on whether anything happens to use the library.
+
+Today it changed, and the chain is established rather than guessed:
+
+  1. point 38 carried `conffile=`, so declarations whose config stem is not
+     modname finally get their genmodule scaffolding;
+  2. `workbench-prefs-network-module-ipv4` (`ipv4.conf` for modname `net4`),
+     `workbench-system-vmm-handler` (`VMM_Handler.conf`) and the SysExplorer
+     modules (`ahci.conf`, `ata.conf`) became real targets instead of empty
+     ones;
+  3. each of them states `uselibs=amiga`, so `linklibs-amiga` was promoted;
+  4. its archive is now `SYS/Developer/lib/libamiga.a`, and the pinned
+     `liblinklibs-amiga.a` has no rule.
+
+`pc-x86_64` is broken the same way and has not noticed: a stale
+`liblinklibs-amiga.a` from earlier the same day still sits in its build root and
+satisfies the edge. A clean build would fail identically. `arm-raspi` does not
+declare the target at all.
+
+The fix is to resolve the three archives from their targets and pass the real
+paths, and to check them by *alias mapping* rather than by pinned filename --
+the runner already copies each into a staging directory under a fixed alias
+(`libamiga.a`, `libm.a`, `libmui.a`) and already requires each to be a regular
+non-empty file inside the build root. That keeps every substantive part of the
+audit and drops only the assumption that broke.
+
+It is a change inside an audited contract, so it is a decision rather than a
+routine fix. The alternative, keeping the three libraries non-canonical, means
+fighting the ownership rule instead of the assumption, and would break again the
+next time.
+
+### 30. RESOLVED — `aros-cli test` no longer reports a boot it never looked at
+
+Replaced by the implementation of point 31: the verdict comes from the serial log
+and the exception trace, the three non-existent boot paths are gone, and
+`" debug=serial"` is passed so the boot console prints at all. There is no
+interactive mode any more, because a run nobody reads cannot assert anything.
+
+The original text follows.
+
+### 30-old. WRONG — `aros-cli test` reports a verified boot it never looked at
 
 `main.rs:736` builds `boot-iso`, starts QEMU, sleeps for `--timeout`, kills the
 process and prints:
@@ -1213,7 +1298,38 @@ has no bootloader (point 10), and it passes no `" debug=serial"`, so even a
 correct image would boot to a black screen. Fix or remove; a command that
 cannot fail must not stay.
 
-### 31. WORK — make the boot a deterministic, asserting check in `aros-cli`
+### 31. RESOLVED — `aros test` reads the boot instead of waiting for it
+
+Every requirement below is implemented. What the first run of the finished tool
+found is the best argument for having built it:
+
+```
+reached: kickstart running
+  failure: the kernel panicked: System Boot Failed!
+  failure: an exception was taken while delivering another, so the guest double-faulted
+  read-only block loaded at 0x1391000 (258 traced blocks agree)
+  v=08 cpl=0 IP=0x13ae183 = .text+0x1d063 = FindMem+0x43
+  v=0d cpl=0 IP=0x13ae183 = .text+0x1d063 = FindMem+0x43, 147 times
+  v=0d cpl=3 IP=0x139e4d0 = .text+0xd3b0 = krnPanic+0x90
+  not tested: only the kickstart was passed as a multiboot module
+```
+
+Two findings came out of the first two runs. AROS enters supervisor mode with
+`int 0xfe` and QEMU logs software interrupts in the same stream, so KrnSchedule,
+KrnSwitch and Supervisor were being reported as faults five times a run; `i=1`
+separates them. And the fault that ends a boot with packages loaded is at an
+address outside the kickstart, so it is inside a package module, each of which
+is its own relocatable ELF -- the report says that rather than guessing.
+
+The load base is derived, not assumed: traced instruction bytes are matched
+against the modelled read-only block and the majority wins, with 197 to 258
+blocks agreeing per run. Doing that by hand three times in one session produced
+one wrong answer, a base 0x80 out, which named `Exec_89_TypeOfMem` where the code
+was `Exec_25_SuperState`, with complete confidence.
+
+The original text follows.
+
+### 31-old. WORK — make the boot a deterministic, asserting check in `aros-cli`
 
 `scripts/boot/qemu-pc-x86_64.sh` reproduces a boot, and that is all it does:
 the reading is still by eye and the interpretation by hand. Twice in one day
