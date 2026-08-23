@@ -1409,9 +1409,21 @@ function(_aros_bind_link_libraries target_name)
         list(REMOVE_DUPLICATES _client_namespace_includes)
         # A client archive whose config declares relative C-runtime libraries
         # exposes prototypes using those namespaces.  Propagate only those
-        # proven include roots to its consumers, before the common SDK root;
-        # this is the target-local equivalent of the legacy compiler specs.
-        target_include_directories(${target_name} BEFORE PRIVATE
+        # proven include roots to its consumers.
+        #
+        # Not BEFORE. This call runs after the target's own prepends, so BEFORE
+        # put the propagated namespace ahead of everything, including the
+        # target's own. compiler-posixc links stdc_rel, so it came out with
+        # aros/stdc first and aros/posixc second, and a bare <limits.h> then
+        # resolved to the C99 variant instead of the POSIX superset that
+        # includes it. 179 build steps failed on PASS_MAX, PATH_MAX, off_t,
+        # EBADF and EISDIR while every header was staged correctly.
+        #
+        # Appending is sufficient for the stated purpose: the directory-level
+        # include_directories() above already lists aros/posixc and aros/stdc,
+        # in that order, ahead of the common SDK root, so a propagated
+        # namespace needs no help to be found before it.
+        target_include_directories(${target_name} PRIVATE
             ${_client_namespace_includes})
     endif()
     if(CLEAN_LIBS)
