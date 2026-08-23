@@ -420,6 +420,55 @@ function(_aros_staged_header_path out_var dest name)
     set(${out_var} "${_path}" PARENT_SCOPE)
 endfunction()
 
+# aros_record_load_set(NAME <set> MEMBERS <targets...>)
+#
+# Records that these targets are loaded together, so `ninja symbol-audit` can
+# resolve their undefined symbols against each other instead of demanding that
+# every module be self-contained.
+#
+# This is what the audit was missing. A kickstart member may legitimately call
+# into another member: the members are relocated as one unit, so the reference
+# to it is satisfied then. Checking each artefact alone reported those as gaps,
+# which is why the remaining count was an upper bound rather than a defect
+# count. rom/intuition declares no uselibs and the reference links no C library
+# into it either, so its calls into the rest of the kickstart are correct.
+#
+# KIND separates the two loaders, and they differ in exactly one place.
+# bootstrap/elfloader.c:157 resolves an undefined `SysBase` in a kickstart
+# member to the default base and fails on anything else;
+# rom/dos/internalloadseg_elf.c:509 fails on any undefined symbol at all, with
+# no exception. So a kickstart member may leave SysBase open and a separately
+# loaded module may not.
+#
+# Only targets that produce a file are recorded; a transpiler meta-target has
+# no TARGET_FILE.
+function(aros_record_load_set)
+    set(oneValueArgs NAME KIND)
+    set(multiValueArgs MEMBERS)
+    cmake_parse_arguments(LS "" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
+    if(NOT LS_NAME OR NOT LS_MEMBERS)
+        return()
+    endif()
+    set(_paths "")
+    foreach(_member IN LISTS LS_MEMBERS)
+        if(TARGET "${_member}")
+            get_target_property(_type "${_member}" TYPE)
+            if(_type STREQUAL "EXECUTABLE" OR _type STREQUAL "STATIC_LIBRARY"
+               OR _type STREQUAL "SHARED_LIBRARY"
+               OR _type STREQUAL "MODULE_LIBRARY")
+                list(APPEND _paths "$<TARGET_FILE:${_member}>")
+            endif()
+        endif()
+    endforeach()
+    if(NOT _paths)
+        return()
+    endif()
+    get_property(_sets GLOBAL PROPERTY AROS_LOAD_SETS)
+    string(REPLACE ";" "\t" _joined "${_paths}")
+    list(APPEND _sets "${LS_KIND}\t${LS_NAME}\t${_joined}")
+    set_property(GLOBAL PROPERTY AROS_LOAD_SETS "${_sets}")
+endfunction()
+
 # aros_arch_path_matches(<out-var> <path>)
 #
 # Whether a path under arch/ belongs to this configuration. A path outside
@@ -4734,6 +4783,7 @@ function(aros_make_package)
             endif()
         endforeach()
     endif()
+    aros_record_load_set(NAME "${ARG_NAME}" KIND package MEMBERS ${PRESENT})
 
     if(NOT PRESENT)
         message(STATUS "📦 ${ARG_NAME}: skipped, none of its modules are configured")
@@ -5130,6 +5180,8 @@ function(aros_link_kickstart)
             "🧩 ${ARG_NAME}: cannot link, module(s) not configured: ${MISSING}")
         return()
     endif()
+
+    aros_record_load_set(NAME "${ARG_NAME}" KIND kickstart MEMBERS ${PRESENT})
 
     set(_objs "")
     foreach(mod IN LISTS PRESENT)

@@ -34,6 +34,21 @@ find_program(AROS_AUDIT_NM
           "/opt/homebrew/opt/llvm/bin" "/usr/local/opt/llvm/bin")
 set(_audit_nm "${AROS_AUDIT_NM}")
 
+# Which artefacts are loaded together, from aros_make_package() and
+# aros_link_kickstart(). Written with file(GENERATE) because the member paths
+# are $<TARGET_FILE:...> generator expressions.
+set(AROS_SYMBOL_AUDIT_LOAD_SETS "${CMAKE_BINARY_DIR}/symbol-audit/load-sets.txt")
+get_property(_aros_load_sets GLOBAL PROPERTY AROS_LOAD_SETS)
+if(_aros_load_sets)
+    string(REPLACE ";" "\n" _aros_load_sets_body "${_aros_load_sets}")
+    file(GENERATE OUTPUT "${AROS_SYMBOL_AUDIT_LOAD_SETS}"
+        CONTENT "${_aros_load_sets_body}\n")
+    list(LENGTH _aros_load_sets _aros_n_load_sets)
+    message(STATUS "🧷 AROS-NG: ${_aros_n_load_sets} load set(s) recorded for the symbol audit")
+else()
+    file(GENERATE OUTPUT "${AROS_SYMBOL_AUDIT_LOAD_SETS}" CONTENT "")
+endif()
+
 if(AROS_AUDIT_PYTHON3 AND AROS_AUDIT_NM AND EXISTS "${AROS_SYMBOL_AUDIT_SCRIPT}")
     add_custom_target(symbol-audit
         COMMAND "${AROS_AUDIT_PYTHON3}" -B "${AROS_SYMBOL_AUDIT_SCRIPT}"
@@ -41,6 +56,7 @@ if(AROS_AUDIT_PYTHON3 AND AROS_AUDIT_NM AND EXISTS "${AROS_SYMBOL_AUDIT_SCRIPT}"
                 --nm "${_audit_nm}"
                 --report-dir "${CMAKE_BINARY_DIR}/symbol-audit"
                 --libbases "${AROS_SYMBOL_AUDIT_LIBBASES}"
+                --load-sets "${AROS_SYMBOL_AUDIT_LOAD_SETS}"
                 --baseline "${AROS_SYMBOL_AUDIT_BASELINE}"
         COMMENT "Auditing undefined symbols in the built modules"
         USES_TERMINAL
@@ -51,6 +67,7 @@ if(AROS_AUDIT_PYTHON3 AND AROS_AUDIT_NM AND EXISTS "${AROS_SYMBOL_AUDIT_SCRIPT}"
                 --nm "${_audit_nm}"
                 --report-dir "${CMAKE_BINARY_DIR}/symbol-audit"
                 --libbases "${AROS_SYMBOL_AUDIT_LIBBASES}"
+                --load-sets "${AROS_SYMBOL_AUDIT_LOAD_SETS}"
                 --baseline "${AROS_SYMBOL_AUDIT_BASELINE}"
                 --update-baseline
         COMMENT "Re-pinning the symbol audit baseline"

@@ -114,6 +114,10 @@ def main() -> int:
     ap.add_argument("--libbases", type=pathlib.Path,
                     help="file of library base names, one per line, as written "
                          "by `aros-genmodule --output-libbases`")
+    ap.add_argument("--load-sets", type=pathlib.Path,
+                    help="tab-separated load sets: <name> then the member "
+                         "paths, as written by cmake/SymbolAudit.cmake from "
+                         "aros_record_load_set()")
     ap.add_argument("--baseline", type=pathlib.Path,
                     help="pinned counts; the check fails when a number rises")
     ap.add_argument("--update-baseline", action="store_true",
@@ -132,24 +136,78 @@ def main() -> int:
         print(f"symbol audit: no ELF artefacts under {args.root}", file=sys.stderr)
         return 2
 
+    root = args.root.resolve()
     per_module: dict[str, set[str]] = {}
     weak_per_module: dict[str, set[str]] = {}
+    defined_by: dict[str, set[str]] = {}
     provider: set[str] = set()
     for obj in objects:
         rel = str(obj.relative_to(args.root))
         strong, weak, defined = symbols(args.nm, obj)
         per_module[rel] = strong
         weak_per_module[rel] = weak
+        defined_by[rel] = defined
         provider |= defined
 
-    # A relocatable AROS module leaves its library bases undefined on purpose:
-    # the loader sets them when it loads the module. Counting them as defects
-    # overstates the total and makes zero unreachable. SysBase alone was 611 of
-    # 9268 references, DOSBase 310, IntuitionBase 210, UtilityBase 154.
+    # Artefacts that are relocated as one unit may call into each other. A
+    # kickstart member referring to another member is satisfied when the
+    # kickstart is linked, so demanding that every artefact be self-contained
+    # reported those as gaps. rom/intuition declares no uselibs and the
+    # reference links no C library into it either: its calls into the rest of
+    # the kickstart are correct, not missing.
     #
-    # The list comes from genmodule rather than from a `*Base` pattern, because
-    # the pattern would also swallow a genuinely missing symbol that ends that
-    # way.
+    # A member keeps whatever its own set cannot supply. An artefact in no set
+    # is still required to be self-contained, which is the right contract for a
+    # separately loaded module.
+    load_sets: dict[str, list[str]] = {}
+    kickstart_members: set[str] = set()
+    if args.load_sets and args.load_sets.is_file():
+        for line in args.load_sets.read_text().splitlines():
+            fields = [f for f in line.split("\t") if f.strip()]
+            if len(fields) < 3:
+                continue
+            kind, name, members = fields[0], fields[1], fields[2:]
+            rel = []
+            for m in members:
+                try:
+                    rel.append(str(pathlib.Path(m).resolve().relative_to(root)))
+                except ValueError:
+                    continue
+            if rel:
+                load_sets[name] = rel
+                if kind == "kickstart":
+                    kickstart_members.update(rel)
+
+    set_resolved = 0
+    for name, members in load_sets.items():
+        provided_in_set: set[str] = set()
+        for m in members:
+            if m in defined_by:
+                provided_in_set |= defined_by[m]
+        for m in members:
+            if m not in per_module:
+                continue
+            resolvable = per_module[m] & provided_in_set
+            if resolvable:
+                set_resolved += len(resolvable)
+                per_module[m] = per_module[m] - provided_in_set
+
+    # What the loaders actually forgive, read from their sources rather than
+    # assumed. I had excused every library base here on the belief that the
+    # loader fills them in. It does not.
+    #
+    #   bootstrap/elfloader.c:157   a kickstart member may leave `SysBase`
+    #                               undefined; the loader substitutes the
+    #                               default base. Any other undefined symbol
+    #                               prints "Undefined symbol" and fails.
+    #   rom/dos/internalloadseg_elf.c:509
+    #                               a separately loaded module may leave
+    #                               nothing undefined. Every one fails with
+    #                               ERROR_BAD_HUNK, SysBase included.
+    #
+    # So the only expected undefined symbol in the whole tree is SysBase, and
+    # only in a kickstart member. DOSBase, IntuitionBase and UtilityBase
+    # undefined are real defects, which the earlier blanket rule hid.
     libbases: set[str] = set()
     if args.libbases and args.libbases.is_file():
         libbases = {
@@ -160,10 +218,9 @@ def main() -> int:
 
     expected: dict[str, set[str]] = {}
     for module in list(per_module):
-        found = per_module[module] & libbases
-        if found:
-            expected[module] = found
-            per_module[module] = per_module[module] - libbases
+        if module in kickstart_members and "SysBase" in per_module[module]:
+            expected[module] = {"SysBase"}
+            per_module[module] = per_module[module] - {"SysBase"}
 
     by_symbol: collections.Counter[str] = collections.Counter()
     for syms in per_module.values():
@@ -184,10 +241,14 @@ def main() -> int:
         "symbols_some_artefact_defines": len(unlinked),
         "symbols_no_artefact_defines": len(absent),
         "weak_references": sum(len(w) for w in weak_per_module.values()),
-        # Reported, never gated: these are correct, and their number tracks how
+        # Reported, never gated: correct by construction, and it moves with how
         # much of the tree builds.
-        "library_base_references": expected_refs,
+        "sysbase_in_kickstart": expected_refs,
         "library_bases_known": len(libbases),
+        # Reported, never gated, for the same reason as the library bases:
+        # correct by construction, and moves with how much of the tree builds.
+        "load_set_resolved": set_resolved,
+        "load_sets": len(load_sets),
     }
     # Ratcheted as a fraction, not as a count. The absolute rose from 998 to
     # 1003 on the first real improvement, purely because 16 more modules had
@@ -214,7 +275,7 @@ def main() -> int:
         for m, s in sorted(per_module.items(), key=lambda kv: (-len(kv[1]), kv[0]))
         if s
     ])
-    write("library-bases.txt", [
+    write("expected-sysbase.txt", [
         f"{len(v):6d}  {m}"
         for m, v in sorted(expected.items(), key=lambda kv: (-len(kv[1]), kv[0]))
     ])
