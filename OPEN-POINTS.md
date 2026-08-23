@@ -1206,10 +1206,14 @@ ARM global options *and* its own `--target=i386-pc-linux-gnu`, so clang refuses
 `generated_targets.foreign-arch-targets.txt`, which is the report saying a target
 declared under `arch/all-pc` could not be gated off. Seven steps.
 
-`rpi-aarch64` configures but does not produce a buildable graph, for the reason
-in point 42.
+`rpi-aarch64` configures and, once point 42 was fixed, builds: 1669 failed steps
+of 18848. Not comparable with the 1026 of the last recorded run, which stopped at
+4052 of 4703 steps and never reached most of the tree. The failures concentrate
+the same way as elsewhere: 932 of the 1669 are `workbench-libs-gl-linklib` in its
+two flavours, then dbus 221 and lzma 200, so about 1350 in five targets, all
+ports and GL.
 
-### 42. DECIDE — the AHI contract pins a filename that ownership can change
+### 42. RESOLVED — the AHI archives are asked of their targets
 
 `rpi-aarch64` no longer configures into a buildable graph:
 
@@ -1257,10 +1261,23 @@ the runner already copies each into a staging directory under a fixed alias
 non-empty file inside the build root. That keeps every substantive part of the
 audit and drops only the assumption that broke.
 
-It is a change inside an audited contract, so it is a decision rather than a
-routine fix. The alternative, keeping the three libraries non-canonical, means
-fighting the ownership rule instead of the assumption, and would break again the
-next time.
+Done that way. Two things about the scope are worth recording, because the phrase
+"audited contract" made it sound heavier than it was.
+
+Every file involved is ours: `cmake/AhiBuild.cmake`, `cmake/RunAhiBuild.cmake`
+and the transpiler's emission point, all created on this branch in
+`e1cb119e39`. No AROS content is touched -- the AHI sources and their
+`mmakefile.src` are upstream and unchanged, and the only thing our branch ever
+added under `workbench/devs/AHI/` is the sha256 input manifest we generate
+ourselves. So this was not a relaxation of anything upstream relies on; it was a
+correction of an assumption we wrote a few days ago.
+
+And asking the target means the declaration has to come after the targets exist,
+so the transpiler emits it there rather than with the other capability-checked
+builds.
+
+`pc-x86_64` now builds `SYS/Prefs/AHI` for the first time instead of riding on a
+stale archive, and `rpi-aarch64` configures into a graph that builds.
 
 ### 30. RESOLVED — `aros-cli test` no longer reports a boot it never looked at
 
