@@ -259,6 +259,46 @@ Open within this: `rom/timer` states `options autoinit` without being
 `modtype=library`, so upstream builds `libtimer.a` for it and we do not. It is
 reported in `generated_targets.skipped-client-archives.txt`.
 
+### 26d. WORK — the two Ports source globs, and why they are not a quick fix
+
+`freetype2.library` (200 undefined) and `acpica.library` (108) are the two
+modules still missing their own implementation, and both for the same reason:
+their source lists come from `$(wildcard $(PORTSDIR)/.../*.c)`, which the
+transpiler drops. The error text used to say "deferred to CMake", which is
+wrong and misled me; nothing expands it.
+
+An opaque marker handed to CMake does not work either, because the glob result
+feeds further Make functions in the same expression (`:%.c=%`, `filter-out`,
+`addprefix`), which only the transpiler's evaluator can apply. So the glob has
+to be resolved during transpilation, against the build tree.
+
+That is the real blocker, and it is ordering, not evaluation: the globs cover
+Ports content a build step fetches, and the source list is needed at configure
+time. Any fix has to decide one of
+
+  * fetch at configure time, or
+  * let the fetch trigger a reconfigure, so the second configure sees the files.
+
+Reported in `generated_targets.partial-source-lists.txt`.
+
+### 26e. WORK — kernel.resource has 26 undefined symbols in three groups
+
+Down from 33 after `13d8e9c5b5`. What is left splits cleanly:
+
+  * `con_*`, `scr_*`, `fb_*`, `print_crash_info` — `linklibs-bootconsole`.
+  * `ACPICABase`, `Acpi*` — `libacpica.a`, the acpica client archive.
+  * `kernel_End`, `kernel_FuncTable`, `_binary_smpbootstrap_*` — the kickstart
+    link and the `smpboot.bin.o` blob that
+    `arch/x86_64-pc/kernel/mmakefile.src:79` builds with objcopy, which we do
+    not.
+
+Neither `rom/kernel/mmakefile.src:71` nor `%build_archspecific` (which has no
+`uselibs=` parameter at all) links the first two, and
+`arch/x86_64-pc/boot/mmakefile.src:27` passes no `uselibs=` to
+`%link_kickstart` either. So how the reference build resolves them is not yet
+established; `%define link_kickstart` (config/make.tmpl:3850) and the
+bootstrap's own link are the places to read next. Not guessed at here.
+
 ### 27. WORK — no reproducible boot attempt exists
 
 No QEMU runner in the tree, and no boot has been attempted. `boot-iso` exists
