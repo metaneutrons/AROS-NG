@@ -184,17 +184,36 @@ de265 32, nouveau 24. None of these is on the boot path; together they are
 roughly half of the 887 failed steps. Worth separating from the boot work when
 reading any build number.
 
-### 26. RISK — nothing measures whether a module is complete
+### 26. RESOLVED — the instrument exists, and it names one dominant cause
 
-Every link is `ld.lld -r`, partial. A missing symbol never fails a link; it
-produces a module with dangling externals that fails when AROS loads it. So a
-green build is necessary and proves nothing about loadability, and there is no
-instrument for it today.
+`ninja symbol-audit`, added in cde7251f9c. First measurement on pc-x86_64:
+1011 artefacts, 998 of them with undefined symbols, 25006 references, 2710
+distinct symbols, 77 weak. Pinned as a ratchet in
+scripts/symbols/baseline-pc-x86_64.json.
 
-The cheap one would be `llvm-nm -u` over each built module, checking that every
-undefined symbol resolves within the kickstart set plus the modules loaded
-before it. Without that, a first boot attempt has a black screen as its only
-diagnostic.
+What it says is that Tor 2 is essentially one problem. The commonest undefined
+symbols are CloseLibrary 431, OpenLibrary 422, __posixc_printf 345, FreeVec 281,
+AllocVec 275, FindTask 260 -- the AROS API and the C runtime, referenced by
+almost every module and provided by the per-module stubs that genmodule writes
+into a link library. Those stubs are not generated, so nothing defines the
+symbols and every module carries them as holes.
+
+2166 of the 2710 distinct symbols have no provider among the built artefacts at
+all; only 544 are defined somewhere and merely not linked. So this is not
+several hundred separate omissions. It is the link-library generator, and it is
+the same 94 modules and 3960 generated files recorded earlier as a weeks-sized
+item. The audit turns that from an assumption into a measured claim.
+
+Calibration worth keeping: kernel-exec.library itself lists AllocMem as
+undefined, because exec does not export its API as global ELF symbols. A reader
+who takes the by-symbol report as "exec is missing" is misreading it.
+
+### 26b. RISK — the audit does not model a load set
+
+Each artefact is checked on its own. That is the right contract for a
+separately loaded module, and conservative for a package or the kickstart,
+whose members may legitimately resolve against each other. Modelling those load
+sets would lower the count somewhat without changing the conclusion above.
 
 ### 27. WORK — no reproducible boot attempt exists
 
