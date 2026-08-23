@@ -208,7 +208,11 @@ endif()
 # `includes` closure selects icon.library for linklibs-amiga. Materialise that
 # exact declaration as the real producer rather than letting configure-time
 # traversal order decide the SDK API.
-if(TARGET "workbench-libs-icon-includes")
+# Since every modtype=library module builds its client archive, icon.library's
+# own ABI support already materialises this exact declaration. Keep the
+# special case only for the configurations where it does not.
+if(TARGET "workbench-libs-icon-includes" AND
+   NOT TARGET "workbench-libs-icon-includes-generated")
     aros_materialize_genmodule_headers(
         NAME workbench-libs-icon-includes-generated
         OWNER workbench-libs-icon-includes
