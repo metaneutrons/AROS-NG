@@ -15,6 +15,11 @@
 
 find_program(AROS_AUDIT_PYTHON3 NAMES python3)
 set(AROS_SYMBOL_AUDIT_SCRIPT "${CMAKE_SOURCE_DIR}/scripts/symbols/audit-symbols.py")
+# Written by aros-genmodule at configure time. A relocatable module leaves its
+# library bases undefined on purpose, so without this list the audit conflates
+# "the loader will fill this in" with "nothing provides this": 1882 of 9268
+# references were library bases.
+set(AROS_SYMBOL_AUDIT_LIBBASES "${CMAKE_BINARY_DIR}/symbol-audit/libbases.txt")
 set(AROS_SYMBOL_AUDIT_BASELINE
     "${CMAKE_SOURCE_DIR}/scripts/symbols/baseline-${AROS_TARGET_PLATFORM}-${AROS_TARGET_CPU}.json")
 
@@ -35,6 +40,7 @@ if(AROS_AUDIT_PYTHON3 AND AROS_AUDIT_NM AND EXISTS "${AROS_SYMBOL_AUDIT_SCRIPT}"
                 --root "${CMAKE_BINARY_DIR}/SYS"
                 --nm "${_audit_nm}"
                 --report-dir "${CMAKE_BINARY_DIR}/symbol-audit"
+                --libbases "${AROS_SYMBOL_AUDIT_LIBBASES}"
                 --baseline "${AROS_SYMBOL_AUDIT_BASELINE}"
         COMMENT "Auditing undefined symbols in the built modules"
         USES_TERMINAL
@@ -44,6 +50,7 @@ if(AROS_AUDIT_PYTHON3 AND AROS_AUDIT_NM AND EXISTS "${AROS_SYMBOL_AUDIT_SCRIPT}"
                 --root "${CMAKE_BINARY_DIR}/SYS"
                 --nm "${_audit_nm}"
                 --report-dir "${CMAKE_BINARY_DIR}/symbol-audit"
+                --libbases "${AROS_SYMBOL_AUDIT_LIBBASES}"
                 --baseline "${AROS_SYMBOL_AUDIT_BASELINE}"
                 --update-baseline
         COMMENT "Re-pinning the symbol audit baseline"

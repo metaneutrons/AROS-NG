@@ -227,6 +227,10 @@ function(aros_bootstrap_sdk_includes)
                 "--scan-dir" "${CMAKE_SOURCE_DIR}"
                 "--output-inc" "${SDK_INC}"
                 "--output-gen" "${AROS_GEN_DIR}"
+                # The library bases this tree declares, for `ninja symbol-audit`.
+                # A relocatable module leaves them undefined on purpose, and the
+                # audit needs the list to tell that apart from a real gap.
+                "--output-libbases" "${CMAKE_BINARY_DIR}/symbol-audit/libbases.txt"
                 "--arch-dirs" "${_arch_dirs_arg}"
         RESULT_VARIABLE GENMODULE_RES
         ERROR_VARIABLE _aros_genmodule_error

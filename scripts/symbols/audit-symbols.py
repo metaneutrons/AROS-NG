@@ -111,6 +111,9 @@ def main() -> int:
                     help="directory holding the built artefacts, e.g. <build>/SYS")
     ap.add_argument("--nm", required=True, help="llvm-nm to use")
     ap.add_argument("--report-dir", required=True, type=pathlib.Path)
+    ap.add_argument("--libbases", type=pathlib.Path,
+                    help="file of library base names, one per line, as written "
+                         "by `aros-genmodule --output-libbases`")
     ap.add_argument("--baseline", type=pathlib.Path,
                     help="pinned counts; the check fails when a number rises")
     ap.add_argument("--update-baseline", action="store_true",
@@ -139,9 +142,33 @@ def main() -> int:
         weak_per_module[rel] = weak
         provider |= defined
 
+    # A relocatable AROS module leaves its library bases undefined on purpose:
+    # the loader sets them when it loads the module. Counting them as defects
+    # overstates the total and makes zero unreachable. SysBase alone was 611 of
+    # 9268 references, DOSBase 310, IntuitionBase 210, UtilityBase 154.
+    #
+    # The list comes from genmodule rather than from a `*Base` pattern, because
+    # the pattern would also swallow a genuinely missing symbol that ends that
+    # way.
+    libbases: set[str] = set()
+    if args.libbases and args.libbases.is_file():
+        libbases = {
+            line.strip()
+            for line in args.libbases.read_text().splitlines()
+            if line.strip()
+        }
+
+    expected: dict[str, set[str]] = {}
+    for module in list(per_module):
+        found = per_module[module] & libbases
+        if found:
+            expected[module] = found
+            per_module[module] = per_module[module] - libbases
+
     by_symbol: collections.Counter[str] = collections.Counter()
     for syms in per_module.values():
         by_symbol.update(syms)
+    expected_refs = sum(len(v) for v in expected.values())
 
     # Defined by some other artefact means a link nobody made. Defined nowhere
     # means an implementation nobody wrote. The two need different work, so they
@@ -157,6 +184,10 @@ def main() -> int:
         "symbols_some_artefact_defines": len(unlinked),
         "symbols_no_artefact_defines": len(absent),
         "weak_references": sum(len(w) for w in weak_per_module.values()),
+        # Reported, never gated: these are correct, and their number tracks how
+        # much of the tree builds.
+        "library_base_references": expected_refs,
+        "library_bases_known": len(libbases),
     }
     # Ratcheted as a fraction, not as a count. The absolute rose from 998 to
     # 1003 on the first real improvement, purely because 16 more modules had
@@ -182,6 +213,10 @@ def main() -> int:
         f"{len(s):6d}  {m}"
         for m, s in sorted(per_module.items(), key=lambda kv: (-len(kv[1]), kv[0]))
         if s
+    ])
+    write("library-bases.txt", [
+        f"{len(v):6d}  {m}"
+        for m, v in sorted(expected.items(), key=lambda kv: (-len(kv[1]), kv[0]))
     ])
     write("no-provider-built.txt", [
         f"{c:6d}  {s}"
