@@ -1,0 +1,285 @@
+# Open points
+
+Status date: 2026-08-23. Everything here is either undecided, unfinished, or a
+finding nobody has acted on yet. Each entry names the evidence, so none of it
+has to be rediscovered.
+
+Marker meaning:
+
+- **DECIDE** waiting on a decision, not on work
+- **WORK** decided or obvious, not done
+- **RISK** a latent defect that has not bitten yet, or has bitten once
+- **WRONG** something recorded elsewhere in this tree that is not true
+
+---
+
+## Toolchain producer
+
+### 1. DECIDE — boost is a hard dependency of the shipped SDK headers
+
+`compiler/include/aros/preprocessor/` has nine headers that include boost
+unconditionally, and `inline/posixc.h` reaches them, so any C source that
+touches `proto/posixc.h` needs boost:
+
+    nixmain.c -> proto/posixc.h -> inline/posixc.h
+      -> aros/preprocessor/variadic/cast2iptr.hpp
+      -> aros/preprocessor/variadic/size.hpp
+      -> boost/preprocessor/cat.hpp        (not found)
+
+Without boost the release package ships a `Developer/include` that cannot
+compile such a source. boost is a fetched Port here
+(`compiler/boost/mmakefile.src`, 1.89.0, archives.boost.io) attached to
+`ports-includes`, and `CROSSTOOLS_PORTS_INCLUDES` is empty in release mode, so
+it has never been available in a producer run.
+
+This is not a consequence of the include-closure narrowing; it predates it and
+was only reached once the port fetches stopped happening first.
+
+Measured costs, because the first estimates were wrong in both directions:
+
+- The archive is **190 099 283 bytes** (`content-length`, verified by HEAD),
+  for what amounts to `boost/preprocessor` and `boost/config`.
+- `toolchains/source-lock-v1.schema.json` has `additionalProperties: false`
+  and `family: {"const": "llvm"}`, with only `sources` and
+  `host_python_packages`. There is **no slot for a port source**, so pinning
+  boost means a schema change plus matching work in `producer.py`
+  (prefetch, verify, package) and in the recipe's `source_lock_sha256`.
+- `%copy_dir_recursive` in `compiler/boost/mmakefile.src:27` stages **all** of
+  boost into `$(GENINCDIR)/boost` and `$(AROS_INCLUDES)/boost`, not just the
+  two directories needed.
+- Removing the dependency instead is **not** the small patch I first called it.
+  Across the nine headers the surface is 23 distinct macros, including
+  `BOOST_PP_REPEAT`, `BOOST_PP_EQUAL`, `BOOST_PP_DIV`, `BOOST_PP_MUL`,
+  `BOOST_PP_ARRAY_*`, `BOOST_PP_TUPLE_ENUM` and `BOOST_PP_IS_EMPTY`. That rests
+  on boost's arithmetic and iteration machinery; replacing it is writing a
+  preprocessor library, not deleting an include.
+
+There is also `compiler/boost/boost_1_89_0-aros.diff`, which the `%fetch`
+applies, so any pinned copy has to account for the patch.
+
+### 2. RISK — genmodule is run while it is still being written
+
+A lane failed with `Bus error: 10` on
+`gen/compiler/crt/stdc/stdc/include/.stdc.library-includes`. genmodule run by
+hand with the same arguments succeeds, and the log shows genmodule's own
+sources (`functionhead.c`, `muisupport.c`, `writefd.c`, `writelinkentries.c`)
+being compiled immediately before. Under `-j 8` the recipe executes a
+partially written binary.
+
+The tree-wide `includes` used to act as a barrier that hid this. Whether the
+ordinary build has another barrier is unchecked, so this may affect
+`make crosstools -j` as well.
+
+### 3. WORK — the non-release include form is untested
+
+`compiler/include/mmakefile.src` now offers `sdk-includes-0` and
+`sdk-includes-1`. Only the release form has been exercised; this tree is
+configured with `--enable-toolchain-release`. `sdk-includes-0` is a faithful
+copy of what the three call sites had, except that `compiler/atomic` and
+`compiler/libinit` now also name `includes-copy`, which `includes` already
+implied through `includes-generate-deps`.
+
+### 4. WORK — the collector is not releasable
+
+Untouched from `toolchains/HANDOFF.md`. The four-item design there still
+stands, and the diagnosis is confirmed:
+
+- `tools/collect-aros/env.h.in` `_CROSS_` bakes in absolute producer paths:
+  `LD_NAME "@aros_toolchain_ld@"`, `STRIP_NAME`/`NM_NAME`/`OBJDUMP_NAME` as
+  `@AROS_CROSSTOOLSDIR@/@aros_target_cpu@-aros-*`. The `_STANDALONE_` branch
+  uses bare names, so PATH resolution.
+- `OBJLIBDIR` is compiled in via `-DOBJLIBDIR="$(AROS_LIB)"`
+  (`tools/collect-aros/mmakefile:24` and `:34`), used at
+  `backend-generic.c:139,140,154,155` and `backend-bfd.c:130,131,144,145`.
+- `misc.c:52` `set_compiler_path()` prepends `COMPILER_PATH` to `PATH`.
+- No runtime self-location anywhere: no `/proc/self/exe`, no
+  `_NSGetExecutablePath`.
+- `producer.py` never mentions `collect-aros`, so no collector is packaged,
+  which is consistent with the intent. `cmake/AROS.cmake:246` documents the
+  deliberate bypass.
+
+Until this is done, the release prefix promises the locked CMake partial-link
+contract and not arbitrary standalone linking through `clang`/`clang++`.
+
+### 5. WORK — the Linux lane and the reproducibility matrix
+
+The `linux-x86_64` lane has not been run; it needs the other machine. The
+complete v1 matrix requires each host/profile pair built twice and
+byte-compared before publication, which has not started.
+
+### 6. DECIDE — job count for the byte-comparison
+
+Lanes here ran with `--jobs 8`, where `toolchains/HANDOFF.md` uses 2. The
+producer sets `SOURCE_DATE_EPOCH`, `ZERO_AR_DATE` and the prefix maps itself,
+so the job count should not affect the output, but that has not been verified
+by comparing two runs at different parallelism.
+
+---
+
+## Quality gates
+
+### 7. DECIDE — a pinned digest of a live file sits in Rust source
+
+`aros-verify` fails 3 of its 22 tests, all with "the audited LLVM provisioning
+context drifted": `llvm_provisioning_contract_mutations_fail_closed`,
+`llvm_provisioning_context_is_semantically_fingerprinted`,
+`current_architecture_denominators_are_pinned`.
+
+`LLVM_PROVISIONING_MMAKE_SHA256` at `aros-verify/src/main.rs:269` is a semantic
+digest of `tools/crosstools/llvm/mmakefile.src`. That file changed twice on
+2026-08-23 alone. The drift predates those changes: reverting the file to
+`7560a51df1` leaves the same three tests red.
+
+This is the coupling that blocks the refactor, see point 13. Whatever replaces
+it, the value does not belong in a `.rs` constant; the refactor plan's own
+principle 4 says as much.
+
+Note also that `toolchains/HANDOFF.md`'s five-check gate does not include
+`cargo test -p aros-verify`, which is how a red suite passed for a green state.
+
+### 8. WORK — three clippy deny-level errors
+
+    error: using tabs in doc comments      crates/aros-transpiler/src/flexcat.rs:9
+    error: very complex type used          crates/aros-transpiler/src/flexcat.rs:273
+    error: useless use of `format!`        crates/aros-transpiler/src/parser.rs:2953
+
+`cargo clippy --workspace --all-targets` does not compile until these are
+fixed. Roughly 44 further warn-level lints exist; the workspace sets
+`clippy::all = deny` with `pedantic`, `nursery` and `cargo` at warn.
+
+### 9. WORK — three clippy warnings are false positives
+
+`suspicious_operation_groupings` at `parser.rs:3870`, `:4051` and `:5040`
+suggests `expected_flags.include_dirs`. The field really is `includes`
+(`parser.rs:3296`), so the suggestion would not compile. These need an
+`#[allow]` with a reason, and any task worded "resolve all clippy warnings"
+has to say so, because the code sits in comparisons the parity tests use.
+
+---
+
+## Transpiler and parity
+
+### 10. DECIDE — should the toolchain's own build be transpiled?
+
+Whole-tree coverage is 1178/1195, architecture-scoped 1067/1076. Of the nine
+missing in the x86_64-pc scope, seven are `crosstools-*` from
+`tools/crosstools/llvm/mmakefile.src` and the other two are `grub` and
+`tools-crosstools-gcc-libatomic`. The producer covers that ground by a
+different route, so whether these should become CMake targets at all is an
+open question, and it has to be answered before "zero missing targets" can be
+a gate.
+
+### 11. WORK — two mmakefiles genmf cannot expand
+
+Reported by `aros-verify` as `verify/genmf-errors.txt`. Not investigated.
+
+### 12. WRONG — the parity claim in circulation overstates what is measured
+
+`aros-verify` compares declaration inventory and shape against the genmf
+expansion. Its own `--profile` help says only architecture eligibility is
+evidence-backed and that core/distribution reachability needs verified roots.
+Nothing measures parity of build *outputs*, so a "bit-for-bit parity with
+upstream build outputs" claim has no gate behind it today.
+
+---
+
+## Refactor readiness
+
+### 13. WORK — the golden-output harness
+
+The precondition is met: the transpiler is deterministic. Three runs on an
+unchanged tree gave 3 133 008 bytes with the same sha256, and all 19 report
+files were byte-identical. `aros-transpiler` takes no target arguments, so one
+golden `generated_targets.cmake` covers all presets and the per-preset
+variation lives in the CMake step and the verify reports.
+
+Not built yet. Until it exists, "without altering a single byte of generated
+CMake output" is an intention rather than a gate.
+
+Sequence that follows from point 7: fix the gates first, then capture the
+baseline, then decompose.
+
+---
+
+## MetaMake findings
+
+### 14. RISK — 22 `#MM` lines inside Make conditionals contribute unconditionally
+
+MetaMake scans for `#MM` with a plain `strncmp` (`tools/MetaMake/dirnode.c:126`)
+and never evaluates `ifeq`. Its variable reader ignores conditionals too
+(`tools/MetaMake/project.c:116-145`). `workbench/devs/mmakefile.src:44`
+documents this and works around it with a `#M%(...)` prefix trick inside a
+genmf macro.
+
+22 `#MM` lines in 5 mmakefiles sit inside conditionals today, among them
+`arch/arm-native/exec` and `arch/aarch64-native/exec`. Every one of them
+contributes in both branches. Anyone reading those files as conditional is
+reading them wrong.
+
+Variables in `#MM` names *are* substituted (`tools/MetaMake/cache.c:600`), but
+only from the two files `mmake.config` lists as `globalvarfile`: `host.cfg` and
+`target.cfg`. `config/make.cfg` is not one of them.
+
+### 15. WORK — `AROS_DIR__TOOLS` is a typo
+
+`images/IconSets/Gorilla/Icons/Small/AROS/Tools/mmakefile.src:26` writes
+`$(AROS_DIR__TOOLS)` where line 23 has `$(AROS_DIR_TOOLS)`. An undefined Make
+variable expands to nothing, so those icons install one directory too high.
+Upstream candidate.
+
+---
+
+## Upstream contribution hygiene
+
+### 16. WORK — the four `fix/*` branches are not upstreamable as they stand
+
+`fix/ahci-posix-errno`, `fix/arosinquirea-kickstartbase-cast`,
+`fix/exec-vlog-missing-exec-proto` and `fix/kernel-early-missing-stdbool` each
+sit on `main`, seven commits over `master`, so a PR from any of them proposes
+32 files and 3188 lines of build system next to a one-line fix. Three are
+otherwise clean one-liners.
+
+`fix/kernel-early-missing-stdbool` additionally rewrote
+`arch/x86_64-pc/kernel/kernel_early.c` from CRLF to LF: 431 CRs removed,
++432/-431 for one added line.
+
+Redo as `pr/<topic>` branched directly off `master`, which is the convention
+`origin/pr/*` already follows.
+
+### 17. WORK — `origin/pr/*` needs a pass
+
+`pr/aarch64-startup64`, `pr/aarch64-darwin-cocoa`, `pr/crosstools-libcody-fix`
+and `pr/rpi5-pcie0-nvme` are each 44 commits over `master` and carry unrelated
+work; `pr/aarch64-startup64` is 63 files and +3203/-284 where only the tip
+commit is the change. `pr/genet`, `pr/m68kemu` and `pr/mbedtls` are fully
+contained in `master` and can be deleted.
+
+### 18. WORK — `master` is 46 commits behind `upstream/master`
+
+`git fetch upstream && git branch -f master upstream/master`.
+
+### 19. WORK — the sancov fix is an upstream candidate
+
+`8dec8d4547` stops building `sancov` and `sanstats`, because LLVM 11.0.0's
+`sancov.cpp:514` does not compile against current libc++. That breaks
+`make crosstools` on any current macOS host, not only the release lane, so it
+is worth sending on.
+
+### 20. RISK — `git remote` push URL for upstream is writable
+
+`upstream` currently has a push URL pointing at
+`aros-development-team/AROS`. `git remote set-url --push upstream no_push`.
+
+---
+
+## Stale records
+
+### 21. WRONG — `toolchains/HANDOFF.md` assumes a dirty working tree
+
+Its opening states the tree is intentionally dirty and must not be cleaned,
+and its resume sequence builds a snapshot-and-overlay procedure on that. The
+tree is committed. The snapshot step is still worth doing for isolation from
+concurrent work, but not for the reason given.
+
+The `configure~` and `__pycache__` by-products that step 3 works around are
+ignored as of `13cd9faf62`.
