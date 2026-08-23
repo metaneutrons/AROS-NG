@@ -408,7 +408,62 @@ We build one artefact per module and hand it to both purposes, so the members
 carry the default link set and their bases stay global. A second artefact per
 member is the work; the localisation step is the part that cannot be skipped.
 
-### 27e. WORK — a page fault inside the kernel entry
+### 27f. WORK — the romtag scan does not find exec.library
+
+AROS runs and says so:
+
+```
+AROS64 - The AROS Research OS
+64-bit build. Compiled Aug 23 2026
+
++------------------------------------------+
+|            Critical boot failure         |
+|          Failed to create ExecBase       |
+|          exec.library is not found       |
++------------------------------------------+
+```
+
+So `kernel_cstart` runs, the boot console works, and the failure is now a
+stated one: the kickstart's romtag scan finds no exec.library. The kickstart
+does contain exec's kobj with its Resident structure, so what to read next is
+the scanner and the chaining, `krnRomTagScanner` and `rt_EndSkip`. The end-file
+placement fixed in `ac4cf80809` is directly relevant and worth checking first.
+
+A second fault follows the error display and is very likely the panic path
+itself: `v=0e IP=0008:000000000139e621 CR2=fffffffffffffef8`.
+
+### 27e. RESOLVED — the kickstart link is a nostdc link
+
+`kernel_cstart` called `strstr(cmdline, "vesahack")`
+(`arch/x86_64-pc/kernel/kernel_startup.c:358`) and faulted:
+
+```
+movabsq $0x138efa0, %r11 ; movq (%r11), %r11 ; jmpq *-0xb70(%r11)
+v=0e CR2=fffffffffffff490
+```
+
+That is `__strstr_StdCBase_wrapper`: load StdCBase, jump through its LVO table.
+StdCBase is necessarily NULL in `kernel_cstart`, which is the first code to run.
+
+`libstdc.a` is the client stub archive and its `strstr` is that wrapper;
+`libstdc.static.a` holds the real one. The spec offers exactly this choice --
+`%{!nostdc:... -lstdc} %{nostdc:-lstdc.static}` (`config/elf-specs.in:19`) --
+and `%link_kickstart` passes only `-static -nosysbase`
+(`config/make.tmpl:3899`).
+
+Passing `nostdc` too is a reading of the reference, not a transcription of it,
+and it is stated as such at the call site. The justification is the one that
+already justifies `-nosysbase`: a kickstart runs before any library exists, so
+it cannot call one. `rom/exec` makes the same choice one level down, with
+`uselibs="stdc.static"` for its own object.
+
+Found while testing it: the switch lists in the default-link-set record are
+comma-separated inside a pipe-separated record, and neither consumer split
+them. A single-switch item was unaffected, so only `-lposixc`, the one item
+with two switches, was wrong -- and it was wrong everywhere, staying in links
+that asked for `nostdc` or `noposixc`.
+
+### 27e-old. WORK — a page fault inside the kernel entry
 
 `start64` runs -- the trace shows `cmpl $0x41524f53, %esi` at its first
 instruction, so the magic handshake with the bootstrap works -- and then:

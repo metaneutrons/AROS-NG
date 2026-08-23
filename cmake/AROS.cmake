@@ -5637,7 +5637,26 @@ function(aros_link_kickstart)
     # -nosysbase. That is where a member gets libamiga, libautoinit, liblibinit
     # and the C runtime, all of which are deliberately excluded from the
     # member's own object (config/make.tmpl:2752).
-    aros_default_link_set_files(_default_files _default_deps nosysbase)
+    # nostdc as well as nosysbase, which is a reading of the reference rather
+    # than a transcription of it: config/make.tmpl:3899 passes only
+    # `-static -nosysbase`.
+    #
+    # The reasoning is the same one that justifies -nosysbase. A kickstart runs
+    # before any library exists, so it cannot call one. Without nostdc the spec
+    # contributes -lstdc, whose strstr is a stub that loads StdCBase and jumps
+    # through its LVO table (compiler/crt/stdc's generated
+    # __strstr_StdCBase_wrapper). StdCBase is necessarily NULL in
+    # kernel_cstart, which is the first code to run, so
+    # arch/x86_64-pc/kernel/kernel_startup.c:358's strstr(cmdline, "vesahack")
+    # faulted:
+    #
+    #   movabsq $0x138efa0, %r11 ; movq (%r11), %r11 ; jmpq *-0xb70(%r11)
+    #   v=0e CR2=fffffffffffff490
+    #
+    # With nostdc the spec gives -lstdc.static instead, whose strstr is the
+    # real implementation. That rom/exec states `uselibs="stdc.static"` for its
+    # own object is the same choice, made one level down.
+    aros_default_link_set_files(_default_files _default_deps nosysbase nostdc)
     list(APPEND _member_deps ${_default_deps})
 
     get_filename_component(_dir "${ARG_OUTPUT}" DIRECTORY)

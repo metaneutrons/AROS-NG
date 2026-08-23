@@ -85,6 +85,12 @@ function(aros_default_link_set_files out_files out_deps)
         list(GET _fields 1 _archive)
         list(GET _fields 2 _absent)
         list(GET _fields 3 _present)
+        # The switch lists are comma-separated inside the record, because the
+        # record itself is pipe-separated. Without this a two-switch item is one
+        # string that matches nothing: -lposixc requires both nostdc and
+        # noposixc to be absent, and stayed in every link.
+        string(REPLACE "," ";" _absent "${_absent}")
+        string(REPLACE "," ";" _present "${_present}")
         set(_wanted TRUE)
         foreach(_switch IN LISTS _absent)
             if(_switch IN_LIST ARGN)
@@ -164,6 +170,9 @@ function(aros_apply_default_link_set)
             list(GET _fields 1 _archive)
             list(GET _fields 2 _absent)
             list(GET _fields 3 _present)
+            # Comma-separated inside the record; see the note above.
+            string(REPLACE "," ";" _absent "${_absent}")
+            string(REPLACE "," ";" _present "${_present}")
 
             set(_wanted TRUE)
             foreach(_switch IN LISTS _absent)
