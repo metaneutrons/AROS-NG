@@ -164,3 +164,40 @@ aros_copy_includes(
     SOURCE "workbench/network/common/include"
     PATTERNS "*.h" "arpa/*.h" "bsdsocket/*.h" "clib/*.h" "defines/*.h"
              "libraries/*.h" "net/*.h" "netinet/*.h" "proto/*.h" "sys/*.h")
+
+# -----------------------------------------------------------------------------
+# The vendored Boost subset
+# -----------------------------------------------------------------------------
+#
+# compiler/include/aros/preprocessor/ includes Boost unconditionally, and
+# inline/posixc.h reaches it, so every C source that touches proto/posixc.h
+# needs Boost headers in the SDK. Without them the build stops at
+#
+#     SDK/include/aros/preprocessor/variadic/size.hpp:4:11:
+#         fatal error: 'boost/preprocessor/cat.hpp' file not found
+#
+# compiler/boost/include carries boost/preprocessor and boost/config for
+# exactly this; see the README there for provenance and why they are in the
+# tree rather than fetched.
+#
+# Copied at configure time rather than as a build step, for the reason
+# libraries/mui.h above is: several hundred compiles need these headers to
+# exist before the first one runs, and expressing that as a dependency on a
+# custom command would cost far more than one copy. MetaMake stages the same
+# files through compiler-boost-subset-includes-copy, which is reachable from
+# sdk-includes-1 and therefore covers the producer's route.
+set(_boost_subset "${CMAKE_SOURCE_DIR}/compiler/boost/include/boost")
+if(IS_DIRECTORY "${_boost_subset}")
+    foreach(_root "${AROS_SDK_INCLUDE_DIR}" "${AROS_GENINC_DIR}")
+        if(NOT IS_DIRECTORY "${_root}/boost")
+            file(COPY "${_boost_subset}" DESTINATION "${_root}")
+        endif()
+    endforeach()
+    file(GLOB_RECURSE _boost_staged "${AROS_SDK_INCLUDE_DIR}/boost/*")
+    list(LENGTH _boost_staged _n_boost)
+    message(STATUS "🧵 AROS-NG: staged ${_n_boost} vendored Boost header(s)")
+else()
+    message(WARNING
+        "compiler/boost/include/boost is missing; every source reaching "
+        "proto/posixc.h will fail on boost/preprocessor")
+endif()
