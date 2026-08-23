@@ -158,6 +158,14 @@ def main() -> int:
         "symbols_no_artefact_defines": len(absent),
         "weak_references": sum(len(w) for w in weak_per_module.values()),
     }
+    # Ratcheted as a fraction, not as a count. The absolute rose from 998 to
+    # 1003 on the first real improvement, purely because 16 more modules had
+    # started building: 998/1011 became 1003/1027, which is better, and the gate
+    # said worse. A count that grows with the number of artefacts cannot be
+    # compared across runs.
+    measured["modules_with_undefined_permille"] = round(
+        1000 * measured["modules_with_undefined"] / measured["artefacts"]
+    )
 
     args.report_dir.mkdir(parents=True, exist_ok=True)
 
@@ -198,10 +206,12 @@ def main() -> int:
         return 0
 
     pinned = json.loads(args.baseline.read_text())
-    # Only "fewer is better" metrics ratchet. artefacts may legitimately grow as
-    # more of the tree builds, so it is reported and not gated.
+    # Only "fewer is better" metrics ratchet, and only ones that do not move
+    # with the number of artefacts. artefacts itself grows as more of the tree
+    # builds, so it is reported and not gated, and modules_with_undefined is
+    # gated through its permille form for the same reason.
     ratcheted = [
-        "modules_with_undefined",
+        "modules_with_undefined_permille",
         "references_total",
         "symbols_distinct",
         "symbols_no_artefact_defines",
