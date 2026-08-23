@@ -365,6 +365,58 @@ the compiler spec applies there too, with `-lexec` suppressed by `-nosysbase`.
 Its `uselibs=` is empty for pc-x86_64, so it contributes no libraries of its
 own.
 
+### 27a. WORK — a kickstart member is a different artefact from a module
+
+The blocker for a boot image, and the reason the kickstart link fails with
+`duplicate symbol: LibNextTagItem` and `set_call_libfuncs`.
+
+`config/make.tmpl:2166` builds a kickstart member as its own object, not as the
+loadable module:
+
+```
+$(KOBJ) : $(OBJS) $(ENDOBJS)
+    $(AROS_LD) -Ur $(KOBJ_LDFLAGS) $(KERNEL_KOBJ_LDSCRIPT) -o $@ $^ \
+        $(USER_LDFLAGS) -L$(AROS_LIB) $(addprefix -l,$(LINKLIBS))
+    $(OBJCOPY) $@ $(FILTBASES) `... -L <set list symbols>`
+```
+
+Four differences from the module link, each load-bearing:
+
+  * `$(AROS_LD)` directly, not the compiler driver, so the spec's default link
+    set does **not** apply to a kickstart member.
+  * `KLIB := hiddstubs amiga arossupport autoinit libinit` are filtered out of
+    `uselibs` (make.tmpl:2161).
+  * a kernel linker script, `KERNEL_KOBJ_LDSCRIPT`.
+  * `objcopy -L` makes the library bases local -- `DOSBase IntuitionBase
+    LayersBase GfxBase OOPBase UtilityBase ExpansionBase KeymapBase KernelBase`
+    (make.tmpl:2156) -- along with every `__*_LIST__`, `__*_END__` and
+    `__aros_lib*`. That localisation is exactly what lets several members be
+    linked into one image.
+
+We build one artefact per module and hand it to both purposes, so the members
+carry the default link set and their bases stay global. A second artefact per
+member is the work; the localisation step is the part that cannot be skipped.
+
+### 27b. WORK — the PC bootstrap is a 32-bit build and we build it 64-bit
+
+`kernel-bootstrap-pc` fails at its vesa blob with
+
+    ld.lld: error: ... vesa.c.obj is incompatible with elf_i386
+
+because the whole declaration is 32-bit and almost none of that is modelled.
+`arch/all-pc/bootstrap/mmakefile.src` sets
+
+  * `TARGET_ISA_LDFLAGS := --target=i386-pc-linux-gnu -march=i486` (line 32),
+    an assignment to a global rather than to a `USER_*` variable, which is why
+    the flag collector does not see it;
+  * `USER_LDFLAGS := -m32 -Wl,-N,-e,kernel_bootstrap -Wl,-T,.../ldscript.lds
+    -static-libgcc` (line 19);
+  * `TARGET_C_LIBS := $(TARGET_32_C_LIBS)` (line 35).
+
+Of that we carry only `-DMULTIBOOT_64BIT` and `-L$(GENDIR)/lib32`. Needed: a
+per-declaration ISA/target override, the linker script, and the 32-bit
+compiler-rt.
+
 ### 27. WORK — no reproducible boot attempt exists
 
 No QEMU runner in the tree, and no boot has been attempted. `boot-iso` exists
