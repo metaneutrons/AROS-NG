@@ -408,29 +408,85 @@ We build one artefact per module and hand it to both purposes, so the members
 carry the default link set and their bases stay global. A second artefact per
 member is the work; the localisation step is the part that cannot be skipped.
 
-### 27f. WORK — the romtag scan does not find exec.library
+### 27h. WORK — a package module the loader refuses
 
-AROS runs and says so:
+Booting with all four packages as multiboot modules stops before the kernel
+runs at all:
 
 ```
-AROS64 - The AROS Research OS
-64-bit build. Compiled Aug 23 2026
-
-+------------------------------------------+
-|            Critical boot failure         |
-|          Failed to create ExecBase       |
-|          exec.library is not found       |
-+------------------------------------------+
+[ELF Loader] Undefined symbol 'HIDD_Serial_NewUnit'
+serialmouse.hidd: Relocation error in section 2!
+Failed to load the kickstart
+*** SYSTEM PANIC!!! ***
 ```
 
-So `kernel_cstart` runs, the boot console works, and the failure is now a
-stated one: the kickstart's romtag scan finds no exec.library. The kickstart
-does contain exec's kobj with its Resident structure, so what to read next is
-the scanner and the chaining, `krnRomTagScanner` and `rt_EndSkip`. The end-file
-placement fixed in `ac4cf80809` is directly relevant and worth checking first.
+`serialmouse.hidd` comes from `aros-legacy.pkg`. This is the symbol audit's
+contract failing in the field rather than on paper: a partial link accepts a
+dangling external, and the loader is where it surfaces. The module is one of
+the 50 the audit lists, so the audit already knows; what this adds is that a
+package member's dangling external is fatal to the whole boot, not only to that
+module.
 
-A second fault follows the error display and is very likely the panic path
-itself: `v=0e IP=0008:000000000139e621 CR2=fffffffffffffef8`.
+Until it is fixed, a boot attempt has to pass the kickstart alone as its only
+module, which is what the recorded QEMU invocations do.
+
+### 27g. WORK — a #GP inside FindMem, and no IDT gate to take it
+
+With the section ordering in place the boot reaches user mode. QEMU reports no
+exception at all until:
+
+```
+check_exception old: 0xffffffff new 0xd
+  v=0d e=0000 cpl=3 IP=002b:00000000013adfa3
+  RAX=48003004708a8b48 R14=48003004708a8b48
+check_exception old: 0xd new 0xb
+  v=08 (double fault)
+```
+
+`cpl=3` means exec's ExecBase exists, `InitCode(RTF_COLDSTART)` ran and a task
+is running. The kickstart's `.text` is loaded at `0x1391000`, so the faulting
+instruction is `.text+0x1cfa3`, inside `FindMem`
+(`rom/exec/memory.c:24`) at `mh = mh->mh_Node.ln_Succ`. `RAX` is the pointer
+being dereferenced and it holds `48 8b 8a 70 04 30 00 48`, which is x86 code,
+not a node: the MemList chain walks into the code segment. So either
+`SysBase->MemList` is built wrong or `FindMem` is reached with a SysBase that
+is not one.
+
+Two separate things to read, and the second is not a consequence of the first:
+
+  * why the MemList head or a successor points into `.text`;
+  * why the #GP cannot be delivered. `check_exception ... new 0xb` is #NP, so
+    the IDT gate for vector 13 has its present bit clear. `IDT=0x1400100
+    limit=0xfff` is the full 256 entries, so the table is sized and installed
+    but entry 13 is not filled in. A #GP in a user task must become an alert,
+    never a triple fault, so this is a defect of its own.
+
+### 27f. RESOLVED — every kickstart module's sections are ordered, not only m68k's
+
+The scan found kernel.resource and nothing else. Upstream `ac31689b11` moved
+the Resident tags into `.text.romtag` and the End markers into
+`.text.moduleend`, and wired the ordering script that makes `rt_EndSkip` mean
+"module end" for amiga-m68k alone. Everywhere else a link merges sections by
+name, so all three tags landed in one block and all three markers in a block
+above it:
+
+```
+.text.romtag     Kernel_resident +0x00  Exec_resident +0x48  Task_ROMTag +0x90
+.text.moduleend  Kernel_End     +0x00  Exec_End      +0x01  Task_End    +0x02
+```
+
+The loader packs read-only sections in section-index order, so
+`.text.moduleend` sits above every tag. The scanner reads kernel.resource,
+leaps to `Kernel_End`, and is past the end of the image.
+
+`config/kobj-romtag.ld` is the same mechanism for every target, and the
+transpiler now reads `KERNEL_KOBJ_LDSCRIPT` out of `config/make.cfg.in` instead
+of leaving it unmodelled. Each module became one contiguous block in `.text`
+with its tag first and its marker last, every leap lands in front of the next
+module's tag, and the boot goes on to point 27g.
+
+The second fault recorded here, `v=0e IP=0008:000000000139e621
+CR2=fffffffffffffef8`, was the panic path and went away with the panic.
 
 ### 27e. RESOLVED — the kickstart link is a nostdc link
 
@@ -664,6 +720,19 @@ No QEMU runner in the tree, and no boot has been attempted. `boot-iso` exists
 as a target and packages `${CMAKE_BINARY_DIR}/SYS`, but `grub` is one of the
 nine untranspiled `%build_with_configure` declarations from point 10, so the
 image has no loader yet.
+
+### 29. WORK — the release producers count as target obligations
+
+`fc2aac81b2` declares `crosstools-libunwind-release`,
+`crosstools-compiler-rt-release` and `crosstools-compiler-rt32-release` beside
+their non-release siblings. All six provision the host compiler this build
+consumes, but only the three originals are in
+`LLVM_PROVISIONING_DECLARATIONS`, so the three `-release` ones are counted in
+the target inventory as things the target tree owes.
+
+Either they belong in the provisioning list, which is a statement that the
+release lane is part of the same boundary, or the inventory is right and the
+boundary is narrower than the lane. A decision, not a defect.
 
 ### 28. WRONG — the four `fix/*` branches held fixes this branch needed
 
