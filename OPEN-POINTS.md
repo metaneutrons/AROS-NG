@@ -121,19 +121,22 @@ by comparing two runs at different parallelism.
 A full CMake build of pc-x86_64 on 2026-08-23 after the Boost staging fix:
 16378 of 16611 steps completed, 887 steps failed, 1496 errors.
 
-### 37. WORK — 94 declared sources resolve to no file
+### 37. PARTLY RESOLVED — 11 declared sources resolve to no file, down from 94
 
 `aros_resolve_sources` used to drop a missing in-tree source with a bare
 `continue`, so a target quietly built with fewer objects than its declaration
 names. Now reported in `generated_targets.missing-sources.txt`, and there are 94.
 
-Two are worth naming. `linklibs-udis86`'s generated `itab` was one, which is why
-the failure showed up as a missing *header* one step away from the cause; that
-one is closed. The largest group is the reaction classes, each dropping
-`DEFAULT_MODTYPE` and `gadget`: `DEFAULT_MODTYPE` is an unexpanded Make variable
-reaching a source list, so something in the variable handling is passing a name
-through instead of a value. That is a defect, not a missing file, and it is worth
-reading before the other 90.
+The report earned itself twice over. `linklibs-udis86`'s generated `itab` was one
+entry, which is why that failure showed up as a missing *header* one step away
+from the cause. And 82 of the 94 were two bogus sources named `DEFAULT_MODTYPE`
+and a modtype, on each of the 41 gadget, mcc and datatype declarations -- not a
+Make-variable problem as first read here, but a CMake keyword that was read
+without being declared, which is point 39.
+
+Eleven remain and each looks genuine: `pfs3`'s `ks13wrapper`, android's
+`androidgfx_bitmap`, six audio plugins of `diskimage-cue`, `Editor`'s `Prefs`,
+and two kernel arch names that another declaration legitimately claims.
 
 ### 36. RESOLVED — udis86's instruction tables are generated
 
@@ -169,29 +172,97 @@ Failed build steps 1083 -> 1078, generated-file rules 21 -> 20, missing sources
 94 -> 93, `aros-base.pkg` built with all 26 members. The boot then moved on to
 the next dangling symbol, which is point 38.
 
-### 38. WORK — the audit's 42 modules are the boot's work list
+### 40. WORK — gfx.hidd's SIMD lanes are the last blocker
 
-With `aros-base.pkg` loading, the boot stops here:
+One staged package member still has undefined symbols, and it is the only thing
+between here and a boot that reaches dos.library:
 
 ```
-[ELF Loader] Undefined symbol 'con_LibName'
-con-handler: Relocation error in section 3!
-Failed to load the kickstart
-*** SYSTEM PANIC!!! ***
+[ELF Loader] Undefined symbol 'convert_XRGB32_BGRA32_SSE2'
+gfx.hidd: Relocation error in section 3!
 ```
 
-`con_LibName` is a genmodule symbol, and `kernel-fs-con-handler` is one of the 42
-modules the symbol audit lists with an undefined symbol
-(`symbol-audit/by-module.txt`, `by-symbol.txt` calls it `no-provider`). So the
-audit is no longer an abstract measure of build completeness: because the ELF
-loader refuses a whole boot over one unresolved symbol, that list of 42 is
-exactly the list of things standing between here and a boot that reaches
-dos.library.
+18 symbols, all `convert_*_SSE2`, `_SSE3` or `_AVX`. They come from
+`arch/i386-all/hidd/gfx/mmakefile.src`, which has three `%build_archspecific`
+declarations for one module:
 
-That reframes what to do next. Rather than chase one symbol per boot attempt,
-read `symbol-audit/by-symbol.txt` for the shapes: how many of the 42 are a
-genmodule symbol like this one, how many a missing link library like point 27h's,
-and how many a real absence. The first two are systematic.
+```
+USER_CFLAGS :=                       ; %build_archspecific ... files=rgbconv_arch arch=i386
+USER_CFLAGS := $(HIDDGFX_SSE_CFLAGS) ; %build_archspecific ... files=rgbconv_sse  arch=x86_sse
+USER_CFLAGS := $(HIDDGFX_AVX_CFLAGS) ; %build_archspecific ... files=rgbconv_avx  arch=x86_avx
+```
+
+`x86_sse` and `x86_avx` are not architectures. They are lane names, and what
+attaches them is a MetaMake edge in the x86_64 file:
+
+    #MM- kernel-hidd-gfx-x86_64 : kernel-hidd-gfx-x86_sse kernel-hidd-gfx-x86_avx
+
+The transpiler carries all five lanes to CMake, and `aros_resolve_arch_sources`
+selects by matching the tag against `AROS_ARCH_INCLUDE_TAGS`, so the two lane
+names match nothing and their sources are dropped. The dispatcher in
+`arch/x86_64-all/hidd/gfx/rgbconv_arch.c` then references implementations that
+were never compiled -- and its own comment says why it must: "no ISA
+preprocessor guards here... the SSE/AVX implementation modules are always linked
+on x86_64".
+
+Two parts, and the second is why this is not a one-liner:
+
+  * **Selection.** A lane whose tag is not an architecture is selected when a
+    `#MM-` edge attaches it to a selected lane, the convention being
+    `<mainmmake>-<tag>`. The transpiler knows both the edge and the lane names,
+    so it can retag such a lane with the puller's tag rather than teach CMake to
+    walk the meta graph -- CMake reads the declarations before the meta edges
+    exist.
+  * **Flags.** Each lane sets `USER_CFLAGS` before its declaration: `-msse2` for
+    the SSE lane, `-mavx2` for the AVX one. Nothing carries them today (the gfx
+    declaration has no `ARCH_COMPILE_OPTIONS` at all), and without them
+    `rgbconv_avx.c` cannot compile. `arch_compile_options` exists on the target
+    model; what is missing is attributing an assignment to the declaration that
+    follows it.
+
+### 39. RESOLVED — DEFAULT_MODTYPE was read but never declared
+
+`aros_add_library` reads `ARG_DEFAULT_MODTYPE`, so it looked declared. It was not
+in the function's `oneValueArgs`, and CMake extends the previous multi-value
+argument with a word it does not recognise: `DEFAULT_MODTYPE mcc` from
+`aros_add_mcc` landed inside `SOURCES`.
+
+Each of the 41 gadget, mcc and datatype declarations therefore gained two sources
+named `DEFAULT_MODTYPE` and its own modtype, and lost the modtype itself. Their
+scaffolding was generated as `library`, which for a Zune class is not a modtype:
+`busy.conf:5: error superclass specified when not a BOOPSI class`.
+
+Two things about how it was found are worth keeping. The error only appeared once
+point 38's fix made the config findable -- before that the scaffolding was
+skipped entirely, which is the same defect one step quieter. And what named it
+was the missing-sources report of point 37, which listed `DEFAULT_MODTYPE` as a
+source outright. This is the second time this exact CMake trap has cost a day's
+worth of symptom: the first was `DRIVER_LINK_OPTIONS` extending `DEFINES`.
+
+### 38. RESOLVED — the boot's work list was two modules, not 42
+
+The framing here was too broad, and the correction matters more than the fix. The
+audit's 42 modules include freetype2, acpica's tests, the Zune classes, Wanderer
+and Prefs -- none of which any booted package contains. What the ELF loader can
+refuse a boot over is the members of the packages actually passed to the
+kickstart, and there were exactly two:
+
+```
+con-handler: 1  -> con_LibName
+gfx.hidd:   18  -> convert_*_SSE2 / _SSE3 / _AVX
+```
+
+`con-handler` is closed: 81 of the 83 declarations with `conffile=` name a config
+whose stem is not modname, both CMake lookups derived `<modname>.conf`, and
+finding nothing is not an error -- so the scaffolding was skipped in silence and
+`con_handler.c:50`'s `extern const char GM_UNIQUENAME(LibName)[]` stayed
+undefined. Carrying `conffile=` fixed it and, in doing so, uncovered point 39.
+
+`gfx.hidd` is point 40.
+
+The lesson for the audit: its number is a build measure, and the boot needs the
+*intersection* of that number with the loaded packages. Both are worth having,
+and they are not the same list.
 
 ### 34. WORK — collect-aros adds inputs the first pass turns out to need
 
