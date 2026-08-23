@@ -764,23 +764,95 @@ whether it is still needed is unchecked.
 
 ## Quality gates
 
+### 30. WRONG — `aros-cli test` reports a verified boot it never looked at
+
+`main.rs:736` builds `boot-iso`, starts QEMU, sleeps for `--timeout`, kills the
+process and prints:
+
+```
+✓ VERIFIED: QEMU boot execution finished cleanly without crashes!
+```
+
+Nothing between the sleep and that line reads anything. The message is printed
+for a guest that triple-faulted in the first millisecond exactly as for one
+that reached Workbench, so the command cannot fail. It is worse than no boot
+test, because it produces a green result on demand.
+
+The three paths it boots from do not exist either:
+
+| what it uses                                  | what the build writes            |
+|-----------------------------------------------|----------------------------------|
+| `build/<preset>/aros-x86_64-pc.iso`, `-cdrom` | never built, and El Torito-less  |
+| `build/<preset>/bootstrap`                    | `SYS/boot/pc/bootstrap`          |
+| `SYS/Libs/kernel-exec.library` as `-initrd`   | exec is a kickstart member, so the module is `SYS/boot/pc/kernel` |
+
+The ISO name is hardcoded for x86_64-pc whatever `--preset` says, `boot-iso`
+has no bootloader (point 10), and it passes no `" debug=serial"`, so even a
+correct image would boot to a black screen. Fix or remove; a command that
+cannot fail must not stay.
+
+### 31. WORK — make the boot a deterministic, asserting check in `aros-cli`
+
+`scripts/boot/qemu-pc-x86_64.sh` reproduces a boot, and that is all it does:
+the reading is still by eye and the interpretation by hand. Twice in one day
+the expensive part was not finding the fault but locating it — deriving the
+kickstart's load base from a byte pattern in an `in_asm` trace, then mapping an
+IP to a section and a symbol. That is mechanical work and belongs in the tool.
+
+What the command has to do that neither the script nor point 30's version
+does:
+
+  * **Assert, from what it observed.** A verdict comes from the serial log and
+    the QEMU trace, never from a timer. Fail on `*** SYSTEM PANIC!!! ***`, on
+    `[ELF Loader] Undefined symbol`, on any `v=` exception record, on
+    `check_exception`, and on a run that reaches its timeout without the next
+    expected milestone.
+  * **Name the milestones, and report which one it reached.** Bootstrap
+    entered, kickstart loaded, banner printed, romtag scan complete, ExecBase
+    created, user mode (`cpl=3`), dos.library opened, Startup-Sequence,
+    Workbench. Then the boot has a number, comparable across commits, instead
+    of an impression. Today's build reaches "user mode" and stops at point
+    27g.
+  * **Resolve a fault to a symbol.** Given the faulting IP, the section base
+    the loader assigned, and the kickstart ELF, print
+    `<section>+<offset> <symbol>+<offset>` and the source line. The base is
+    recoverable from the first traced block by matching its bytes against the
+    image, which is what was done by hand for 27e and 27g.
+  * **Be deterministic.** A fixed CPU model, fixed memory and CPU count, a
+    fixed RTC base, and no dependence on host timing. `-icount` is worth
+    trying, because an instruction-exact run makes two traces diffable, which
+    is the only cheap way to see what a build change did to a boot.
+  * **Keep its evidence.** One directory per run holding the serial log, the
+    screen, the trace and the verdict, so a regression is a diff and not a
+    memory.
+  * **Say what it did not test.** Only the kickstart is passed as a module
+    today because of point 27h; a run that skips the packages must report that
+    it skipped them, the way the transpiler's reports do.
+
+Then `aros-cli test` is a gate the HANDOFF checklist can hold, and the answer
+to "how far does it boot" stops being a matter of who last watched the screen.
+
 ### 7. DECIDE — a pinned digest of a live file sits in Rust source
 
-`aros-verify` fails 3 of its 22 tests, all with "the audited LLVM provisioning
-context drifted": `llvm_provisioning_contract_mutations_fail_closed`,
-`llvm_provisioning_context_is_semantically_fingerprinted`,
-`current_architecture_denominators_are_pinned`.
+The three red tests are green as of `71a6d046f1`, and what they turned out to
+be hiding is the reason this point stays open. `LLVM_PROVISIONING_MMAKE_SHA256`
+at `aros-verify/src/main.rs:269` is a semantic digest of
+`tools/crosstools/llvm/mmakefile.src`, and every deliberate change to that file
+makes the suite red until someone re-pins by hand. Worse, the digest assertion
+runs first, so while it was red the eight inventory counts behind it were never
+evaluated at all: they had been wrong by 71 or 72 for as long as the digest was
+stale, and nothing said so.
 
-`LLVM_PROVISIONING_MMAKE_SHA256` at `aros-verify/src/main.rs:269` is a semantic
-digest of `tools/crosstools/llvm/mmakefile.src`. That file changed twice on
-2026-08-23 alone. The drift predates those changes: reverting the file to
-`7560a51df1` leaves the same three tests red.
+Two lessons for whatever replaces this:
 
-This is the coupling that blocks the refactor, see point 13. Whatever replaces
-it, the value does not belong in a `.rs` constant; the refactor plan's own
-principle 4 says as much.
+  * the value does not belong in a `.rs` constant; the refactor plan's own
+    principle 4 says as much, and this is the coupling that blocks the
+    refactor, see point 13;
+  * a gate must not be able to mask another gate. Independent facts belong in
+    independent tests, so a stale pin costs one red test rather than every
+    assertion after it.
 
-Note also that `toolchains/HANDOFF.md`'s five-check gate does not include
+`toolchains/HANDOFF.md`'s five-check gate still does not include
 `cargo test -p aros-verify`, which is how a red suite passed for a green state.
 
 ### 8. WORK — three clippy deny-level errors
