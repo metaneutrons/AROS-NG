@@ -6,9 +6,9 @@
   "modules_with_undefined": 61,
   "modules_with_undefined_permille": 59,
   "orphan_artefacts": 77,
-  "references_total": 857,
-  "symbols_distinct": 630,
-  "symbols_no_artefact_defines": 474,
+  "references_total": 851,
+  "symbols_distinct": 624,
+  "symbols_no_artefact_defines": 468,
   "symbols_some_artefact_defines": 156,
   "sysbase_in_kickstart": 0,
   "weak_references": 3650

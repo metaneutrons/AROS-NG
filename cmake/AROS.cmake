@@ -2885,6 +2885,7 @@ function(aros_resolve_arch_sources out_sources out_dropped module_dir)
     set(OVERRIDE_NAMES "")
     set(ARCH_FILES "")
     set(CLAIMED_NAMES "")
+    set(DECLARED_NAMES "")
 
     # Two architecture directories can declare the same file, and both tags can
     # apply: for raspi-aarch64, arch/aarch64-all/exec (arch=aarch64) and
@@ -2917,20 +2918,47 @@ function(aros_resolve_arch_sources out_sources out_dropped module_dir)
 
             string(REPLACE "," ";" name_list "${names}")
             foreach(nm IN LISTS name_list)
-                # Record the name regardless of whether the file resolves: a
-                # declared override means the generic version is not wanted.
-                list(APPEND OVERRIDE_NAMES "${nm}")
+                list(APPEND DECLARED_NAMES "${nm}")
                 if(nm IN_LIST CLAIMED_NAMES)
                     continue()
                 endif()
-                list(APPEND CLAIMED_NAMES "${nm}")
                 aros_resolve_sources(RESOLVED "${abs_dir}" "${nm}")
+                # Claim, and override the generic source, only when this
+                # directory really provides the file.
+                #
+                # config/make.tmpl:2919 filters the generic list against
+                # $(basename $(notdir $(wildcard $(OBJDIR)/arch/*.o))), so a
+                # name that produced no arch object overrides nothing. Claiming
+                # on declaration instead dropped the file entirely whenever a
+                # more specific declaration named it without holding it, and
+                # two arch declarations of one target share that object
+                # directory precisely so they can do that:
+                # arch/x86_64-pc/kernel names kernel_bootmem, the file lives in
+                # arch/all-native/kernel, and rom/kernel lost krnAllocBootMem.
+                if(NOT RESOLVED)
+                    continue()
+                endif()
+                list(APPEND CLAIMED_NAMES "${nm}")
+                list(APPEND OVERRIDE_NAMES "${nm}")
                 foreach(f IN LISTS RESOLVED)
                     list(APPEND ARCH_FILES "${f}")
                 endforeach()
             endforeach()
         endforeach()
     endforeach()
+
+    # A name every applicable declaration asked for and none could provide is
+    # a real gap: neither an arch file nor, if the generic list has one, a
+    # reason to keep believing the generic one is unwanted.
+    if(DECLARED_NAMES)
+        list(REMOVE_DUPLICATES DECLARED_NAMES)
+        foreach(nm IN LISTS DECLARED_NAMES)
+            if(NOT nm IN_LIST CLAIMED_NAMES)
+                set_property(GLOBAL APPEND PROPERTY AROS_ARCH_OVERRIDE_GAPS
+                    "${module_dir}: ${nm}")
+            endif()
+        endforeach()
+    endif()
 
     if(NOT OVERRIDE_NAMES)
         set(${out_sources} "" PARENT_SCOPE)
@@ -2953,6 +2981,28 @@ function(aros_resolve_arch_sources out_sources out_dropped module_dir)
     # Architecture objects come first in the link, as in the reference build.
     set(${out_sources} "${ARCH_FILES};${KEPT}" PARENT_SCOPE)
     set(${out_dropped} "${DROPPED}" PARENT_SCOPE)
+endfunction()
+
+# aros_report_arch_override_gaps()
+#
+# Names an architecture declaration asked for that no applicable architecture
+# directory holds. Each one is a source the reference build compiles and we do
+# not, so it is written out rather than left implicit.
+function(aros_report_arch_override_gaps)
+    get_property(_gaps GLOBAL PROPERTY AROS_ARCH_OVERRIDE_GAPS)
+    set(_report "${CMAKE_BINARY_DIR}/generated_targets.arch-override-gaps.txt")
+    if(NOT _gaps)
+        file(REMOVE "${_report}")
+        return()
+    endif()
+    list(REMOVE_DUPLICATES _gaps)
+    list(SORT _gaps)
+    string(REPLACE ";" "\n" _body "${_gaps}")
+    file(WRITE "${_report}" "${_body}\n")
+    list(LENGTH _gaps _count)
+    message(STATUS
+        "⚠️  ${_count} architecture source override(s) name a file no applicable "
+        "arch directory holds -> ${_report}")
 endfunction()
 
 # _aros_module_install_dir(<out-var> <default-dir> <requested-dir>)

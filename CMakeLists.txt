@@ -183,6 +183,9 @@ include("${GENERATED_TARGETS_CMAKE}")
 # that consume them.
 aros_apply_default_link_set()
 
+# Architecture overrides that resolved to no file at all.
+aros_report_arch_override_gaps()
+
 # compiler/startup's raw object rules are outside the generated declarations.
 # Locked C++ partial links explicitly consume cxx-startup.o, so make the
 # historic aggregate publish that concrete sysroot object as well.
