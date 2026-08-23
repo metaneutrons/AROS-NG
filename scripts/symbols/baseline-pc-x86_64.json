@@ -1,15 +1,15 @@
 {
-  "artefacts": 1028,
+  "artefacts": 1030,
   "library_bases_known": 362,
   "load_set_resolved": 7,
   "load_sets": 7,
-  "modules_with_undefined": 62,
-  "modules_with_undefined_permille": 60,
+  "modules_with_undefined": 61,
+  "modules_with_undefined_permille": 59,
   "orphan_artefacts": 77,
-  "references_total": 1033,
-  "symbols_distinct": 785,
-  "symbols_no_artefact_defines": 636,
-  "symbols_some_artefact_defines": 149,
+  "references_total": 857,
+  "symbols_distinct": 630,
+  "symbols_no_artefact_defines": 474,
+  "symbols_some_artefact_defines": 156,
   "sysbase_in_kickstart": 0,
-  "weak_references": 3637
+  "weak_references": 3650
 }
