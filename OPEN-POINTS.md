@@ -281,7 +281,27 @@ time. Any fix has to decide one of
 
 Reported in `generated_targets.partial-source-lists.txt`.
 
-### 26f. WORK — 258 modules get none of their generated scaffolding
+### 26f. RESOLVED — every module with a config gets its scaffolding
+
+Done in `de38eaba51`. Generated start files went from 88 to 359.
+`_aros_generate_module_support` accepts every genmodule module type now, with a
+SOURCES_ONLY mode that leaves the SDK headers to the Rust generator's scan, and
+`aros_module_scaffolding` wires it into the resource, device, hidd, custom and
+gadget/mcc/datatype paths.
+
+Two things learned, both worth keeping:
+
+`%build_module_simple` has no genmodule step at all (config/make.tmpl:1974), and
+the transpiler said so at parser.rs:7978 before I wired it anyway.
+workbench/libs/gl is an ABI shell whose implementation lives in the Mesa port,
+so its generated function table appeared as 463 undefined references. The
+measurement caught it; reading the macro first would have been cheaper.
+
+Our own genmodule named generated symbols after the module name, where the
+reference names them after the basename (writeinclibdefs.c:82, config.c:1333).
+That was invisible while our tool was the only generator on both sides.
+
+### 26f-old. WORK — the original survey, for the record
 
 Only `aros_add_library` and `aros_add_module_abi` call
 `_aros_generate_module_support` (`cmake/AROS.cmake:3415`, `:3335`), so the
