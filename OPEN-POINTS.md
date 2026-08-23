@@ -165,17 +165,11 @@ missing, and fail the configure on any placeholder without a value. The values
 then come from one readable table with the configure line each is taken from,
 the way `dirs.rs` handles `config/make.cfg.in`.
 
-### 33. WORK — the library-version markers are the current boot blocker
+### 33. RESOLVED — the library-version markers are published as data
 
-`AROS_LIBREQ` emits `__aros_libreq_<base>.<version>` as an absolute symbol whose
-*value* is the version (`symbolsets.h:158`). collect-aros's second pass reads
-those (`backend-generic.c:64`) and emits `PROVIDE(__aros_libreq_<base> = .);
-LONG(<version>)` (`gensets.c:167`): the unversioned name becomes the address of a
-word holding the required version, which is what the generated version check
-reads.
-
-Deferred when point 32 landed, and the boot then walked straight into it.
-genmodule's `Task_InitLib` compares `SysBase->lib_Version` against that word:
+`AROS_LIBREQ` emits `__aros_libreq_<base>.<version>` as a weak absolute whose
+*value* is the version (`symbolsets.h:158`), and the code never reads that
+symbol. genmodule's generated `InitLib` reads the *unversioned* name as memory:
 
 ```
 223a6: movzwl 0x26(%rdx), %eax          ; SysBase->lib_Version
@@ -183,19 +177,27 @@ genmodule's `Task_InitLib` compares `SysBase->lib_Version` against that word:
                                         ;   __aros_libreq_SysBase - 4
 ```
 
-Nothing defines the unversioned symbol, so the operand address is 0 and the read
-faults with CR2=0. 1210 of 1238 built artefacts reference a libreq marker, 265
-distinct ones, so this is the whole tree and not one module.
+Nothing defined it, so the operand address was 0 and the read faulted with
+CR2=0. 1210 of 1238 built artefacts reference a marker.
 
-One decision to make when porting it. The reference prepends a node per `nm`
-line and `PROVIDE` binds the name to the first, so which version wins is
-symbol-table order. Where several requirements for one base meet in a single
-link -- the kickstart has `__aros_libreq_SysBase` at 0, 33, 36 and 50 -- the
-semantically correct answer is the maximum, because the check has to satisfy
-every requirement. Taking the maximum diverges from the reference in a way that
-is safe and statable; reproducing its order dependence is faithful and fragile.
-The divergence needs saying either way, and a base with more than one version in
-one link is worth reporting.
+`collect_libs` (`backend-generic.c:64`) and `emit_libs` (`gensets.c:167`) are
+what connect the two, in the same second pass as the sets, and `aros-collect`
+now does it. The reference's `nm` filter is reproduced exactly, including the
+part that is easy to miss: a *local* absolute is not accepted. A kickstart
+member's markers are local by the time the kickstart is linked and each member
+already carries its own definition from its own pass, so publishing them again
+at kickstart level would bind one member's requirement to another's.
+
+The decided divergence: where several requirements for one base meet -- exec's
+member has SysBase at 0, 33, 36, 39, 45 and 50 -- the reference's `PROVIDE`
+binds the name to whichever node its reversed `nm` order put first. This takes
+the maximum, because the check has to satisfy every requirement. 478 links have
+two or more *stated* requirements and each is reported; the ordinary `[0, N]`
+pair is not, because `AROS_LIBREQ(base, 0)` is what genmodule emits for a caller
+naming no minimum and reporting it buried the real cases 5:1.
+
+The symbol audit's weak references fall from 3689 to 121: the markers were most
+of them.
 
 ### 32. RESOLVED — the symbol sets are collected
 
@@ -527,6 +529,36 @@ Four differences from the module link, each load-bearing:
 We build one artefact per module and hand it to both purposes, so the members
 carry the default link set and their bases stay global. A second artefact per
 member is the work; the localisation step is the part that cannot be skipped.
+
+### 27j. WORK — the kickstart is complete; the boot needs the packages
+
+The kickstart now runs end to end:
+
+```
+AROS64 - The AROS Research OS
+64-bit build. Compiled Aug 23 2026
+[Kernel:APIC-IA32] MSI Interrupts Allocatable
+[Kernel:APIC-IA32]     start = 16
+[Kernel:APIC-IA32]     total = 198
+
++------------------------------------------+
+|           Critical boot failure          |
+|            System Boot Failed!           |
++------------------------------------------+
+```
+
+`arch/x86_64-pc/kernel/kernel_startup.c:638`, reached because
+`InitCode(RTF_COLDSTART, 0)` returned, and the comment above it says it must
+not. kernel.resource, exec.library and task.resource all initialise, the APIC is
+up, privileges drop to user mode, and the coldstart chain runs out of residents
+without anyone taking over -- which is what a kickstart-only boot does when
+there is no dos.library to hand to.
+
+So this is not a new defect but the end of what the kickstart alone can do. Going
+further needs the packages as multiboot modules, and that is blocked on point
+27h: `serialmouse.hidd` in `aros-legacy.pkg` has a dangling
+`HIDD_Serial_NewUnit`, and the ELF loader refuses the whole boot over it. 27h is
+therefore the next step in this chain, not an aside.
 
 ### 27i. RESOLVED — the APIC panic was a wrong AROS_FLAVOUR
 
