@@ -175,6 +175,7 @@ if(NOT TRANSPILER_RES EQUAL 0 OR NOT EXISTS "${GENERATED_TARGETS_CMAKE}")
         "${GENERATED_TARGETS_CMAKE}.\n${_aros_transpiler_error}")
 endif()
 include("${CMAKE_SOURCE_DIR}/cmake/DefaultLinkSet.cmake")
+include("${CMAKE_SOURCE_DIR}/cmake/BinaryObjects.cmake")
 include("${GENERATED_TARGETS_CMAKE}")
 
 # The target compiler's spec appends a default set of archives to every link,
@@ -185,6 +186,9 @@ aros_apply_default_link_set()
 
 # Architecture overrides that resolved to no file at all.
 aros_report_arch_override_gaps()
+
+# %rule_link_binary declarations this configuration could not build.
+aros_report_binary_object_gaps()
 
 # compiler/startup's raw object rules are outside the generated declarations.
 # Locked C++ partial links explicitly consume cxx-startup.o, so make the
