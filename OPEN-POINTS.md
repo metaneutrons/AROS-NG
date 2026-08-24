@@ -230,6 +230,45 @@ Not attempted yet, and deliberately: point 41 was one call site in one module
 with a fault to prove it. This is at least seven modules, the failure is a
 diagnostic rather than a crash, and choosing between the two fix shapes is an
 upstream design question, not a repair.
+**Tried on one module, and it works exactly as far as it should.**
+`pr/bootloader-nostdc` adds `-nostdc` to `rom/bootloader/mmakefile.src`. After
+it, `bootloader.resource` carries `strlen` and `stpblk` as real definitions out
+of `libstdc.static.a`, with no `StdCBase` and no LIBS entry, and the boot log
+loses exactly one of its five stdc complaints. Nothing else about it changes,
+which is the point: the mechanism is per module.
+
+Eleven of the 26 base-package members still carry
+`__aros_set_LIBS___aros_libset_StdCBase`:
+
+```
+console.device  con-handler  hiddclass.hidd  gfx.hidd  gadtools.library
+graphics.library  intuition.library  oop.library  dosboot.resource
+lddemon.resource   (and one unnamed image)
+```
+
+`oop.library` is the one that matters most, because every OOP-based module fails
+behind it.
+
+The boot now gets further and stops on the same shape as point 41: a jump
+through a null library base, this time in user mode.
+
+```
+[PF-DBG] CR2=fffffffffffff4d0 IP=0000000001ad15c1 CS=002b ERR=00000004
+[PF-DBG] access=read mode=user present=not-present
+```
+
+`CR2` is -0xb30, another LVO offset on a null base. The byte pattern for that
+jump is not unique this time -- five occurrences in the base package alone --
+so naming the module needs the load address rather than a search, which the
+boot check does not model for package modules yet.
+
+**What this settles and what it does not.** It settles that `-nostdc` is a
+working fix shape for one module. It does not settle whether it is the right one
+for eleven: `-nostdc` also drops `-lposixc` and `-lstdcio`, so each module has to
+be checked for what else it takes from those, and a module that genuinely needs
+a C library at runtime should get it a different way. That is an upstream design
+question about which modules may be early, not a repair.
+
 
 ### 41. RESOLVED — the NULL library base was qsort in debug.library
 
