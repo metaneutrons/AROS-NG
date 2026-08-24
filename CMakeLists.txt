@@ -180,6 +180,34 @@ if(NOT TRANSPILER_RES EQUAL 0 OR NOT EXISTS "${GENERATED_TARGETS_CMAKE}")
         "AROS-NG transpiler failed (${TRANSPILER_RES}) and did not produce "
         "${GENERATED_TARGETS_CMAKE}.\n${_aros_transpiler_error}")
 endif()
+
+# What produced the file above, recorded so the run can be repeated outside
+# CMake: `aros golden` replays this argv with a different --output to compare a
+# changed transpiler against a captured baseline. The scoped arguments are
+# derived during configuration, and they change the output, so a golden run
+# that re-derived them would not be comparing the same run. OPEN-POINTS 13.
+#
+# The argv is written out twice rather than expanded from one list, because an
+# unquoted CMake list discards its empty elements when it expands into a
+# command, and three of these values are legitimately empty: `--variant ""` is
+# how the transpiler is told "the ordinary variant". `aros golden capture`
+# checks the record end to end by comparing its own first run against the file
+# this run just wrote, so a record that drifts from the call is reported rather
+# than trusted.
+set(_aros_transpiler_record
+    "--source-dir" "${CMAKE_SOURCE_DIR}"
+    "--output" "${GENERATED_TARGETS_CMAKE}"
+    "--cpu" "${AROS_TARGET_CPU}"
+    "--platform" "${AROS_TARGET_PLATFORM}"
+    "--family" "${AROS_TARGET_FAMILY}"
+    "--variant" "${AROS_TARGET_VARIANT}"
+    "--toolchain" "${AROS_TOOLCHAIN}"
+    "--cpu32" "${AROS_TARGET_CPU32}"
+    "--use-mmu" "${_aros_transpiler_use_mmu}"
+    "--float-abi" "${GCC_CONFIG_FLOAT_ABI}")
+string(REPLACE ";" "\n" _aros_transpiler_invocation "${_aros_transpiler_record}")
+file(WRITE "${GENERATED_TARGETS_CMAKE}.invocation"
+    "${_aros_transpiler_invocation}\n")
 include("${CMAKE_SOURCE_DIR}/cmake/DefaultLinkSet.cmake")
 include("${CMAKE_SOURCE_DIR}/cmake/BinaryObjects.cmake")
 include("${CMAKE_SOURCE_DIR}/cmake/KickstartObjects.cmake")
