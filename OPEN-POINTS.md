@@ -1186,29 +1186,45 @@ whether it is still needed is unchecked.
 
 ## Quality gates
 
-### 46. WORK — 26 more pinned digests sit in `parser.rs`
+### 46. RESOLVED — the 26 pinned digests are data, in two classes
 
-Found while fixing point 7. `aros-transpiler/src/parser.rs` holds 26 `*_SHA256`
-constants, and all of them are compared against files in the tree, through
-`file_has_sha256` or `configure_input_manifest_is_pinned` (22 call sites). Same
-class as point 7: hand-maintained data about the tree, kept in source code.
+26 `*_SHA256` constants left `parser.rs` for
+`aros-transpiler/pinned-digests.pins`, and they turned out to be 24 distinct
+values: the mesa-20.0.8 archive digest was spelled three times in the same file,
+once at module level and twice as a function-local constant.
 
-Two things make this worth doing before the decomposition rather than after:
+Reading them apart mattered more than moving them. They are two kinds of pin:
 
-  * `parser.rs` is the 12 463-line file the refactor has to split. Every pin in
-    it is a value that has to travel with whichever piece ends up owning it, and
-    a merge conflict in a 64-character hex string is not a merge anyone should
-    have to reason about.
-  * the failure mode differs from point 7's. A stale transpiler pin does not
-    turn a test red; the capability simply stops being recognised, and the
-    declaration lands in the unmodelled report. That is reported rather than
-    silent, but it reads as "AROS changed" when it means "our pin is old".
+  * **20 in-tree inputs of a modelled capability.** Manifests, mmakefiles, a
+    driver script, a patch, and four digests of a *text block* rather than a
+    whole file. Checked against the tree being transpiled; a change means the
+    capability is not recognised and the declaration lands in the unmodelled
+    report. Three are also emitted into the generated CMake, so the build
+    re-checks the same bytes.
+  * **4 upstream artefacts a capability fetches** (mesa-20.0.8, Mako,
+    MarkupSafe, CUnit). Never checked here: they are emitted so the fetch can
+    verify a download. A new value there is a deliberately different artefact,
+    not a re-pin after an edit, which is the opposite of what a stale value
+    means in the first class. The file states that distinction, because as
+    neighbouring `const` declarations the two were indistinguishable.
 
-The mechanism from point 7 transfers unchanged: a `.pins` data file plus the
-`provisioning_pin` reader, which is 20 lines and fails closed on a missing or
-malformed entry. Not done, and not started: it is a mechanical change to 26
-constants and 22 call sites, and it should be one commit that changes no
-generated output.
+The lookup is shared: `aros_common::pins` holds the reader, and `aros-verify`
+uses it instead of the copy point 7 left there. Two safety nets, because a pin
+name is a string and a typo would otherwise surface as a panic on whichever run
+first reaches that capability:
+
+  * the file is checked as a whole -- every value a sha256, every name unique
+    and kebab-case;
+  * `pins::NAMES` lists every name the crate looks up and a test resolves all
+    of them, which covers the capabilities no test exercises.
+
+`parser.rs` is 59 lines shorter (-108/+49).
+
+**The proof is the point 13 harness, on its first real use:**
+`aros golden verify` reports all three presets byte-identical across the change.
+36 call sites moved and 24 values changed file, and the generated output for
+pc-x86_64, arm-raspi and rpi-aarch64 is the same to the byte. That is the check
+the decomposition will run after every step.
 
 ### 45. RESOLVED — the CMake fixture suite was in no gate, and a third of it was red
 
@@ -1675,10 +1691,10 @@ by changing one line of the generated header on purpose:
   24 identical, 1 changed
 ```
 
-The remaining sequence for the decomposition is unchanged except that the net
-now exists: point 46 first, so 26 pinned values do not have to travel with the
-code, then capture, then decompose one piece at a time with `verify` between
-steps.
+The remaining sequence for the decomposition: point 46 is done, so no pinned
+value has to travel with the code; capture a baseline, then decompose one piece
+at a time with `verify` between steps. Point 46 was the first thing checked this
+way, and it came out byte-identical.
 
 ---
 
