@@ -172,28 +172,87 @@ Failed build steps 1083 -> 1078, generated-file rules 21 -> 20, missing sources
 94 -> 93, `aros-base.pkg` built with all 26 members. The boot then moved on to
 the next dangling symbol, which is point 38.
 
-### 41. WORK — a NULL library base, once every package loads
+### 48. WORK — stdc.library and oop.library are present but do not open
 
-No staged package member has an undefined symbol any more -- the count is zero
-for the first time -- so every package loads and the boot is past *loading* and
-into *running* the full module set:
+The next wall, and a much better one than a fault. With point 41 fixed the boot
+task runs and reports for itself:
 
 ```
-[Kernel] core_IRQHandle(14): Exception error code 00000000
-[PF-DBG] CR2=fffffffffffff570 IP=000000000198f711 SP=00000000017ae558
-[PF-DBG] access=read mode=supervisor present=not-present
+Exec Bootstrap Task: Could not open version 0 or higher of library "stdc.library".   (5x)
+Exec Bootstrap Task: Could not open version 42 or higher of library "oop.library".
+Exec Bootstrap Task: Could not open version 0 or higher of library "oop.library".    (2x)
 ```
 
-`CR2` is `-0xa90`, a negative offset from a null base: the signature of a jump
-through a library base's LVO table when the base is NULL. It is the same shape as
-the StdCBase fault of 27e, and the same method applies -- derive the load base
-from the trace, resolve the IP to a symbol, and read which base the caller
-expected to have.
+Both modules are in the loaded packages -- their names appear 12 times each in
+`aros-base.pkg` -- so this is not a missing artefact. Something between "loaded"
+and "resident" is not happening: either their init did not run, or it ran and
+failed, or they never reached the resident list.
 
-What makes this one different from every fault before it is that the module set
-is now complete. A NULL base here is a *runtime* order problem -- a library
-opened before it exists, or an OpenLibrary whose failure nobody checked -- rather
-than a missing artefact.
+Then `input.device` dies in `ProcessEvents`, which is plausibly a consequence
+rather than a second cause: an OOP-based device whose oop.library open failed
+would carry a null base into exactly that kind of fault.
+
+Where to start: `debug.library` now resolves addresses, so the same method that
+found point 41 applies -- the software-failure box already names the module,
+segment, function and offset. What it cannot say is why a library that is loaded
+does not open, so the first question is whether their romtags are in the
+resident list at all.
+
+### 41. RESOLVED — the NULL library base was qsort in debug.library
+
+The fault was `debug.library` calling `qsort()` while registering the
+kickstart's own modules, which happens while exec is still coming up and long
+before `stdc.library` is open.
+
+The trace names it exactly:
+
+```
+0x0198f704: movabsq $0x17b0148, %r11   ; &StdCBase
+0x0198f70e: movq    (%r11), %r11       ; StdCBase == NULL
+0x0198f711: jmpq    *-0xa90(%r11)      ; the LVO for qsort
+```
+
+`CR2 = -0xa90` is that LVO offset applied to a null base, which is what point 41
+predicted from the shape alone. Finding the rest took four steps, all
+mechanical: the byte pattern of the jump (`41 ff a3 70 f5 ff ff`) occurs exactly
+once in the loaded modules, in `aros-base.pkg`; the ELF image containing that
+offset is `debug.library`; the nearest preceding text symbol is
+`__qsort_StdCBase_wrapper`; and its caller resolves to `HandleModuleSegments`.
+
+`rom/debug/registermodule.c` has called qsort since `42aae2fea1` (22 Jan 2026),
+which replaced a hand-written sorter "instead of hard coded bubble/misc sorting
+routines". The file already avoids the C library for the string functions
+through `<aros/crt_replacement.h>`; sorting was not given the same treatment.
+
+**Not our build.** `config/elf-specs.in:19` gives every module
+`-lposixc -lstdcio -lstdc` unless it says `-nostdc`, and
+`rom/debug/mmakefile.src` does not; `generated_targets.spec-switches.txt` shows
+`kernel-debug` with no switch, so the link follows the spec. A ROM library that
+runs before stdc.library simply cannot call into it.
+
+Fixed on `pr/debug-registermodule-no-stdc`, branched off `master`: a local
+iterative heapsort, which keeps what the qsort change was after -- O(n log n),
+no degenerate case for already-sorted or reversed input -- and adds no stack
+depth.
+
+**What it bought.** The boot went from a page fault two lines after the kernel
+banner to:
+
+```
+[Kernel:APIC-IA32] MSI Interrupts Allocatable
+Exec Bootstrap Task: Could not open version 0 or higher of library "stdc.library".
+...
+Software Failure! Task : 0x13E0DA0 - input.device
+Module input.device Segment 2 .text Offset 0x52A
+Function ProcessEvents (0x17FED60) Offset 0xFA
+Stack trace: 0x17C6F10 Kickstart ELF Function TaskExitStub
+```
+
+The milestone moved from "kickstart running" to "libraries being opened", and
+the failures are now the system's own diagnostics rather than a fault. The
+stack trace is itself evidence the fix worked: resolving a module, a segment and
+a function is what debug.library does, and it is what the NULL-base jump was
+preventing.
 
 ### 40. RESOLVED — the SIMD lanes compile, and each with its own flags
 
