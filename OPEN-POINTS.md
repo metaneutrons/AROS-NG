@@ -1186,6 +1186,30 @@ whether it is still needed is unchecked.
 
 ## Quality gates
 
+### 46. WORK — 26 more pinned digests sit in `parser.rs`
+
+Found while fixing point 7. `aros-transpiler/src/parser.rs` holds 26 `*_SHA256`
+constants, and all of them are compared against files in the tree, through
+`file_has_sha256` or `configure_input_manifest_is_pinned` (22 call sites). Same
+class as point 7: hand-maintained data about the tree, kept in source code.
+
+Two things make this worth doing before the decomposition rather than after:
+
+  * `parser.rs` is the 12 463-line file the refactor has to split. Every pin in
+    it is a value that has to travel with whichever piece ends up owning it, and
+    a merge conflict in a 64-character hex string is not a merge anyone should
+    have to reason about.
+  * the failure mode differs from point 7's. A stale transpiler pin does not
+    turn a test red; the capability simply stops being recognised, and the
+    declaration lands in the unmodelled report. That is reported rather than
+    silent, but it reads as "AROS changed" when it means "our pin is old".
+
+The mechanism from point 7 transfers unchanged: a `.pins` data file plus the
+`provisioning_pin` reader, which is 20 lines and fails closed on a missing or
+malformed entry. Not done, and not started: it is a mechanical change to 26
+constants and 22 call sites, and it should be one commit that changes no
+generated output.
+
 ### 45. RESOLVED — the CMake fixture suite was in no gate, and a third of it was red
 
 `cmake/tests/` holds 21 `cmake -P …Test.cmake` fixtures. Nothing runs them.
@@ -1480,28 +1504,50 @@ does:
 Then `aros-cli test` is a gate the HANDOFF checklist can hold, and the answer
 to "how far does it boot" stops being a matter of who last watched the screen.
 
-### 7. DECIDE — a pinned digest of a live file sits in Rust source
+### 7. RESOLVED — the pinned digests are data, and no gate hides another
 
-The three red tests are green as of `71a6d046f1`, and what they turned out to
-be hiding is the reason this point stays open. `LLVM_PROVISIONING_MMAKE_SHA256`
-at `aros-verify/src/main.rs:269` is a semantic digest of
-`tools/crosstools/llvm/mmakefile.src`, and every deliberate change to that file
-makes the suite red until someone re-pins by hand. Worse, the digest assertion
-runs first, so while it was red the eight inventory counts behind it were never
-evaluated at all: they had been wrong by 71 or 72 for as long as the digest was
-stale, and nothing said so.
+Both halves of this are fixed and both are measured.
 
-Two lessons for whatever replaces this:
+**The values left the source file.** The three semantic fingerprints live in
+`tools/aros-tools/crates/aros-verify/toolchain-provisioning.pins`, embedded with
+`include_str!`, so cargo rebuilds the crate when they change and the binary and
+the tests read the same bytes. Re-pinning is now a data edit; it used to be a
+code edit in the file the refactor has to be free to move.
 
-  * the value does not belong in a `.rs` constant; the refactor plan's own
-    principle 4 says as much, and this is the coupling that blocks the
-    refactor, see point 13;
-  * a gate must not be able to mask another gate. Independent facts belong in
-    independent tests, so a stale pin costs one red test rather than every
-    assertion after it.
+**A stale pin no longer masks anything.** `current_architecture_denominators_are_pinned`
+asserted the provisioning context first and the eight counts after, so while the
+digest was stale the counts were never evaluated -- and they had been wrong by
+71 or 72 for that whole time. The four counts that do not depend on the
+provisioning classification are their own test now; the four that do, plus the
+set memberships, are `toolchain_provisioning_splits_the_target_obligations`.
 
-`toolchains/HANDOFF.md`'s five-check gate still does not include
-`cargo test -p aros-verify`, which is how a red suite passed for a green state.
+Measured, by setting one pin to `000000…`:
+
+```
+test tests::llvm_provisioning_contract_mutations_fail_closed ... FAILED
+test tests::llvm_provisioning_context_is_semantically_fingerprinted ... FAILED
+test tests::toolchain_provisioning_splits_the_target_obligations ... FAILED
+test tests::current_architecture_denominators_are_pinned ... ok
+```
+
+Three tests that genuinely depend on the pin, and the inventory denominators
+still evaluated. 23 tests in the crate now, up from 22, and the suite is faster
+(3.9 s against 5.6 s) because the two halves run in parallel.
+
+Both failures say what to do rather than only that something is wrong:
+
+```
+provisioning fingerprints changed: mmake=451406c6… config=00554cab… cmake=5c2d0de1…
+the audited LLVM provisioning context drifted; re-pin
+crates/aros-verify/toolchain-provisioning.pins from the digests that
+llvm_provisioning_context_is_semantically_fingerprinted prints
+```
+
+**The gate.** `toolchains/HANDOFF.md` now has a "Gate before committing"
+section. The five commands it listed were a record of one change and were read
+as a gate; three checks were missing, each of which had let a red thing through:
+`cargo test --workspace` (this point), `cargo fmt --all --check` (point 8) and
+the `cmake/tests` sweep (point 45).
 
 ### 8. RESOLVED — clippy compiles the workspace again
 
@@ -1573,16 +1619,24 @@ upstream build outputs" claim has no gate behind it today.
 ### 13. WORK — the golden-output harness
 
 The precondition is met: the transpiler is deterministic. Three runs on an
-unchanged tree gave 3 133 008 bytes with the same sha256, and all 19 report
-files were byte-identical. `aros-transpiler` takes no target arguments, so one
-golden `generated_targets.cmake` covers all presets and the per-preset
-variation lives in the CMake step and the verify reports.
+unchanged tree gave the same sha256 and all 19 report files were byte-identical.
+`aros-transpiler` takes no target arguments, so one golden
+`generated_targets.cmake` covers all presets and the per-preset variation lives
+in the CMake step and the verify reports.
+
+The current unscoped output is 3 153 981 bytes, sha256
+`75d280ed88f4cf7b0dc01386f61706f529d1f8d55b63c4e48286c845ac9320c3`, measured
+across the point 8 change with two differently hashed release binaries. The
+3 133 008 bytes recorded earlier were a different tree, not a regression.
 
 Not built yet. Until it exists, "without altering a single byte of generated
-CMake output" is an intention rather than a gate.
+CMake output" is an intention rather than a gate, and it is the intention the
+decomposition rests on: every check that a refactor changed nothing has been a
+hand comparison so far.
 
-Sequence that follows from point 7: fix the gates first, then capture the
-baseline, then decompose.
+The gates from point 7 are fixed, so the remaining sequence is: capture the
+baseline, then decompose. Point 46 belongs before the decomposition too, being
+26 pinned values inside the file that has to be split.
 
 ---
 
