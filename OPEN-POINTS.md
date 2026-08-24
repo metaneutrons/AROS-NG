@@ -1186,6 +1186,47 @@ whether it is still needed is unchecked.
 
 ## Quality gates
 
+### 47. WORK — `parse_mmakefile_impl` is the last thing in the way
+
+The decomposition took `parser.rs` from 12 415 lines to 5 250, in eleven
+commits, each of them verified byte-identical on all three presets by the point
+13 harness. What came out:
+
+| module | lines | what it owns |
+|---|---|---|
+| `capability/` (nine files) | 4 219 | the declarations modelled exactly, each pinned |
+| `make_vars.rs` | 788 | variables per line, and the three-valued conditional |
+| `sources.rs` | 464 | argument text to four language lanes |
+| `module_paths.rs` | 379 | output directory by module type, implied `#MM` edges |
+| `copy_directories.rs` | 339 | `%copy_dir_recursive`, both ends checked |
+| `collector.rs` | 263 | includes inlined for the collectors, port scope |
+| `make_deps.rs` | 190 | which variables an expression reads |
+
+What is left in `parser.rs` is 2 367 lines of code and 2 883 of tests, and
+1 380 of that code is one function. `parse_mmakefile_impl` is a single pass with
+five phases and a great deal of state carried between them:
+
+  1. the fetch collector and the port scope it proves (85 lines);
+  2. the variable scope and the conditional line states (20);
+  3. the file-global properties -- includes, flags, packages, arch sources,
+     option files -- which are file-level in Make and therefore cannot be read
+     per declaration (110);
+  4. **the declaration loop**, about 1 250 lines over one `for invocation in
+     invocations`, which builds every target kind and is where the state
+     accumulates;
+  5. the after-pass: FlexCat rules, host-generated headers, HIDD stubs, binary
+     objects (115).
+
+Phases 1, 2, 3 and 5 would extract the way everything else did. The declaration
+loop would not: it is not a family that can be lifted out, it is one long
+sequence whose steps read and write a shared set of locals. Splitting it means
+naming that state -- deciding what a "declaration under construction" is -- and
+that is a design step, not a move. The harness makes it safe to attempt but does
+not make the design.
+
+Worth doing, not urgent. `parser.rs` is now the file its name says it is, and
+the argument for going further is readability rather than a blocked change.
+
 ### 46. RESOLVED — the 26 pinned digests are data, in two classes
 
 26 `*_SHA256` constants left `parser.rs` for
