@@ -172,31 +172,55 @@ Failed build steps 1083 -> 1078, generated-file rules 21 -> 20, missing sources
 94 -> 93, `aros-base.pkg` built with all 26 members. The boot then moved on to
 the next dangling symbol, which is point 38.
 
-### 48. WORK — stdc.library and oop.library are present but do not open
+### 48. WORK — every module carries a program's C-runtime startup
 
-The next wall, and a much better one than a fault. With point 41 fixed the boot
-task runs and reports for itself:
+With point 41 fixed the boot task runs and reports for itself:
 
 ```
 Exec Bootstrap Task: Could not open version 0 or higher of library "stdc.library".   (5x)
 Exec Bootstrap Task: Could not open version 42 or higher of library "oop.library".
 Exec Bootstrap Task: Could not open version 0 or higher of library "oop.library".    (2x)
+Software Failure! Task : input.device, Function ProcessEvents +0xFA
 ```
 
-Both modules are in the loaded packages -- their names appear 12 times each in
-`aros-base.pkg` -- so this is not a missing artefact. Something between "loaded"
-and "resident" is not happening: either their init did not run, or it ran and
-failed, or they never reached the resident list.
+The chain behind it, each step measured rather than assumed:
 
-Then `input.device` dies in `ProcessEvents`, which is plausibly a consequence
-rather than a second cause: an OOP-based device whose oop.library open failed
-would carry a null base into exactly that kind of fault.
+  * **stdc.library is in no loaded package, and that is correct.**
+    `rom/mmakefile.src:145` lists `BASE_LIBS := aros dos dos64 gadtools graphics
+    intuition keymap layers oop utility`, and our generated package has exactly
+    those 26 members. stdc.library is built to `SYS/Libs/`, so it is a file to be
+    loaded once a filesystem exists.
+  * **oop.library requires StdCBase**, so it cannot initialise either, and
+    everything OOP-based follows it down: gfx.hidd, keyboard.hidd, mouse.hidd,
+    inputclass.hidd, graphics.library, intuition.library, gameport.device and
+    keyboard.device all carry `__aros_libreq_OOPBase`. `input.device` dying in
+    ProcessEvents is the tail of that, not a separate cause. Its version is not
+    the problem: oop.conf states 43.1 against the requested 42.
+  * **bootloader.resource, dosboot.resource and lddemon.resource require
+    StdCBase too**, and those run before any filesystem exists:
+    `rom/bootloader/bootloader.conf` sets `residentpri 100`, `rom/oop/oop.conf`
+    sets 94. A module initialising at priority 100 cannot wait for a library
+    that arrives with the filesystem.
 
-Where to start: `debug.library` now resolves addresses, so the same method that
-found point 41 applies -- the software-failure box already names the module,
-segment, function and offset. What it cannot say is why a library that is loaded
-does not open, so the first question is whether their romtags are in the
-resident list at all.
+**What pulls it in.** Not a call in their own code. `bootloader.resource`
+carries `__aros_set_PROGRAM_ENTRIES___stdc_startup`, and `__stdc_startup`
+(`compiler/crt/stdc/stdc_startup.c`) calls `setjmp` and
+`__stdc_program_startup`, both stdc.library entry points. That is a *program's*
+C-runtime startup, registered in a set named PROGRAM_ENTRIES, sitting in a
+resource that is not a program. It arrives through `libstdc.a`, which
+`config/elf-specs.in:19` appends to every link that does not say `-nostdc`, and
+the object is pulled in because something small in it is needed -- `strlen` here.
+
+**The open question, and it decides everything else.** Upstream links these
+modules through the same spec, so either it does not pull `stdc_startup.o` into
+them, or it does and a real AROS boot has the same complaints and recovers. The
+two are distinguishable by one measurement: whether a module built by `make`
+carries `__aros_set_PROGRAM_ENTRIES___stdc_startup`. Until that is answered this
+is not attributable, and no fix should be attempted. Point 41 was worth fixing
+because its attribution was settled first -- the spec gave `kernel-debug` the
+same link upstream gives it, so the fault could only be in the source.
+
+Next step is that measurement, not a change.
 
 ### 41. RESOLVED — the NULL library base was qsort in debug.library
 
