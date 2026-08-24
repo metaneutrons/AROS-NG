@@ -1616,27 +1616,69 @@ upstream build outputs" claim has no gate behind it today.
 
 ## Refactor readiness
 
-### 13. WORK — the golden-output harness
+### 13. RESOLVED — the golden-output harness, and what it found immediately
 
-The precondition is met: the transpiler is deterministic. Three runs on an
-unchanged tree gave the same sha256 and all 19 report files were byte-identical.
-`aros-transpiler` takes no target arguments, so one golden
-`generated_targets.cmake` covers all presets and the per-preset variation lives
-in the CMake step and the verify reports.
+`aros golden capture` and `aros golden verify`. The baseline is captured on
+demand into `build/golden/`, which is ignored, and belongs to the refactor that
+captured it. It is deliberately not a digest committed to the tree: the output
+changes with every intended transpiler change, so a committed pin would be
+stale almost always, and a check that is nearly always red is not a check. That
+is the coupling points 7 and 46 record in two other places.
 
-The current unscoped output is 3 153 981 bytes, sha256
-`75d280ed88f4cf7b0dc01386f61706f529d1f8d55b63c4e48286c845ac9320c3`, measured
-across the point 8 change with two differently hashed release binaries. The
-3 133 008 bytes recorded earlier were a different tree, not a regression.
+**The precondition claim in this point was wrong.** Capture runs the transpiler
+twice and compares, because a baseline from a producer that varies reports noise
+as regression forever. The first capture failed:
 
-Not built yet. Until it exists, "without altering a single byte of generated
-CMake output" is an intention rather than a gate, and it is the intention the
-decomposition rests on: every check that a refactor changed nothing has been a
-hand comparison so far.
+```
+changed  generated_targets.unresolved-uselibs.txt (+0 bytes, +0 lines,
+         first differs at line 14)
+24 identical, 1 changed
+```
 
-The gates from point 7 are fixed, so the remaining sequence is: capture the
-baseline, then decompose. Point 46 belongs before the decomposition too, being
-26 pinned values inside the file that has to be split.
+Same bytes, same line count, different content: an ordering difference. The
+cause is `resolve_use_libs` (`graph.rs`), which builds its provider index while
+iterating `self.targets`, a `HashMap`. Rust seeds that hasher per process, so
+the candidate list of an ambiguous `uselibs=` came out in a different order each
+run. `write_report` sorts its lines, which is why this survived: the *set* of
+lines was stable, only one line's contents moved. Sorting the candidate list
+fixes it. The earlier "three runs gave the same sha256" measurement did not
+catch it because it compared the main file, not the reports.
+
+A test was pinned on the unsorted order
+(`cunit_external_cmake.rs:285`), so it had been asserting whatever the HashMap
+iteration happened to produce.
+
+**The "one golden file covers all presets" claim was also wrong.** The scoped
+arguments are derived during configuration and they change the output:
+
+| preset | generated_targets.cmake |
+|---|---|
+| pc-x86_64 | 3 419 144 bytes, 83 373 lines |
+| arm-raspi | 3 252 031 bytes, 82 845 lines |
+| rpi-aarch64 | 3 417 460 bytes, 83 294 lines |
+
+An unscoped run produces something else again: 873 concrete targets and no
+configure, GRUB2, AHI or Python groups, against 901 and all four for pc-x86_64.
+So the harness is per preset, and CMake now records the argv it used in
+`generated_targets.cmake.invocation` beside its output, which `golden` replays
+rather than re-deriving. Capture compares its own first run against the file the
+build tree holds, so a record that has drifted from the call is reported rather
+than trusted; that check is what confirmed the record end to end, and it also
+reports a build tree that predates a source change.
+
+25 products per preset, one generated file and 24 reports. Verified end to end
+by changing one line of the generated header on purpose:
+
+```
+❌ pc-x86_64: differs from build/golden/pc-x86_64
+  changed  generated_targets.cmake (+72 bytes, +1 lines, first differs at line 32)
+  24 identical, 1 changed
+```
+
+The remaining sequence for the decomposition is unchanged except that the net
+now exists: point 46 first, so 26 pinned values do not have to travel with the
+code, then capture, then decompose one piece at a time with `verify` between
+steps.
 
 ---
 
