@@ -172,66 +172,50 @@ Failed build steps 1083 -> 1078, generated-file rules 21 -> 20, missing sources
 94 -> 93, `aros-base.pkg` built with all 26 members. The boot then moved on to
 the next dangling symbol, which is point 38.
 
-### 49. WORK — the load model is 0x50 out, and says so
+### 49. RESOLVED — the load model was one pointer width out
 
-`aros test` resolves faults in package modules now (commit in this branch), and
-on the first real use it caught its own defect. For the usbromstartup fault the
-arithmetic gave `.text+0x7a1` and named `GetDataStreamFromFormat+0x391`; the
-bytes give `.text+0x7f1`, which is `__strncmp_StdCBase_wrapper+0x11`. The report
-says both:
+The model now places all 50 modules exactly where the loader does, and the boot
+check says so of its own accord:
 
 ```
 v=0e cpl=3 IP=0x1acf8c1 = usbromstartup.resource .text+0x7f1
-    (by its bytes, +0x50 from where the load model computed it)
-    = __strncmp_StdCBase_wrapper+0x11
+    (by arithmetic, confirmed by its bytes) = __strncmp_StdCBase_wrapper+0x11
 ```
 
-Two things are worth keeping from that.
+**The defect was one value.** The alignment step before each module's debug
+descriptor is `(p + sizeof(void *)) & ~(sizeof(void *) - 1)`, and the model took
+`sizeof(void *)` from the module. It comes from the *bootstrap*: on PC that is
+32-bit code building 64-bit structures -- it links `gen/lib32/libbootstrap.a`,
+and `bootstrap/elfloader.c:31` says as much in a comment -- so the step is 4
+while the descriptor it writes is the 40-byte 64-bit one. Reading the width from
+the bootstrap's own ELF class fixes it, and a test pins both widths plus the
+unreadable case, which must not fall back to the narrow one.
 
-**The wrong answer was plausible.** `GetDataStreamFromFormat` is a format helper,
-the fault is a null library base, and a format helper calling into a library is
-exactly what one would expect. It was also 0x50 into a neighbouring function.
-The comment in `locate` warned about this for the kickstart -- "one attempt was
-0x80 out, which named the wrong function with complete confidence" -- and the new
-code walked into the same hole for package modules.
-
-**A global byte search cannot replace the arithmetic here.** The packed image
-holds *unrelocated* bytes. The unique part of a library-base stub is the absolute
-address of the base, which the loader fills in during relocation, and what
-remains -- `movq (%r11), %r11; jmpq *-<lvo>(%r11)` -- occurs once per module that
-calls into the same library, five times in the base package alone. So the
-arithmetic locates the neighbourhood and the bytes settle the offset within it.
-
-**Measured, and it accumulates.** A diagnostic that rebuilds the same packing
-and compares it against every traced instruction whose bytes are unique in the
-image gives the drift per module:
+**How it was found: by asking the loader.** `bootstrap/elfloader.c` has its
+debug output behind `#define D(x)`, empty in the shipped build. Enabling it for
+one run makes the loader print every module's load address and every section's
+size and alignment, 568 chunk lines in this boot. Comparing that against the
+model, module by module, gave:
 
 ```
-Kickstart ELF     span 0x000000..0x03ea56   drift 0
-gameport.device   span 0x04f39d..0x052710   drift 0
-keyboard.device   span 0x052710..0x055a10   drift 0
-mouse.hidd        span 0x1025ee..0x1052eb   drift 0
-oop.library       span 0x1b8807..0x1bf884   drift -48
-debug.library     span 0x1d8499..0x1dc426   drift -64
-usbromstartup                               drift -80
+Kickstart ELF        real 0        model 0        +0
+console.device       real 3ea52    model 3ea56    +4
+input.device         real 4b8c7    model 4b8c7    +0
+hiddclass.hidd       real 67768    model 6776c    +4
+gfx.hidd             real 6c677    model 6c687   +16
+...
+FileSystem.resource  real 1d3079   model 1d30b9  +64
 ```
 
-So it is not a constant: it is zero for the first modules and grows in steps of
-16 bytes, which means some modules are credited 16 bytes they do not use. The
-descriptor arithmetic itself checks out by hand -- `ELF_ModuleInfo_t` is 40 bytes
-on ELF64 (8+8+2+2+4+8+8 with its stated padding), the ELF header is 64, and the
-name is `strlen + 1` as `copy_data` takes it -- so the 16 is more likely a
-section this model carries and the loader does not, or one it aligns differently.
+which is what settled it: the error was not the constant it first looked like,
+and it was not monotonic either -- a following section with a 16-byte alignment
+absorbs a 4-byte error, so the drift appeared and vanished until it accumulated
+past the next alignment. Both wrong hypotheses (a 36-byte descriptor, an 8-byte
+step with a 36-byte descriptor) were rejected against all 50 modules in one run
+each.
 
-That also bounds the risk: with a 64 KB correction window and 16 bytes per
-module, the correction holds for something like 4000 modules, and there are 50.
-The report line makes each drift visible, so a model that grows worse says so
-rather than quietly stopping.
-
-What is not done: finding the 16 bytes. Worth doing, because a model that is
-right is worth more than a correction that hides a wrong one, and because the
-next fault in a package module will be reported with a drift figure that nobody
-can currently explain.
+The kickstart's own twelve read-only chunks matched exactly throughout, which is
+what pointed at the descriptor rather than at the section packing.
 
 ### 48. WORK — a module that uses one stdc function opens stdc.library at init
 
