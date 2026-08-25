@@ -79,12 +79,23 @@ endfunction()
 
 function(aros_bootstrap_sdk_includes)
     set(SDK_INC "${CMAKE_BINARY_DIR}/SDK/include")
+    set(GEN_INC "${CMAKE_BINARY_DIR}/GENINCDIR")
     file(MAKE_DIRECTORY "${SDK_INC}/aros")
 
     # 1. Copy core system headers from compiler/include/
     file(COPY "${CMAKE_SOURCE_DIR}/compiler/include/"
          DESTINATION "${SDK_INC}"
     )
+    # The historic compiler-includes target publishes this architecture
+    # dispatcher to both include roots.  Keep the generated root in sync too:
+    # an existing build tree may still contain a same-named header staged by a
+    # formerly unfiltered foreign architecture, and GENINCDIR is searched
+    # before the freshly bootstrapped SDK.
+    file(MAKE_DIRECTORY "${GEN_INC}/asm")
+    file(COPY_FILE
+        "${CMAKE_SOURCE_DIR}/compiler/include/asm/cpu.h"
+        "${GEN_INC}/asm/cpu.h"
+        ONLY_IF_DIFFERENT)
     if(EXISTS "${SDK_INC}/exec/execbase.inc")
         file(COPY_FILE "${SDK_INC}/exec/execbase.inc"
             "${SDK_INC}/exec/execbase.h" ONLY_IF_DIFFERENT)
