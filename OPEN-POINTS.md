@@ -1095,12 +1095,54 @@ where the eight bytes at the successor offset are the instruction
 fault is #GP and not #PF, and why point 27g recorded "x86 code rather than a
 node" without being able to say more.
 
-What is left is one question, and it is now a narrow one: **who writes
-`0x10037b0` into the third MemHeader's `ln_Succ`?** The structure at that address
-is not a MemHeader -- wrong type, backlink pointing elsewhere -- and its contents
-look like pairs of kickstart pointers, so a candidate is a list of romtags or
-similar being linked into the wrong list, or a structure at `SysBase + 0xf40`
-being written through a stale pointer.
+**Who links it: measured with a watchpoint.** QEMU's gdbstub plus lldb gives
+data watchpoints, which is what this needed. Watching the successor field of the
+third MemHeader (`0x1050`) records six writes:
+
+```
+mmap_InitMemory+0x96, +0x31a, +0x420      the memory map builds headers
+krnCreateMemHeader+0x64
+krnConvertMemHeaderToTLSF+0xf7
+Exec_45_Enqueue+0x2f    rdi=0x1002ae0 (&MemList)  rsi=0x1050
+```
+
+The last write is `Enqueue` linking `0x1050` in, and the value it stores as that
+node's successor is `0x10037b0` -- so the bad node was *already* in the list.
+Enqueue is not at fault.
+
+Watching `&MemList.lh_Head` (`0x1002ae0`) shows the head is sound: `memset+0xfd`
+clears it, `PrepareExecBase+0x181` writes `0x1002ae8` (NEWLIST, an empty list
+pointing at its own tail), `PrepareExecBase+0x5e3` links the first header. No
+later writes.
+
+Watching the bad node itself (`0x10037b0`) is what names it:
+
+```
+tlsf_malloc+0x307          rdi=0x1000050  rsi=0x10
+tlsf_malloc+0x35a          rdi=0x1000050  rsi=0x10
+Exec_45_Enqueue+0x2f       rdi=0x1002ae0  rsi=0x10037b0
+Exec_15_MakeFunctions+0xb8 rdi=0x1002870  rsi=0
+Exec_15_MakeFunctions+0xc7 rdi=0x1002870  rsi=0
+```
+
+So the block is allocated out of the first MemHeader's pool, linked into
+`SysBase->MemList` by `Enqueue` as though it were a MemHeader, and then written
+over by `MakeFunctions` -- which explains the contents exactly: the four values
+at that address are pointers into the kickstart's `.text`, because they are LVO
+jump-table entries.
+
+`rsi` at the malloc hits reads `0x10`, and if that is still the size argument the
+block is 16 bytes, where a `struct MemHeader` is far larger. That would make the
+node's own fields collateral damage rather than the primary defect. Registers at
+a watchpoint hit are not guaranteed to still hold the entry arguments, so this
+one is an indication, not a measurement; the Enqueue arguments are trustworthy
+because that hit is 0x2f into the function.
+
+What remains is the caller: which code calls `Enqueue(&SysBase->MemList, block)`
+with a block that is not a MemHeader. One more watchpoint run with a stack dump
+answers it -- the previous run already showed `kernel_cstart+0x777` as the return
+address for the `0x1050` insertion, so the same read at the `0x10037b0` insertion
+names the culprit.
 
 The 147 repeats and the eventual double fault are downstream: the panic path
 calls `TypeOfMem`, which calls `FindMem` again.
