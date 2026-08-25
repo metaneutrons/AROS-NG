@@ -1138,11 +1138,47 @@ a watchpoint hit are not guaranteed to still hold the entry arguments, so this
 one is an indication, not a measurement; the Enqueue arguments are trustworthy
 because that hit is 0x2f into the function.
 
-What remains is the caller: which code calls `Enqueue(&SysBase->MemList, block)`
-with a block that is not a MemHeader. One more watchpoint run with a stack dump
-answers it -- the previous run already showed `kernel_cstart+0x777` as the return
-address for the `0x1050` insertion, so the same read at the `0x10037b0` insertion
-names the culprit.
+**The caller, and what it overturns.** Reading the stack at that Enqueue hit
+names it:
+
+```
+Exec_45_Enqueue+0x2f      rdi=0x1002ae0 (&MemList)  rsi=0x10037b0
+  <- krnCreateROMHeader+0x71
+     <- kernel_cstart+0x6b3
+```
+
+So `0x10037b0` is not a foreign node at all. It is the ROM MemHeader, created
+and linked deliberately by `krnCreateROMHeader` to describe the kickstart's own
+memory. That also explains the contents this point earlier read as suspicious:
+a header describing the ROM *should* hold pointers into the kickstart, because
+`mh_Lower` and `mh_Upper` bracket it.
+
+The defect is therefore not the linking but what happens afterwards. Two writes
+land on the same address once it is linked:
+
+```
+Exec_15_MakeFunctions+0xb8  rdi=0x1002870 (SysBase)
+Exec_15_MakeFunctions+0xc7
+```
+
+`MakeFunctions` builds an LVO jump table. It writes over the ROM MemHeader's
+node fields, which is what the memory dump showed: `ln_Type` reading 224 instead
+of 10, and four `.text` addresses where the list pointers belong -- jump-table
+entries, not header fields. The third MemHeader's successor pointing at
+`0x10037b0` was correct all along; the node it points at is destroyed after the
+fact, so `FindMem` walks into wreckage.
+
+Two corrections to what this point said before: the successor was never wrong,
+and `Enqueue` was never the writer of a bad value.
+
+What is not yet measured is which side of the collision is in the wrong. The ROM
+header sits at `SysBase + 0xf40` and was handed out by `tlsf_malloc` from the
+first MemHeader's pool, so either the allocator gave away memory already spoken
+for by ExecBase's jump table, or `MakeFunctions` writes past the end of the
+region it was given. `rdi` at those hits still reads `SysBase`, but the hits are
+0xb8 into the function, so that register is not proof of the argument. The next
+measurement is the extent: how far above `SysBase` the jump table legitimately
+reaches, against where the pool believes its free memory starts.
 
 The 147 repeats and the eventual double fault are downstream: the panic path
 calls `TypeOfMem`, which calls `FindMem` again.
