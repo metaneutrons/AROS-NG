@@ -36,11 +36,6 @@ USER_LDFLAGS := -static
     files="$(FUNCS) $(FILES) $(HIDDFILES)"                      \
     uselibs="debug"
 
-# The simple startup resource has no generated autolib initialiser, so its C
-# helpers must not call through an unopened StdCBase. Keep poseidon.library on
-# the ordinary shared runtime by using make.tmpl's per-module link variable.
-usbromstartup_LDFLAGS := -nostdc
-
 %build_module_simple mmake=kernel-usb-usbromstartup             \
   modname=usbromstartup modtype=resource                        \
   files="usbromearlystartup usbromlatestartup" uselibs="amiga"
