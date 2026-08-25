@@ -1062,22 +1062,48 @@ Exec Bootstrap Task: Could not open version 36 or higher of library "intuition.l
 Those version numbers are point 33's markers being read. The libraries are in
 `aros-base.pkg`, which is point 36.
 
-### 27g. PARTLY RESOLVED — the alert is gone; the MemList walk still faults
+### 27g. PARTLY RESOLVED — the MemList has a fourth node that is not a MemHeader
 
-Two of the three findings below are settled by point 32. `cpu_Init` runs, so
-`KernelBase->kb_ContextSize` is set, `KrnCreateContext` returns a context and
-`Exec_init` no longer takes `goto execfatal`. And the trap handlers install, so
-the #GP is delivered and reported by `core_IRQHandle` rather than escalating
-through a missing IDT gate -- confirming that the absent gate for vector 13 was
-the same cause, not a defect of its own.
+Two of the three original findings are settled by point 32 (`cpu_Init` runs, the
+trap handlers install). The fault itself is now read out of guest memory rather
+than guessed at, because `aros test` backs the guest's RAM with a file in the
+evidence directory.
 
-What is left is the fault itself, unchanged and still unexplained: `FindMem`
-dereferences a MemList successor holding `48 8b 8a 70 04 30 00 48`, x86 code
-rather than a node. It now repeats about 150 times from supervisor mode before a
-double fault ends the run, because the panic path keeps calling `TypeOfMem`.
-Reading it needs guest memory, which the runner cannot do yet (point 31).
+`FindMem` walks `SysBase->MemList` (`rom/exec/memory.c:33`), and with
+`SysBase = 0x1002870` taken from the fault's own R15 the walk reads:
 
-The original entry follows.
+```
+node 0x1000050  succ 0x100050    pred 0x1002ae0  type 10   <- &MemList, correct
+node 0x100050   succ 0x1050      pred 0x1000050  type 10   <- correct
+node 0x1050     succ 0x10037b0   pred 0x100050   type 10   <- correct backlink
+node 0x10037b0  succ 0x48003004708a8b48  pred 0x8548ffffffffc0c7  type 224
+```
+
+So the three real memory headers are intact and doubly linked, and the third one
+should end the walk: `&MemList.lh_Tail` is `0x1002ae8` and the value there is 0,
+which is exactly what `while (mh->mh_Node.ln_Succ != NULL)` needs. Instead its
+`ln_Succ` is `0x10037b0`, which is `SysBase + 0xf40` and holds four pointers into
+the loaded kickstart:
+
+```
++0  0x17be300   +8  0x17c39d0   +16 0x17be5e0   +24 0x17c39a0
+```
+
+Following that takes the walk to `0x17be300`, inside the kickstart's `.text`,
+where the eight bytes at the successor offset are the instruction
+`48 8b 8a 70 04 30 00 48`. As a pointer that is non-canonical, which is why the
+fault is #GP and not #PF, and why point 27g recorded "x86 code rather than a
+node" without being able to say more.
+
+What is left is one question, and it is now a narrow one: **who writes
+`0x10037b0` into the third MemHeader's `ln_Succ`?** The structure at that address
+is not a MemHeader -- wrong type, backlink pointing elsewhere -- and its contents
+look like pairs of kickstart pointers, so a candidate is a list of romtags or
+similar being linked into the wrong list, or a structure at `SysBase + 0xf40`
+being written through a stale pointer.
+
+The 147 repeats and the eventual double fault are downstream: the panic path
+calls `TypeOfMem`, which calls `FindMem` again.
 
 ### 27g-old. WORK — exec raises a dead-end alert, and the alert path faults
 
