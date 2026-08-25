@@ -1,187 +1,150 @@
 # Handoff
 
-Written 25 August 2026, on `feat/cmake-build-propagation` (227 commits ahead of
-`main`, working tree clean). This is the short document: enough to start a fresh
-session without re-deriving the environment. `OPEN-POINTS.md` carries the
-findings themselves and is the authority wherever the two disagree.
+Written 25 August 2026 on `feat/cmake-build-propagation`. This is the short
+restart document; `OPEN-POINTS.md` contains the investigation history and is
+authoritative where details differ.
 
-## Where the boot stands
+## Current result
 
-The PC target boots the bootstrap, loads the kickstart and all five currently
-built packages, brings up exec and the kernel resource, and now survives the
-full 20-second non-interactive test without an exception. The point 48 crash in
-`usbromstartup.resource` is fixed: the transpiler preserves Make's
-`usbromstartup_LDFLAGS`, the resource links `libstdc.static.a`, and
-`poseidon.library` remains on the shared runtime.
+The packaged PC x86_64 system now builds and boots cleanly on macOS. All six
+package targets were rebuilt, all 76 packaged ELF modules were scanned, and no
+module retains a strong dynamic StdC startup/base dependency. The final
+20-second non-interactive run reached user mode without a failure or CPU
+exception:
 
-The boot is not clean yet. It reports eight failed opens of `stdc.library` and
-six of `acpica.library`. `stdc.library` correctly is not an early package
-member; the remaining early modules that use it still need auditing under
-point 48. `acpica.library` belongs to `aros-bsp.pkg`, but that package has not
-been produced: `kernel-bsp-pc-x86_64-file` currently stops while compiling
-`parallel.hidd`, whose native target lacks `hidd/unixio.h`.
+```text
+Booting [pc-x86_64] with 7 multiboot module(s) for 20s...
+reached: user mode reached
+  evidence: build/pc-x86_64/boot-check
+✅ PASS: the boot produced no failure and no exception.
+```
 
-Memory is sound as of today: `SysBase->MemList` walks four `NT_MEMORY` headers,
-ROM last at priority -128, terminating at `&lh_Tail`. Point 27g has the story of
-how it was not.
+The serial log reaches ACPI/APIC setup and the VESA no-information diagnostic.
+`aros test` currently has no later Workbench or Shell milestone, so "user mode"
+is the strongest automated assertion made by this check; it is not a claim that
+the desktop has opened.
+
+The Linux cross-check and the equivalent fresh checks for ARM/AArch64 remain to
+be run. The result above is the clean macOS PC lane.
+
+## What fixed the packaged boot
+
+The important fix is central rather than a list of AROS source workarounds.
+AROS' native GCC and Clang patches define `-static` as the request to suppress
+the shared posixc/stdcio/stdc clients and select `libstdc.static.a`. The
+transpiler used to discard that driver switch while CMake reconstructed the
+default link set from `config/elf-specs.in`, so early resident modules acquired
+dynamic `stdc.library` dependencies that upstream does not give them.
+
+The transpiler now records `static` as a compiler-spec fact and
+`cmake/DefaultLinkSet.cmake` maps it to the checked-in spec's `nostdc` condition.
+The temporary `-nostdc` edits in bootloader, OOP, and Poseidon were removed;
+their original upstream `-static` semantics work again.
+
+One independent early-start issue remained: `hid.class` linked libamiga's
+`NewObject` and therefore required `IntuitionBase`, although HID starts at
+resident priority 29 and Intuition at 15. Its existing GUI sources now compile
+with `INTUITION_INLINE_NEWOBJECT`, avoiding that premature auto-open.
+
+The boot checker also no longer treats QEMU's `Servicing hardware INT=...`
+trace records as CPU exceptions. A regression test distinguishes these normal
+hardware interrupt records from actual faults.
+
+## Other changes waiting in this branch
+
+- Configure-time source inventories resolve fetched ACPICA and FreeType source
+  globs. A cold configure fetches only the owning archives, reruns the
+  transpiler, and fails closed if a second pass still has unresolved inventory.
+- `hidd/unixio.h` is an exact public-header exception to the foreign-architecture
+  filter. This unblocks the native PC parallel/serial HIDDs without admitting a
+  broad foreign architecture namespace into the SDK.
+- `aros-genmodule` emits the reference-compatible RAWARG format wrappers.
+- The configure step still reports 25 of 366 `FUNCTIONS_COUNT` disagreements;
+  point 50 remains open.
 
 ## Build and boot
 
+Configure after rebuilding the release-time generators whenever their Rust
+source changes:
+
 ```bash
+cargo build --release --manifest-path tools/aros-tools/Cargo.toml \
+  -p aros-genmodule -p aros-transpiler
 cmake --preset pc-x86_64
 ```
 
-```bash
-ninja -C build/pc-x86_64 -j 8 SYS/boot/pc/kernel
-```
-
-Build the packages whose members changed as well; the test command does not do
-that automatically. For the current USB change:
+Build the kernel and every package consumed by `aros test --packages`:
 
 ```bash
-ninja -C build/pc-x86_64 -j 8 kernel-package-usb-file
+ninja -C build/pc-x86_64 -j 8 \
+  SYS/boot/pc/kernel \
+  kernel-package-base-file \
+  kernel-package-fs-file \
+  kernel-bsp-pc-x86_64-file \
+  kernel-package-usb-file \
+  kernel-acpi-file \
+  kernel-legacy-pc-x86_64-file
 ```
+
+Then run:
 
 ```bash
 tools/aros-tools/target/release/aros test --preset pc-x86_64 --packages
 ```
 
-Presets: `pc-x86_64`, `rpi-aarch64`, `rpi4-aarch64-debug`, `arm-raspi`. A full
-`ninja` still stops in the C++ Ports (`cstdint` not found in libde265), which is
-point 25 -- build the boot targets by name rather than everything.
+`aros test --packages` consumes existing `.pkg` files; it does not rebuild
+them. The current evidence is in `build/pc-x86_64/boot-check`.
 
-For watching a boot by hand there is `scripts/boot/qemu-pc-x86_64.sh`. `aros
-test` is deliberately non-interactive: it asserts from the serial log and the
-QEMU exception trace.
+Presets are `pc-x86_64`, `rpi-aarch64`, `rpi4-aarch64-debug`, and
+`arm-raspi`. A full unqualified `ninja` still stops in third-party C++ Ports
+because target libc++ headers such as `cstdint` do not reach all consumers
+(point 25); named boot targets avoid that unrelated lane.
 
-### The trap that cost the most time today
-
-CMake runs the **release binaries** at configure time:
-`tools/aros-tools/target/release/aros-genmodule` and `.../aros-transpiler`
-(`CMakeLists.txt:20-26`). Editing the Rust source and re-running `cmake` changes
-nothing until the binary is rebuilt:
-
-```bash
-cargo build --release --manifest-path tools/aros-tools/Cargo.toml -p aros-genmodule -p aros-transpiler
-```
-
-Two related surprises worth knowing. Our genmodule writes its libdefs at
-*configure* time into `build/<preset>/gen`, so those files are not Ninja targets
-and never appear in `build.ninja`; and it only rewrites bytes that changed, so an
-old mtime does not mean an orphan. Both of those misled me for a while (point
-50).
-
-## Gate before committing
+## Verification gate
 
 From `tools/aros-tools`:
 
 ```bash
-cargo fmt --all --check && cargo clippy --workspace --all-targets && cargo test --workspace
+cargo fmt --all --check
+cargo clippy --workspace --all-targets
+cargo test --workspace
 ```
+
+Clippy passes with existing non-fatal warnings. The stricter `-D warnings` gate
+is not clean because of pre-existing `must_use` and other warnings outside this
+change.
 
 From the repository root:
 
 ```bash
-for t in cmake/tests/*Test.cmake; do cmake -P "$t" || echo "FAIL $t"; done
-```
-
-```bash
+for t in cmake/tests/*Test.cmake; do cmake -P "$t" || exit 1; done
 git diff --check
 ```
 
-The fixture sweep costs about five minutes, 254 seconds of it `GrubBuildTest`
-alone; the other twenty run in 45 seconds together. `toolchains/HANDOFF.md`
-explains why each check is in the list -- each was added after a commit passed a
-shorter gate and broke something.
+The CMake sweep takes roughly five minutes, mostly in `GrubBuildTest.cmake`.
+The Rust workspace, every CMake fixture including the real GRUB host build and
+the new source-inventory fixture, and the macOS packaged boot are green as of
+this handoff. The thematic commit IDs are the newest entries in `git log`.
 
-When refactoring the transpiler, the byte-for-byte baseline is
-`aros golden capture` / `aros golden verify`; it replays the recorded argv from
-`generated_targets.cmake.invocation` rather than re-deriving it, and it captures
-twice, refusing a baseline that is not reproducible. Baselines live in
-`build/golden/` and are not committed.
+For byte-for-byte transpiler refactors use `aros golden capture` and
+`aros golden verify`. They replay the recorded argv from
+`generated_targets.cmake.invocation`; baselines live under `build/golden/` and
+are not committed.
 
-## Debugging recipes that worked
+## Next work
 
-**Read guest memory.** Back the guest RAM with a file and inspect it after the
-run:
-
-```bash
-qemu-system-x86_64 -object memory-backend-file,id=guest-ram,size=512M,mem-path=ram.bin,share=on -machine q35,memory-backend=guest-ram -cpu qemu64,+avx2 -smp 1 -m 512 -no-reboot -display none -append " debug=serial" -serial file:boot.log -kernel build/pc-x86_64/SYS/boot/pc/bootstrap -initrd "build/pc-x86_64/SYS/boot/pc/kernel,<pkgs>"
-```
-
-Then seek to the physical address directly; `SysBase` is at `0x1002870` and its
-`MemList` head at `0x1002ae0` in the runs recorded so far, but confirm rather
-than assume.
-
-**Data watchpoints.** Start QEMU with `-S -s` and drive lldb in batch:
-
-```
-gdb-remote 1234
-watchpoint set expression -w write -s 8 -- <addr>
-continue
-register read rip rsp rdi rsi
-memory read -s8 -c10 -f x $rsp
-```
-
-Registers at a hit are only trustworthy as arguments when the hit is a few bytes
-into the function; `rdi` reading `SysBase` fooled me into naming the wrong
-argument until the stack settled it. Read the stack, not just the registers.
-
-**Resolve a kickstart address to a symbol.** `/usr/bin/nm` reads the kickstart
-ELF (there is no `llvm-nm` or `llvm-objdump` in PATH on this machine, and
-`llvm-readelf` is absent too -- Python's `struct` over the section headers is the
-reliable fallback for anything nm cannot answer). Offsets are section-relative
-because the kickstart is `ET_REL`. In the runs so far the load base was
-`0x17b2000` with `.text` at read-only offset `0x120`, so
-`.text offset = rip - 0x17b2000 - 0x120`; derive both per run rather than reusing
-the constants. The boot check in `tools/aros-tools/crates/aros-cli/src/boot.rs`
-does this properly and reports how it located a fault -- by arithmetic, by bytes,
-or by bytes with the drift from the arithmetic named.
-
-## What to pick up
-
-Boot-critical, in the order that unblocks the most:
-
-- **48** -- the `usbromstartup.resource` fault is resolved and the boot no
-  longer throws an exception. Eight early `stdc.library` opens remain. Audit
-  their actual C/POSIX dependencies before applying `-nostdc` more broadly.
-- **BSP package** -- fix the native `parallel.hidd` include graph
-  (`hidd/unixio.h` missing), then build `kernel-bsp-pc-x86_64-file` so
-  `acpica.library` is present for the next measured boot.
-- **50** -- 25 of 366 modules disagree between our genmodule and the reference on
-  `FUNCTIONS_COUNT`. The configure step now names them all. Where ours is
-  smaller (`parallel` and `serial` are devices, so `firstlvo` is 7; `bz2`,
-  `expat`, `freetype2`, `popupmenu` read as having no function list at all) the
-  base is under-allocated, and that is the shape that corrupts memory. Where
-  ours is larger it only wastes space.
-- **25 / 24** -- the C++ Ports keep a full `ninja` from finishing.
-- **22** -- ACPICA is a fetched Port that `kernel-kernel` needs.
-
-Structural, no boot dependency:
-
-- **47** -- `parse_mmakefile_impl` runs from parser.rs:720 to 2366, 1647 lines of
-  the file's 5251. Four of its five phases are extractable; the declaration loop
-  needs a design.
-- **34** -- `collect_extra`. **35** -- `aros/config.h`, 15 of 20 values absent.
-  **9** -- three clippy false positives.
-
-## Environment
-
-zsh with `noclobber`, so `>` and even `>>` fail on a file that does not exist the
-way you expect -- `: > file` first. `rm` and `mv` are interactively aliased; use
-`/bin/rm -f` and `/bin/mv -f`. `grep` is ugrep and has regex complexity limits.
-`--include=*.c` fails on `nomatch` unless quoted. There is no `/usr/bin/timeout`;
-poll with a `kill -0` loop instead. `cargo` needs
-`--manifest-path tools/aros-tools/Cargo.toml` from the repository root.
+1. Run the same packaged PC build and boot on Linux (Lima or the Cachy host).
+2. Configure/build the ARM and AArch64 lanes to prove the new generic mechanisms
+   across every current architecture.
+3. Resolve the 25 `FUNCTIONS_COUNT` disagreements in point 50.
+4. Continue point 25 so an unqualified full build can pass.
+5. Add later boot milestones if Workbench/Shell readiness must be asserted
+   automatically rather than inferred from the serial log.
 
 ## Working agreements
 
-- Transpile rather than write glue config. Anything skipped gets reported, never
-  dropped silently.
-- Bugs in AROS sources go on `pr/*` branches cut from `master`, so they can be
-  sent upstream. Three exist: `pr/bootloader-nostdc`, `pr/oop-nostdc`,
-  `pr/debug-registermodule-no-stdc`. Their changes are also present on this
-  branch, because the build needs them.
-- Split work into thematic commits.
-- Macro support is complete for every architecture, not only the ones currently
-  built.
+- Transpile upstream MetaMake semantics instead of adding target-specific glue.
+- Keep architecture exceptions exact and test them across all current profiles.
+- Anything unsupported is reported and fails closed; it is never silently
+  dropped.
+- Split work into thematic commits and never add a Codex co-author trailer.

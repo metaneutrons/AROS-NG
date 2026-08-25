@@ -283,36 +283,45 @@ each.
 The kickstart's own twelve read-only chunks matched exactly throughout, which is
 what pointed at the descriptor rather than at the section packing.
 
-### 48. WORK — a module that uses one stdc function opens stdc.library at init
+### 48. RESOLVED — upstream `-static` semantics remove early StdC dependencies
 
-**The `usbromstartup.resource` crash is resolved.** The Make template already
-has the required narrow scope: `%build_module_simple` appends
-`$(<modname>_LDFLAGS)` to that module's link only. The transpiler now preserves
-that variable and `rom/usb/poseidon/mmakefile.src` sets
-`usbromstartup_LDFLAGS := -nostdc`. Consequently:
+The final fix is central and matches the AROS compiler drivers. Their GCC and
+Clang patches make `-static` suppress the shared posixc/stdcio/stdc clients and
+select `libstdc.static.a`. The transpiler had discarded `-static`, while CMake
+rebuilt the driver's default link set from `config/elf-specs.in`; this silently
+turned upstream-static resident modules into dynamic `stdc.library` clients.
 
-  * `usbromstartup.resource` defines `strncmp` itself and contains neither
-    `StdCBase` nor a `__strncmp_StdCBase_wrapper`;
-  * `poseidon.library` still uses the ordinary shared stdc client archive;
-  * the generated spec-switch manifest contains `nostdc` for
-    `kernel-usb-usbromstartup` only; and
-  * after rebuilding `poseidon.pkg`, a 20-second QEMU run has no exception and
-    no double fault. The previous `.text+0x7f1` fault is gone.
+The transpiler now records `static` as a spec switch, and
+`cmake/DefaultLinkSet.cmake` translates it to the checked-in external spec's
+equivalent `nostdc` condition. The temporary source-level `-nostdc` workarounds
+in bootloader, OOP and Poseidon were removed. This keeps the original upstream
+mmake semantics and fixes every affected module rather than maintaining a list
+of symptoms.
 
-There was one packaging trap in that measurement. Building the module and the
-kernel does not refresh packages, and `aros test --packages` consumes whatever
-`.pkg` files already exist without building them. The first run therefore
-reproduced the old fault from a two-day-old staged `usbromstartup.resource`.
-`ninja -C build/pc-x86_64 kernel-package-usb-file` repacked the resource (8312
-bytes instead of 13608), after which the fault disappeared.
+Two adjacent blockers were resolved as part of the measured boot:
 
-Point 48 as a whole remains open: the clean run reports eight failed early
-opens of `stdc.library` and six of `acpica.library`. The latter are partly a
-package-build issue: `aros-bsp.pkg`, which owns `acpica.library`, is absent, and
-building `kernel-bsp-pc-x86_64-file` currently stops in
-`arch/i386-pc/drivers/parallel.hidd/ParallelUnitClass.c` because
-`hidd/unixio.h` is not in that native target's include graph. That is separate
-from the scoped USB link fix.
+  * `hidd/unixio.h` is now an exact public-header exception to the foreign-arch
+    SDK filter, so `kernel-bsp-pc-x86_64-file` builds and packages ACPICA.
+  * `hid.class` uses `INTUITION_INLINE_NEWOBJECT`; otherwise its two GUI sources
+    pull the libamiga `NewObject` stub and `IntuitionBase`, even though HID's
+    resident priority 29 runs before Intuition's priority 15.
+
+After rebuilding the kernel and all six package files, a complete scan of all
+76 packaged ELF modules found zero strong dynamic StdC startup/base
+dependencies. The 20-second PC x86_64 run reached user mode with no reported
+failure and no CPU exception. Evidence is in `build/pc-x86_64/boot-check`.
+
+The boot auditor also learned that QEMU records beginning `Servicing hardware
+INT=...` are ordinary hardware interrupts, not guest CPU faults. A regression
+test preserves the distinction.
+
+One packaging trap remains relevant: `aros test --packages` consumes existing
+`.pkg` files but does not build them. Every package target must be rebuilt before
+a result can be attributed to current code.
+
+**Historical investigation below.** It records the intermediate per-module
+`-nostdc` experiments that proved the dependency mechanism. Those experiments
+were superseded by the central `-static` interpretation above.
 
 With point 41 fixed the boot task runs and reports for itself:
 
@@ -884,27 +893,24 @@ Open within this: `rom/timer` states `options autoinit` without being
 `modtype=library`, so upstream builds `libtimer.a` for it and we do not. It is
 reported in `generated_targets.skipped-client-archives.txt`.
 
-### 26d. WORK — the two Ports source globs, and why they are not a quick fix
+### 26d. RESOLVED — fetched source inventories are materialised at configure time
 
-`freetype2.library` (200 undefined) and `acpica.library` (108) are the two
-modules still missing their own implementation, and both for the same reason:
-their source lists come from `$(wildcard $(PORTSDIR)/.../*.c)`, which the
-transpiler drops. The error text used to say "deferred to CMake", which is
-wrong and misled me; nothing expands it.
+`freetype2.library` and `acpica.library` obtain their implementation lists from
+Make expressions over `$(wildcard $(PORTSDIR)/.../*.c)`. The evaluator must see
+the unpacked trees before it can apply the following substitution,
+`filter-out`, and `addprefix` operations.
 
-An opaque marker handed to CMake does not work either, because the glob result
-feeds further Make functions in the same expression (`:%.c=%`, `filter-out`,
-`addprefix`), which only the transpiler's evaluator can apply. So the glob has
-to be resolved during transpilation, against the build tree.
+The first transpiler pass now writes an exact source-inventory manifest naming
+only the fetch declarations that own unresolved Ports globs. CMake materialises
+those archives at configure time, reruns the transpiler against `AROS_PORTS_DIR`,
+and refuses to include the generated graph if the second pass still reports an
+unresolved inventory. This is intentionally bounded: it is not a general
+configure-time build of Ports.
 
-That is the real blocker, and it is ordering, not evaluation: the globs cover
-Ports content a build step fetches, and the source list is needed at configure
-time. Any fix has to decide one of
-
-  * fetch at configure time, or
-  * let the fetch trigger a reconfigure, so the second configure sees the files.
-
-Reported in `generated_targets.partial-source-lists.txt`.
+A cold production configure proved the two current inventories (ACPICA and
+FreeType), and `SourceInventoryReconfigureTest.cmake` covers extraction,
+re-evaluation, and fail-closed behaviour. The second generated graph contains
+the concrete source lists rather than an opaque deferred marker.
 
 ### 26f. RESOLVED — every module with a config gets its scaffolding
 
