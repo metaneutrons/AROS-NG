@@ -275,6 +275,48 @@ Not attempted yet, and deliberately: point 41 was one call site in one module
 with a fault to prove it. This is at least seven modules, the failure is a
 diagnostic rather than a crash, and choosing between the two fix shapes is an
 upstream design question, not a repair.
+**Traced to the end, and one of my own theories was wrong.** I had assumed a
+failed `OpenLibrary` at init leaves the module running with a null base. It does
+not. `tools/genmodule/writestart.c:1126` emits, for every module that does not
+say `noautolib`:
+
+```c
+if (set_open_libraries() && set_call_funcs(SETNAME(INIT), 1, 1) && ...)
+```
+
+so a failed open aborts that module's init, which is why the eight messages
+appear. That path is correct.
+
+The usbromstartup fault comes from the other kind of module. Its declaration is
+`%build_module_simple mmake=kernel-usb-usbromstartup ... uselibs="amiga"`
+(`rom/usb/poseidon/mmakefile.src:39`), and the built resource carries no
+generated `InitLib` at all -- only its own `usbEarlyResident`, `usbLateResident`
+and `usbromstartup_entry`. Nothing in it ever calls `set_open_libraries`, so
+`StdCBase` is never anything but NULL, and there is no message either.
+
+The chain, end to end:
+
+  1. the resource is declared with `%build_module_simple` and `uselibs="amiga"`;
+  2. `-lamiga` brings `GetDataStreamFromFormat` (`compiler/alib`);
+  3. that calls `strncmp`, which in `libstdc.a` is a stub through `StdCBase`;
+  4. the module has no autolib init, so the base stays NULL;
+  5. the first `strncmp` jumps through `-0xb30` off zero and faults in user mode.
+
+So there are two distinct situations, not one:
+
+  * **modules with autolib** ask for stdc.library at init, fail, and are not
+    initialised. Correct behaviour, wrong dependency -- fixed for bootloader and
+    oop by taking the static C runtime.
+  * **modules without a generated init** ask for nothing and fault on first use.
+    `-nostdc` is the same remedy, but nothing warns beforehand, which makes this
+    the more dangerous shape.
+
+For usbromstartup the remedy has a complication worth stating: `USER_LDFLAGS` is
+file-global in Make, and `rom/usb/poseidon/mmakefile.src` declares both
+poseidon.library and usbromstartup.resource. `-nostdc` there would move both.
+poseidon.library is an ordinary library with autolib, so it would take the static
+runtime too -- defensible but broader than the fault requires.
+
 **Tried on one module, and it works exactly as far as it should.**
 `pr/bootloader-nostdc` adds `-nostdc` to `rom/bootloader/mmakefile.src`. After
 it, `bootloader.resource` carries `strlen` and `stpblk` as real definitions out
