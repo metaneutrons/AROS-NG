@@ -262,6 +262,35 @@ jump is not unique this time -- five occurrences in the base package alone --
 so naming the module needs the load address rather than a search, which the
 boot check does not model for package modules yet.
 
+**Tried on oop.library too, and the OOP chain is gone.**
+`pr/oop-nostdc` does the same for `rom/oop/mmakefile.src`. oop.library uses
+`strcmp`, `strcpy` and `strlen`; afterwards it has no `StdCBase`, no LIBS entry
+and no undefined symbols at all.
+
+The counts move the way the model predicts:
+
+| | before | bootloader | + oop |
+|---|---|---|---|
+| `oop.library` complaints | 3 | 3 | **0** |
+| `stdc.library` complaints | 5 | 4 | 8 |
+| `acpica.library` complaints | 0 | 0 | 6 |
+
+oop opening is what lets the modules behind it run, and each of those then
+reaches *its own* stdc dependency -- which is why the stdc count rises rather
+than falls. The eight are the ten remaining LIBS carriers minus the two that
+never get that far. The six acpica complaints are new for the same reason: the
+ACPI package's modules now initialise far enough to look for the port
+(OPEN-POINTS 22).
+
+So the rising number is progress, not regression. The measure of progress here
+is which library is being asked for, not how often.
+
+The stopping point is unchanged: `CR2 = -0xb30`, user mode, in a package module
+(`IP=0x1acf8c1`, shifted from `0x1ad15c1` only because module sizes changed).
+Naming that module needs load addresses the boot check does not model for
+package modules yet, and that is now the thing in the way rather than any
+particular library.
+
 **What this settles and what it does not.** It settles that `-nostdc` is a
 working fix shape for one module. It does not settle whether it is the right one
 for eleven: `-nostdc` also drops `-lposixc` and `-lstdcio`, so each module has to
