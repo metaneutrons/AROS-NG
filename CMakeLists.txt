@@ -68,8 +68,11 @@ endif()
 # Values used by target-dependent MetaMake conditionals. Keep them as named
 # cache settings so the transpiler receives configuration, never Rust-side
 # architecture guesses. Bare-metal pc and raspi use an empty MetaMake FAMILY;
-# hosted targets may later set it to unix. The three current presets are
-# ordinary variants and use LLVM. MMU follows the reference configure default.
+# hosted targets may later set it to unix. The four current presets pin both
+# Clang and the LLVM MetaMake lane explicitly, so neither the compiler commands
+# nor the generated graph depend on the host's default compiler. A release
+# toolchain file overrides those names with its verified prefix-owned tools.
+# MMU follows the reference default.
 set(AROS_TARGET_VARIANT "" CACHE STRING "MetaMake target variant")
 set(AROS_TARGET_FAMILY "" CACHE STRING
     "Historic MetaMake target family (empty for bare-metal targets)")
