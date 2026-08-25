@@ -1,6 +1,6 @@
 # Open points
 
-Status date: 2026-08-23. Everything here is either undecided, unfinished, or a
+Status date: 2026-08-25. Everything here is either undecided, unfinished, or a
 finding nobody has acted on yet. Each entry names the evidence, so none of it
 has to be rediscovered.
 
@@ -106,6 +106,10 @@ contract and not arbitrary standalone linking through `clang`/`clang++`.
 The `linux-x86_64` lane has not been run; it needs the other machine. The
 complete v1 matrix requires each host/profile pair built twice and
 byte-compared before publication, which has not started.
+
+This is the deterministic **toolchain producer** lane. Point 51's clean direct
+CMake build and packaged boot on Linux do not build the release prefix twice
+and therefore do not close this point.
 
 ### 6. DECIDE — job count for the byte-comparison
 
@@ -318,6 +322,52 @@ test preserves the distinction.
 One packaging trap remains relevant: `aros test --packages` consumes existing
 `.pkg` files but does not build them. Every package target must be rebuilt before
 a result can be attributed to current code.
+
+### 51. RESOLVED — the direct PC build and boot are clean on macOS and Linux
+
+The same packaged pc-x86_64 graph now builds and boots on macOS and CachyOS
+Linux. Both final post-refactor 20-second runs loaded seven multiboot modules,
+reached user mode and reported neither a guest exception nor another boot
+failure. Linux used QEMU 11.0.2; macOS used QEMU 11.1.0. The Linux evidence is
+on `cachy` at
+`/home/fabian/aros-ng-linux-check.uyLICC/evidence-linux-pc-x86_64-smbios-final`;
+the final macOS evidence was written to
+`/tmp/aros-ng-evidence-macos-pc-x86_64-smbios-final`.
+
+The cold Linux build found four ways the direct graph had depended on the macOS
+host without stating it:
+
+  * configure presets left the compiler implicit, so CachyOS selected GCC while
+    the target graph assumes the LLVM path; every direct preset now pins
+    `clang`, `clang++`, the ASM compiler and `AROS_TOOLCHAIN=llvm`;
+  * CachyOS Clang enables strong stack protection by default even for the i386
+    target triple, leaving the freestanding bootstrap with
+    `__stack_chk_fail`; the target compile contract now says
+    `-fno-stack-protector` explicitly;
+  * CMake 3.27 and newer added `-Xlinker --dependency-file` for a linker it
+    believed was compiler-driven, but AROS invokes `aros-collect` and lld
+    directly; direct lld links now disable that CMake facility;
+  * a cold parallel build could compile CDVDFS before the codesets public
+    headers it includes existed; the three CDVDFS MetaMake targets now state
+    that dependency.
+
+The first Linux boot then proved the binaries were not the problem: ACPICA's
+code was byte-identical modulo addresses between the two hosts. QEMU 11.0.2's
+legacy ROM window contains ordinary firmware text beginning
+`_SM3_\0etc/extra-pci-roots...` before its real SMBIOS 2 entry point. Two AROS
+scanners accepted the substring without checking the entry-point length or
+checksum and interpreted the ASCII bytes `pci-root` as a table address.
+ACPICA faulted first; once fixed, the later `smbios-ipmi.hidd` scanner exposed
+the same defect.
+
+Both scanners now validate SMBIOS 2/3 anchors, declared lengths and checksums
+(including SMBIOS 2's intermediate DMI checksum), read entry fields without
+unaligned accesses and bound every structure/string walk by the advertised
+table size. The SMBIOS 3 header layout was corrected so its maximum table size
+precedes its 64-bit table address as the specification requires. The first
+patched Linux run reached user mode but named the second scanner's fault; the
+second reached user mode cleanly. This host/version difference is now useful
+integration coverage rather than unexplained nondeterminism.
 
 **Historical investigation below.** It records the intermediate per-module
 `-nostdc` experiments that proved the dependency mechanism. Those experiments
