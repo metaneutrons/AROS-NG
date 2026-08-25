@@ -172,6 +172,42 @@ Failed build steps 1083 -> 1078, generated-file rules 21 -> 20, missing sources
 94 -> 93, `aros-base.pkg` built with all 26 members. The boot then moved on to
 the next dangling symbol, which is point 38.
 
+### 49. WORK — the load model is 0x50 out, and says so
+
+`aros test` resolves faults in package modules now (commit in this branch), and
+on the first real use it caught its own defect. For the usbromstartup fault the
+arithmetic gave `.text+0x7a1` and named `GetDataStreamFromFormat+0x391`; the
+bytes give `.text+0x7f1`, which is `__strncmp_StdCBase_wrapper+0x11`. The report
+says both:
+
+```
+v=0e cpl=3 IP=0x1acf8c1 = usbromstartup.resource .text+0x7f1
+    (by its bytes, +0x50 from where the load model computed it)
+    = __strncmp_StdCBase_wrapper+0x11
+```
+
+Two things are worth keeping from that.
+
+**The wrong answer was plausible.** `GetDataStreamFromFormat` is a format helper,
+the fault is a null library base, and a format helper calling into a library is
+exactly what one would expect. It was also 0x50 into a neighbouring function.
+The comment in `locate` warned about this for the kickstart -- "one attempt was
+0x80 out, which named the wrong function with complete confidence" -- and the new
+code walked into the same hole for package modules.
+
+**A global byte search cannot replace the arithmetic here.** The packed image
+holds *unrelocated* bytes. The unique part of a library-base stub is the absolute
+address of the base, which the loader fills in during relocation, and what
+remains -- `movq (%r11), %r11; jmpq *-<lvo>(%r11)` -- occurs once per module that
+calls into the same library, five times in the base package alone. So the
+arithmetic locates the neighbourhood and the bytes settle the offset within it.
+
+What is not done: finding the 0x50. It is a constant somewhere in the per-image
+descriptor accounting -- a section the loader carries and this does not, or an
+alignment step in the wrong order. Worth finding, because the correction window
+is 64 KB and a model that drifts further than that would stop correcting
+silently. The report line makes the drift visible in the meantime.
+
 ### 48. WORK — a module that uses one stdc function opens stdc.library at init
 
 With point 41 fixed the boot task runs and reports for itself:
