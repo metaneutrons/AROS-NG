@@ -1,30 +1,25 @@
 # Handoff
 
-Written 25 August 2026, on `feat/cmake-build-propagation` (225 commits ahead of
+Written 25 August 2026, on `feat/cmake-build-propagation` (227 commits ahead of
 `main`, working tree clean). This is the short document: enough to start a fresh
 session without re-deriving the environment. `OPEN-POINTS.md` carries the
 findings themselves and is the authority wherever the two disagree.
 
 ## Where the boot stands
 
-The PC target boots the bootstrap, loads the kickstart, brings up exec and the
-kernel resource, and dies in `InitResident`:
+The PC target boots the bootstrap, loads the kickstart and all five currently
+built packages, brings up exec and the kernel resource, and now survives the
+full 20-second non-interactive test without an exception. The point 48 crash in
+`usbromstartup.resource` is fixed: the transpiler preserves Make's
+`usbromstartup_LDFLAGS`, the resource links `libstdc.static.a`, and
+`poseidon.library` remains on the shared runtime.
 
-```
-Software Failure!  Error 0x80000003 - Illegal address access
-Module usbromstartup.resource Segment 2 .text
-Function __strncmp_StdCBase_wrapper + 0x11
-Stack: Exec_17_InitResident <- Exec_12_InitCode <- kernel_cstart <- start64
-```
-
-That is point 48. `usbromstartup.resource` is built by `%build_module_simple`,
-which generates no InitLib, so the module's `StdCBase` is never opened and the
-first stdc call jumps through a null base. Ten modules still carry
-`__aros_set_LIBS___aros_libset_StdCBase`; the fix pattern that worked three times
-is `USER_LDFLAGS := -static -nostdc` in the module's mmakefile, which selects the
-static C runtime instead of the shared library (`config/elf-specs.in:19` --
-`-nostdc`, not `-static`, is what does it). For Poseidon that flag is
-file-global and would also hit `poseidon.library`, which is why it is still open.
+The boot is not clean yet. It reports eight failed opens of `stdc.library` and
+six of `acpica.library`. `stdc.library` correctly is not an early package
+member; the remaining early modules that use it still need auditing under
+point 48. `acpica.library` belongs to `aros-bsp.pkg`, but that package has not
+been produced: `kernel-bsp-pc-x86_64-file` currently stops while compiling
+`parallel.hidd`, whose native target lacks `hidd/unixio.h`.
 
 Memory is sound as of today: `SysBase->MemList` walks four `NT_MEMORY` headers,
 ROM last at priority -128, terminating at `&lh_Tail`. Point 27g has the story of
@@ -38,6 +33,13 @@ cmake --preset pc-x86_64
 
 ```bash
 ninja -C build/pc-x86_64 -j 8 SYS/boot/pc/kernel
+```
+
+Build the packages whose members changed as well; the test command does not do
+that automatically. For the current USB change:
+
+```bash
+ninja -C build/pc-x86_64 -j 8 kernel-package-usb-file
 ```
 
 ```bash
@@ -140,9 +142,12 @@ or by bytes with the drift from the arithmetic named.
 
 Boot-critical, in the order that unblocks the most:
 
-- **48** -- `usbromstartup.resource`, the current fault. Ten modules still open
-  stdc at init. The Poseidon mmakefile needs the flag scoped so it misses
-  `poseidon.library`.
+- **48** -- the `usbromstartup.resource` fault is resolved and the boot no
+  longer throws an exception. Eight early `stdc.library` opens remain. Audit
+  their actual C/POSIX dependencies before applying `-nostdc` more broadly.
+- **BSP package** -- fix the native `parallel.hidd` include graph
+  (`hidd/unixio.h` missing), then build `kernel-bsp-pc-x86_64-file` so
+  `acpica.library` is present for the next measured boot.
 - **50** -- 25 of 366 modules disagree between our genmodule and the reference on
   `FUNCTIONS_COUNT`. The configure step now names them all. Where ours is
   smaller (`parallel` and `serial` are devices, so `firstlvo` is 7; `bz2`,

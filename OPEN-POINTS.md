@@ -285,6 +285,35 @@ what pointed at the descriptor rather than at the section packing.
 
 ### 48. WORK — a module that uses one stdc function opens stdc.library at init
 
+**The `usbromstartup.resource` crash is resolved.** The Make template already
+has the required narrow scope: `%build_module_simple` appends
+`$(<modname>_LDFLAGS)` to that module's link only. The transpiler now preserves
+that variable and `rom/usb/poseidon/mmakefile.src` sets
+`usbromstartup_LDFLAGS := -nostdc`. Consequently:
+
+  * `usbromstartup.resource` defines `strncmp` itself and contains neither
+    `StdCBase` nor a `__strncmp_StdCBase_wrapper`;
+  * `poseidon.library` still uses the ordinary shared stdc client archive;
+  * the generated spec-switch manifest contains `nostdc` for
+    `kernel-usb-usbromstartup` only; and
+  * after rebuilding `poseidon.pkg`, a 20-second QEMU run has no exception and
+    no double fault. The previous `.text+0x7f1` fault is gone.
+
+There was one packaging trap in that measurement. Building the module and the
+kernel does not refresh packages, and `aros test --packages` consumes whatever
+`.pkg` files already exist without building them. The first run therefore
+reproduced the old fault from a two-day-old staged `usbromstartup.resource`.
+`ninja -C build/pc-x86_64 kernel-package-usb-file` repacked the resource (8312
+bytes instead of 13608), after which the fault disappeared.
+
+Point 48 as a whole remains open: the clean run reports eight failed early
+opens of `stdc.library` and six of `acpica.library`. The latter are partly a
+package-build issue: `aros-bsp.pkg`, which owns `acpica.library`, is absent, and
+building `kernel-bsp-pc-x86_64-file` currently stops in
+`arch/i386-pc/drivers/parallel.hidd/ParallelUnitClass.c` because
+`hidd/unixio.h` is not in that native target's include graph. That is separate
+from the scoped USB link fix.
+
 With point 41 fixed the boot task runs and reports for itself:
 
 ```
