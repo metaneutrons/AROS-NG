@@ -632,4 +632,10 @@ include("${CMAKE_SOURCE_DIR}/cmake/RootTargets.cmake")
 #    transpiled target graph.
 include("${CMAKE_SOURCE_DIR}/cmake/RaspberryPi.cmake")
 
+# Our genmodule's libdefs are what a compile reaches, because LC_LIBDEFS_FILE is
+# a quoted include. Report where they disagree with the reference generator's
+# rather than let a wrong FUNCTIONS_COUNT surface as a page fault.
+# OPEN-POINTS 50.
+_aros_report_disagreeing_libdefs()
+
 message(STATUS "✅ AROS-NG (v0.1.0) Configuration Complete.")

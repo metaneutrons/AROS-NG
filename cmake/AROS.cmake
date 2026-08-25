@@ -980,6 +980,124 @@ function(_aros_materialize_deferred_header hash)
         "AROS_DEFERRED_HEADER_${hash}_MATERIALIZED" TRUE)
 endfunction()
 
+# _aros_report_disagreeing_libdefs()
+#
+# Compares the `FUNCTIONS_COUNT` our Rust genmodule writes under
+# `${CMAKE_BINARY_DIR}/gen` against the one `hosttools/genmodule` writes under
+# `genmodule/`, and reports every module where the two disagree.
+#
+# Both files exist for most modules, and both are current: ours is written during
+# configure, the reference one by a Ninja rule. They are not interchangeable
+# though, and ours is the one a compile reaches, because `LC_LIBDEFS_FILE` is a
+# quoted include and gen/ can sit on the -iquote path ahead of the genmodule
+# directories -- aros_bind_flexcat_source_consumers() puts it there with BEFORE,
+# for the sound reason that a generated header has to beat a same-named SDK one.
+#
+# FUNCTIONS_COUNT is singled out because of what it does: it sizes the jump table
+# below a library base, and the generated start code allocates from it while
+# MakeFunctions fills the table to its own terminator. Too small a count and
+# MakeFunctions writes below the allocation. That is not a hypothetical -- with
+# kernel.resource sized from 59 instead of 71 it wrote over the ROM MemHeader in
+# SysBase->MemList, and FindMem walked into the wreckage. OPEN-POINTS 27g and 50.
+#
+# A disagreement means one of the two generators is wrong about a module, and the
+# build silently takes ours. Reporting it here puts that in front of whoever
+# configures, instead of leaving it to be found from a page fault.
+function(_aros_report_disagreeing_libdefs)
+    file(GLOB_RECURSE _ours "${CMAKE_BINARY_DIR}/gen/*_libdefs.h")
+    if(NOT _ours)
+        return()
+    endif()
+    file(GLOB_RECURSE _reference "${CMAKE_BINARY_DIR}/genmodule/*_libdefs.h")
+    if(NOT _reference)
+        return()
+    endif()
+
+    # Index the reference files by name; a name occurs once per module.
+    set(_reference_names "")
+    foreach(_file IN LISTS _reference)
+        get_filename_component(_name "${_file}" NAME)
+        list(APPEND _reference_names "${_name}")
+        set(_reference_path_${_name} "${_file}")
+    endforeach()
+
+    set(_disagreeing "")
+    set(_compared 0)
+    foreach(_file IN LISTS _ours)
+        get_filename_component(_name "${_file}" NAME)
+        if(NOT _name IN_LIST _reference_names)
+            continue()
+        endif()
+        math(EXPR _compared "${_compared} + 1")
+        _aros_libdefs_functions_count("${_file}" _mine)
+        _aros_libdefs_functions_count("${_reference_path_${_name}}" _theirs)
+        if(NOT "${_mine}" STREQUAL "${_theirs}")
+            list(APPEND _disagreeing "${_name} (ours ${_mine}, reference ${_theirs})")
+        endif()
+    endforeach()
+
+    list(LENGTH _disagreeing _count)
+    if(_count GREATER 0)
+        string(REPLACE ";" "\n    " _detail "${_disagreeing}")
+        message(WARNING
+            "${_count} of ${_compared} modules disagree on FUNCTIONS_COUNT "
+            "between our genmodule and the reference. The build compiles "
+            "against ours, and the value sizes a library base's jump table, so "
+            "a value below the reference's means MakeFunctions writes past the "
+            "allocation. OPEN-POINTS 50.\n    ${_detail}")
+    endif()
+endfunction()
+
+# Reads `#define FUNCTIONS_COUNT <n>` out of a libdefs header.
+function(_aros_libdefs_functions_count file out_var)
+    set(${out_var} "" PARENT_SCOPE)
+    if(NOT EXISTS "${file}")
+        return()
+    endif()
+    file(STRINGS "${file}" _line REGEX "^#define[ \t]+FUNCTIONS_COUNT[ \t]+[0-9]+" LIMIT_COUNT 1)
+    if(_line)
+        string(REGEX REPLACE "^#define[ \t]+FUNCTIONS_COUNT[ \t]+([0-9]+).*$" "\\1" _value "${_line}")
+        set(${out_var} "${_value}" PARENT_SCOPE)
+    endif()
+endfunction()
+
+# _aros_add_genmodule_quote_dirs(<target> <dir>...)
+#
+# Puts genmodule's own output directories on the quoted-include search path,
+# ahead of everything aros_apply_include_dirs() contributes.
+#
+# The module's libdefs is reached as `#include LC_LIBDEFS_FILE`, which expands to
+# a quoted name, and a quoted include searches every -iquote path before any -I.
+# The genmodule directories were only ever added with target_include_directories,
+# i.e. as -I, while `${CMAKE_BINARY_DIR}/gen/<module>` goes on as -iquote. So any
+# same-named header sitting in the gen/ tree wins over the file the build
+# actually generates, no matter that the -I order says otherwise.
+#
+# That is not a theoretical ordering nicety. 338 of the 340 modules whose libdefs
+# existed in both trees were compiling against a stale gen/ copy, 307 of them
+# with a different FUNCTIONS_COUNT -- which sizes a library base's jump table, so
+# MakeFunctions wrote past the allocation. For kernel.resource that landed on the
+# ROM MemHeader in SysBase->MemList. OPEN-POINTS 27g and 50.
+#
+# Only the genmodule directories are added here. The SDK's posixc and stdc paths
+# accompany them in the -I lists but are deliberately left off: promoting those
+# to -iquote would move them ahead of the architecture directories, and
+# aros_apply_include_dirs() records what that breaks.
+function(_aros_add_genmodule_quote_dirs target)
+    if(NOT TARGET "${target}")
+        return()
+    endif()
+    set(_quotes "")
+    foreach(_dir IN LISTS ARGN)
+        if(_dir)
+            list(APPEND _quotes "-iquote${_dir}")
+        endif()
+    endforeach()
+    if(_quotes)
+        target_compile_options("${target}" BEFORE PRIVATE ${_quotes})
+    endif()
+endfunction()
+
 # Adds dependencies for literal headers included by a genmodule config and by
 # their already-staged in-tree headers.  The config text is copied into
 # generated prototypes and link stubs, so CMake's compiler dependency scanner
@@ -3644,6 +3762,8 @@ function(aros_attach_module_scaffolding target prefix directory module)
     endif()
     target_include_directories("${target}" BEFORE PRIVATE
         "${${prefix}_INCLUDE_DIR}" "${${prefix}_GEN_DIR}")
+    _aros_add_genmodule_quote_dirs("${target}"
+        "${${prefix}_INCLUDE_DIR}" "${${prefix}_GEN_DIR}")
     if(${prefix}_RUNTIME_DEFINES)
         target_compile_definitions("${target}" PRIVATE
             ${${prefix}_RUNTIME_DEFINES})
@@ -3722,6 +3842,8 @@ function(aros_add_module_abi)
         "${_gm_INCLUDE_DIR}" "${_gm_GEN_DIR}"
         "${AROS_SDK_INCLUDE_DIR}/aros/posixc"
         "${AROS_SDK_INCLUDE_DIR}/aros/stdc")
+    _aros_add_genmodule_quote_dirs("${ARG_MMAKE_ID}-linklib"
+        "${_gm_INCLUDE_DIR}" "${_gm_GEN_DIR}")
     add_dependencies("${ARG_MMAKE_ID}-linklib"
         "${_gm_INCLUDES_TARGET}" "${_gm_FD_TARGET}")
     _aros_add_genmodule_config_header_dependencies(
@@ -3810,6 +3932,8 @@ function(aros_add_library)
             "${_gm_INCLUDE_DIR}" "${_gm_GEN_DIR}"
             "${AROS_SDK_INCLUDE_DIR}/aros/posixc"
             "${AROS_SDK_INCLUDE_DIR}/aros/stdc")
+        _aros_add_genmodule_quote_dirs("${ARG_MMAKE_ID}-linklib"
+            "${_gm_INCLUDE_DIR}" "${_gm_GEN_DIR}")
         _aros_add_genmodule_config_header_dependencies(
             "${ARG_MMAKE_ID}-linklib"
             "${ARG_DIRECTORY}/${ARG_TARGET}.conf")
@@ -3855,6 +3979,8 @@ function(aros_add_library)
             "${_gm_INCLUDE_DIR}" "${_gm_GEN_DIR}"
             "${AROS_SDK_INCLUDE_DIR}/aros/posixc"
             "${AROS_SDK_INCLUDE_DIR}/aros/stdc")
+        _aros_add_genmodule_quote_dirs("${ARG_MMAKE_ID}"
+            "${_gm_INCLUDE_DIR}" "${_gm_GEN_DIR}")
         set_target_properties("${ARG_MMAKE_ID}" PROPERTIES
             OUTPUT_NAME "${_output_name}"
             RUNTIME_OUTPUT_DIRECTORY "${_install_dir}")
@@ -3934,6 +4060,9 @@ function(aros_add_library)
                 "${_gm_INCLUDE_DIR}" "${_gm_GEN_DIR}"
                 "${AROS_SDK_INCLUDE_DIR}/aros/posixc"
                 "${AROS_SDK_INCLUDE_DIR}/aros/stdc")
+            _aros_add_genmodule_quote_dirs(
+                "${ARG_MMAKE_ID}-linklib-objects"
+                "${_gm_INCLUDE_DIR}" "${_gm_GEN_DIR}")
             target_compile_definitions(
                 "${ARG_MMAKE_ID}-linklib-objects" PRIVATE
                 LC_LIBDEFS_FILE="${ARG_TARGET}_libdefs.h"
@@ -4055,6 +4184,8 @@ function(aros_add_library)
                 "${_gm_INCLUDE_DIR}" "${_gm_GEN_DIR}"
                 "${AROS_SDK_INCLUDE_DIR}/aros/posixc"
                 "${AROS_SDK_INCLUDE_DIR}/aros/stdc")
+            _aros_add_genmodule_quote_dirs("${_client_target}"
+                "${_gm_INCLUDE_DIR}" "${_gm_GEN_DIR}")
             target_compile_definitions("${_client_target}" PRIVATE
                 LC_LIBDEFS_FILE="${ARG_TARGET}_libdefs.h"
                 ${_gm_LINKLIB_DEFINES})
@@ -4191,6 +4322,8 @@ function(aros_add_library)
                 "${_gm_INCLUDE_DIR}" "${_gm_GEN_DIR}"
                 "${AROS_SDK_INCLUDE_DIR}/aros/posixc"
                 "${AROS_SDK_INCLUDE_DIR}/aros/stdc")
+            _aros_add_genmodule_quote_dirs(${ARG_MMAKE_ID}
+                "${_gm_INCLUDE_DIR}" "${_gm_GEN_DIR}")
             _aros_add_genmodule_config_header_dependencies(
                 "${ARG_MMAKE_ID}"
                 "${ARG_DIRECTORY}/${ARG_TARGET}.conf")
@@ -4898,6 +5031,8 @@ function(aros_add_linklib)
                 ${_genmodule_include_dirs}
                 "${AROS_SDK_INCLUDE_DIR}/aros/posixc"
                 "${AROS_SDK_INCLUDE_DIR}/aros/stdc")
+            _aros_add_genmodule_quote_dirs(${ARG_MMAKE_ID}
+                ${_genmodule_include_dirs})
             add_dependencies(${ARG_MMAKE_ID} ${_genmodule_targets})
             foreach(_config IN LISTS _genmodule_configs)
                 _aros_add_genmodule_config_header_dependencies(
