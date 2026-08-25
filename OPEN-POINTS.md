@@ -202,11 +202,36 @@ remains -- `movq (%r11), %r11; jmpq *-<lvo>(%r11)` -- occurs once per module tha
 calls into the same library, five times in the base package alone. So the
 arithmetic locates the neighbourhood and the bytes settle the offset within it.
 
-What is not done: finding the 0x50. It is a constant somewhere in the per-image
-descriptor accounting -- a section the loader carries and this does not, or an
-alignment step in the wrong order. Worth finding, because the correction window
-is 64 KB and a model that drifts further than that would stop correcting
-silently. The report line makes the drift visible in the meantime.
+**Measured, and it accumulates.** A diagnostic that rebuilds the same packing
+and compares it against every traced instruction whose bytes are unique in the
+image gives the drift per module:
+
+```
+Kickstart ELF     span 0x000000..0x03ea56   drift 0
+gameport.device   span 0x04f39d..0x052710   drift 0
+keyboard.device   span 0x052710..0x055a10   drift 0
+mouse.hidd        span 0x1025ee..0x1052eb   drift 0
+oop.library       span 0x1b8807..0x1bf884   drift -48
+debug.library     span 0x1d8499..0x1dc426   drift -64
+usbromstartup                               drift -80
+```
+
+So it is not a constant: it is zero for the first modules and grows in steps of
+16 bytes, which means some modules are credited 16 bytes they do not use. The
+descriptor arithmetic itself checks out by hand -- `ELF_ModuleInfo_t` is 40 bytes
+on ELF64 (8+8+2+2+4+8+8 with its stated padding), the ELF header is 64, and the
+name is `strlen + 1` as `copy_data` takes it -- so the 16 is more likely a
+section this model carries and the loader does not, or one it aligns differently.
+
+That also bounds the risk: with a 64 KB correction window and 16 bytes per
+module, the correction holds for something like 4000 modules, and there are 50.
+The report line makes each drift visible, so a model that grows worse says so
+rather than quietly stopping.
+
+What is not done: finding the 16 bytes. Worth doing, because a model that is
+right is worth more than a correction that hides a wrong one, and because the
+next fault in a package module will be reported with a drift figure that nobody
+can currently explain.
 
 ### 48. WORK — a module that uses one stdc function opens stdc.library at init
 
