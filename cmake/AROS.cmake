@@ -446,7 +446,7 @@ file(REMOVE "${_AROS_DEFERRED_HEADER_REPORT}")
 
 # aros_copy_includes([NAME <mmake>] DEST <subdir> SOURCE <src-relative dir>
 #                    PATTERNS <globs...> [EXCLUDES <literal names...>]
-#                    [FLATTEN])
+#                    [FLATTEN] [ALLOW_FOREIGN_ARCH])
 #
 # FLATTEN mirrors the macro's $(notdir ...) behaviour, which applies when the
 # declaration passes dir=. Without it the listed relative path is preserved.
@@ -537,7 +537,7 @@ function(aros_arch_path_matches out_var path)
 endfunction()
 
 function(aros_copy_includes)
-    set(options FLATTEN)
+    set(options FLATTEN ALLOW_FOREIGN_ARCH)
     set(oneValueArgs NAME DEST SOURCE)
     set(multiValueArgs PATTERNS EXCLUDES)
     cmake_parse_arguments(CI "${options}" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
@@ -549,7 +549,7 @@ function(aros_copy_includes)
     # Headers from another architecture must not reach the SDK: they land under
     # the same name as the right ones and whichever is copied last wins.
     aros_arch_path_matches(_arch_ok "${CI_SOURCE}")
-    if(NOT _arch_ok)
+    if(NOT _arch_ok AND NOT CI_ALLOW_FOREIGN_ARCH)
         get_property(_skipped GLOBAL PROPERTY AROS_STAGING_FOREIGN_ARCH)
         list(APPEND _skipped "${CI_SOURCE} -> ${CI_DEST}")
         set_property(GLOBAL PROPERTY AROS_STAGING_FOREIGN_ARCH "${_skipped}")
