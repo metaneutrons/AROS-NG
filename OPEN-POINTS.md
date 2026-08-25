@@ -172,48 +172,71 @@ Failed build steps 1083 -> 1078, generated-file rules 21 -> 20, missing sources
 94 -> 93, `aros-base.pkg` built with all 26 members. The boot then moved on to
 the next dangling symbol, which is point 38.
 
-### 50. RISK — stale generated headers in `gen/` shadow the current ones
+### 50. WORK — two generators write libdefs, and ours is the one that counts
 
-`LC_LIBDEFS_FILE` is a quoted include, so `-iquote` beats every `-I` on the
-compile line. On the kernel's line the first `-iquote` is
-`build/<target>/gen/rom/kernel`, ahead of the `genmodule/.../gen` directory that
-holds the file the build actually generates. Whatever sits in `gen/` therefore
-wins.
+Most modules have two `<mod>_libdefs.h`. Ours goes to `${CMAKE_BINARY_DIR}/gen`
+during configure, from the Rust genmodule's `--scan-dir` pass; the reference one
+goes to `genmodule/<module>/gen` from a Ninja rule running `hosttools/genmodule`.
 
-What sits there is old. Measured on the current tree:
+The compile reaches ours. `LC_LIBDEFS_FILE` expands to a quoted name, a quoted
+include searches every `-iquote` before any `-I`, and `gen/<module>` is on the
+quoted path while the genmodule directories were only ever added as `-I`. The
+`-I` order suggests the opposite, which is what made this hard to see.
+
+**Correcting this point's first diagnosis.** It read the gen/ files as residue
+from an earlier arrangement, on the strength of their two-day-old timestamps and
+their absence from `build.ninja`. Both observations were real and the conclusion
+was wrong. They are absent from `build.ninja` because they are written at
+configure time, not built; their timestamps were old because the writer only
+rewrites a file whose bytes changed. Deleting them, as this point first
+suggested, achieves nothing: the next configure writes them back.
+
+What was actually wrong was the value in them. Measured before the fix, of the
+340 modules with a file in both trees, 338 resolved to ours, and 307 of those
+carried a different `FUNCTIONS_COUNT` -- the number that sizes a library base's
+jump table. For kernel.resource ours said 59 where the reference said 71, and
+point 27g follows that to the corrupted ROM MemHeader.
+
+Three changes:
+
+1. `functions_count()` takes the highest LVO rather than the function count, so
+   `.skip` reservations are counted. 312 disagreements out of 346 became 21.
+2. `first_lvo()` gained `mcc`, which belongs with `mui` and `mcp` at 6
+   (`config.c:521`). 20 Zune classes declared `modtype=mcc` had been falling
+   through to the library default of 5. 21 became 6.
+3. `_aros_add_genmodule_quote_dirs()` puts the genmodule directories on the
+   quoted path too, so the reference file wins wherever nothing else claims
+   precedence. 338 resolving to gen/ became 6 -- the remainder are modules where
+   `aros_bind_flexcat_source_consumers()` adds its generated directory with
+   BEFORE, which it does for a good reason and which no ordering here can
+   outrank.
+
+`_aros_report_disagreeing_libdefs()` now compares the two FUNCTIONS_COUNT values
+at configure time and names every module where they differ. It reports 25 of 366.
+That is the point of it: the disagreement is stated where someone will see it,
+instead of surfacing as a page fault weeks later.
+
+**The 25 that remain.** They go both ways, so not all of them are ours to fix:
 
 ```
-_libdefs.h files under gen/                     394
-of those, a current counterpart under genmodule/ 366
-newer than 24 August                              0
-libdefs written by our Rust genmodule in this build  0
-compile lines carrying an -iquote into gen/     13744
+hpet          ours 0    reference 4
+parallel      ours 4    reference 6      device is 7, so firstlvo-1 is 6
+serial        ours 4    reference 6
+bz2           ours 4    reference 37     we see no function list at all
+expat         ours 4    reference 88
+freetype2     ours 4    reference 173
+popupmenu     ours 4    reference 25
+bluetooth     ours 85   reference 7
+debug         ours 12   reference 0
+arosx         ours 7    reference 6
 ```
 
-None of the 394 is a ninja target, so nothing refreshes them. They are residue
-from an earlier arrangement in which our Rust genmodule wrote there; the build
-now takes libdefs from `hosttools/genmodule` into the `genmodule/` tree. The 366
-with a counterpart are each shadowing a current file.
-
-This is not hypothetical: it is how point 27g's memory corruption reached the
-boot. `gen/rom/kernel/kernel_libdefs.h`, written 23 August, said
-`FUNCTIONS_COUNT 59`; the file the build generates says 71. Moving the stale one
-aside was enough to make the MemList walk clean.
-
-Two things to settle, in this order:
-
-1. Whether `gen/` should be on the include path for these headers at all. 13744
-   compile lines carry an `-iquote` into it, so it is structural, not incidental.
-2. The 28 orphans with no counterpart. `clocksource_libdefs.h` is one, and
-   `clocksource_libdefs` appears zero times in `build.ninja` while four
-   clocksource targets exist -- so a compile may be *relying* on a file nothing
-   generates. That would be a hole in the build rather than mere residue, and it
-   has to be checked before anything is deleted.
-
-Deleting the residue is not the fix on its own. A clean build directory would
-not have had the stale file, so anyone building fresh does not see this, and a
-fix has to stop `gen/` from taking precedence rather than depend on the directory
-happening to be empty.
+Two shapes. Where ours is 4 against a large reference value, our scan is not
+finding the module's function list -- most of these live in directories holding
+several modules, so the likely cause is the config-to-module binding rather than
+the counting. Where ours is larger, the base is over-allocated, which wastes
+space but cannot corrupt anything. Only the first shape can under-allocate, and
+`parallel` and `serial` are the clearest: both are devices, where `firstlvo` is 7.
 
 ### 49. RESOLVED — the load model was one pointer width out
 
