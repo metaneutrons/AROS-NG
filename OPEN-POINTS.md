@@ -172,6 +172,49 @@ Failed build steps 1083 -> 1078, generated-file rules 21 -> 20, missing sources
 94 -> 93, `aros-base.pkg` built with all 26 members. The boot then moved on to
 the next dangling symbol, which is point 38.
 
+### 50. RISK — stale generated headers in `gen/` shadow the current ones
+
+`LC_LIBDEFS_FILE` is a quoted include, so `-iquote` beats every `-I` on the
+compile line. On the kernel's line the first `-iquote` is
+`build/<target>/gen/rom/kernel`, ahead of the `genmodule/.../gen` directory that
+holds the file the build actually generates. Whatever sits in `gen/` therefore
+wins.
+
+What sits there is old. Measured on the current tree:
+
+```
+_libdefs.h files under gen/                     394
+of those, a current counterpart under genmodule/ 366
+newer than 24 August                              0
+libdefs written by our Rust genmodule in this build  0
+compile lines carrying an -iquote into gen/     13744
+```
+
+None of the 394 is a ninja target, so nothing refreshes them. They are residue
+from an earlier arrangement in which our Rust genmodule wrote there; the build
+now takes libdefs from `hosttools/genmodule` into the `genmodule/` tree. The 366
+with a counterpart are each shadowing a current file.
+
+This is not hypothetical: it is how point 27g's memory corruption reached the
+boot. `gen/rom/kernel/kernel_libdefs.h`, written 23 August, said
+`FUNCTIONS_COUNT 59`; the file the build generates says 71. Moving the stale one
+aside was enough to make the MemList walk clean.
+
+Two things to settle, in this order:
+
+1. Whether `gen/` should be on the include path for these headers at all. 13744
+   compile lines carry an `-iquote` into it, so it is structural, not incidental.
+2. The 28 orphans with no counterpart. `clocksource_libdefs.h` is one, and
+   `clocksource_libdefs` appears zero times in `build.ninja` while four
+   clocksource targets exist -- so a compile may be *relying* on a file nothing
+   generates. That would be a hole in the build rather than mere residue, and it
+   has to be checked before anything is deleted.
+
+Deleting the residue is not the fix on its own. A clean build directory would
+not have had the stale file, so anyone building fresh does not see this, and a
+fix has to stop `gen/` from taking precedence rather than depend on the directory
+happening to be empty.
+
 ### 49. RESOLVED — the load model was one pointer width out
 
 The model now places all 50 modules exactly where the loader does, and the boot
@@ -1171,14 +1214,65 @@ fact, so `FindMem` walks into wreckage.
 Two corrections to what this point said before: the successor was never wrong,
 and `Enqueue` was never the writer of a bad value.
 
-What is not yet measured is which side of the collision is in the wrong. The ROM
-header sits at `SysBase + 0xf40` and was handed out by `tlsf_malloc` from the
-first MemHeader's pool, so either the allocator gave away memory already spoken
-for by ExecBase's jump table, or `MakeFunctions` writes past the end of the
-region it was given. `rdi` at those hits still reads `SysBase`, but the hits are
-0xb8 into the function, so that register is not proof of the argument. The next
-measurement is the extent: how far above `SysBase` the jump table legitimately
-reaches, against where the pool believes its free memory starts.
+**The extent, measured -- and the cause.** `MakeFunctions` documents `target` as
+"the highest byte +1 of the jumptable", and `__AROS_GETJUMPVEC(lib,n)` is
+`&((struct JumpVec *)lib)[-n]`, so the table grows *downwards* from the base. At
+the write, `r12` held -71 and `r14` held `0x10039e8`, and `0x10039e8 - 71*8`
+is exactly `0x10037b0`. So the base being built is `0x10039e8` and the ROM
+MemHeader sits under it, at vector 71. `rdi` reading `SysBase` was the library
+function's own base argument, not `target`.
+
+The stack names the base: `Kernel_Init+0x43`, so `0x10039e8` is kernel.resource
+-- consistent with the node there reading `ln_Type` 8 (NT_RESOURCE) and `ln_Pri`
+127. `AllocKernelBase` is sound; it allocates
+`FUNCTIONS_COUNT * LIB_VECTSIZE + sizeof(struct KernelBase)` and then steps the
+pointer past the table, so vector 71 would be inside the allocation if the count
+were right.
+
+It is not:
+
+```
+kernel.conf function list   59 functions, 7 `.skip` lines reserving 12 LVOs
+highest LVO                 71
+Kernel_FuncTable            71 entries before the -1 terminator (symbol size 576)
+FUNCTIONS_COUNT             59
+```
+
+`MakeFunctions` walks the table to its terminator, so it writes 71 slots into
+space allocated for 59: an overrun of 12 slots, 0x60 bytes, below `0x1003810`,
+which puts vector 71 at `0x10037b0`. Every number matches the observation.
+
+The rule the reference uses is the highest LVO, taken from the last list entry
+(`writeinclibdefs.c:20`), because a `.skip N` reserves vectors without declaring
+a function. Our genmodule used `functions.len()`. Fixed, with tests.
+
+**Two things had to go wrong together.** The build's authoritative
+`kernel_libdefs.h` comes from `hosttools/genmodule`, the C tool, into
+`genmodule/rom/kernel/kernel_kernel/gen/`, and it says 71. The file our Rust
+genmodule left in `gen/rom/kernel/` on 23 August says 59. Since
+`LC_LIBDEFS_FILE` is `"kernel_libdefs.h"` -- a quoted include -- `-iquote` wins
+over `-I`, and the first `-iquote` on the kernel's compile line is
+`gen/rom/kernel`. The stale file shadowed the correct one. It is not a ninja
+target, so nothing ever refreshed it.
+
+Moving it aside and rebuilding, the MemList walks clean:
+
+```
+0x1000050  type=10  pri=0
+0x100050   type=10  pri=-5
+0x1050     type=10  pri=-6
+0x10037b0  type=10  pri=-128     <- the ROM header, intact
+terminates at 0x1002ae8 == &lh_Tail
+```
+
+Four headers, all NT_MEMORY, ROM last at priority -128, and the list ends where
+it should. `FindMem` runs through. The boot now reaches `Exec_12_InitCode` ->
+`Exec_17_InitResident` and faults in usbromstartup.resource, which is point 48's
+`%build_module_simple` case and was the visible blocker before this too. So the
+MemList damage was latent rather than the current stopping point; it would have
+bitten as soon as anything walked past the third header.
+
+The shadowing is a defect in its own right and is now point 50.
 
 The 147 repeats and the eventual double fault are downstream: the panic path
 calls `TypeOfMem`, which calls `FindMem` again.
