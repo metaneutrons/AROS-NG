@@ -164,6 +164,7 @@ execute_process(
     COMMAND "${TRANSPILER_BIN}"
             "--source-dir" "${CMAKE_SOURCE_DIR}"
             "--output" "${GENERATED_TARGETS_CMAKE}"
+            "--ports-dir" "${AROS_PORTS_DIR}"
             "--cpu" "${AROS_TARGET_CPU}"
             "--platform" "${AROS_TARGET_PLATFORM}"
             "--family" "${AROS_TARGET_FAMILY}"
@@ -179,6 +180,55 @@ if(NOT TRANSPILER_RES EQUAL 0 OR NOT EXISTS "${GENERATED_TARGETS_CMAKE}")
     message(FATAL_ERROR
         "AROS-NG transpiler failed (${TRANSPILER_RES}) and did not produce "
         "${GENERATED_TARGETS_CMAKE}.\n${_aros_transpiler_error}")
+endif()
+
+# A Make wildcard below PORTSDIR cannot be turned into compilation units until
+# its archive has been unpacked. The first cold transpiler pass writes the exact
+# owning fetch declarations to a sidecar. Materialise only those inventories,
+# then replace the partial graph with a second pass before it is ever included.
+set(_aros_source_inventory_manifest
+    "${CMAKE_BINARY_DIR}/generated_targets.source-inventory.cmake")
+include("${_aros_source_inventory_manifest}")
+if(AROS_SOURCE_INVENTORY_FETCH_COUNT GREATER 0)
+    math(EXPR _aros_source_inventory_last
+        "${AROS_SOURCE_INVENTORY_FETCH_COUNT} - 1")
+    foreach(_index RANGE 0 ${_aros_source_inventory_last})
+        aros_fetch_source_inventory(
+            NAME "${AROS_SOURCE_INVENTORY_FETCH_${_index}_NAME}"
+            ARCHIVE "${AROS_SOURCE_INVENTORY_FETCH_${_index}_ARCHIVE}"
+            SUFFIXES "${AROS_SOURCE_INVENTORY_FETCH_${_index}_SUFFIXES}"
+            ORIGINS "${AROS_SOURCE_INVENTORY_FETCH_${_index}_ORIGINS}"
+            LOCATION "${AROS_SOURCE_INVENTORY_FETCH_${_index}_LOCATION}"
+            DESTINATION "${AROS_SOURCE_INVENTORY_FETCH_${_index}_DESTINATION}"
+            BASE "${AROS_SOURCE_INVENTORY_FETCH_${_index}_BASE}"
+            PATCH_ORIGINS "${AROS_SOURCE_INVENTORY_FETCH_${_index}_PATCH_ORIGINS}"
+            PATCHES "${AROS_SOURCE_INVENTORY_FETCH_${_index}_PATCHES}")
+    endforeach()
+    execute_process(
+        COMMAND "${TRANSPILER_BIN}"
+                "--source-dir" "${CMAKE_SOURCE_DIR}"
+                "--output" "${GENERATED_TARGETS_CMAKE}"
+                "--ports-dir" "${AROS_PORTS_DIR}"
+                "--cpu" "${AROS_TARGET_CPU}"
+                "--platform" "${AROS_TARGET_PLATFORM}"
+                "--family" "${AROS_TARGET_FAMILY}"
+                "--variant" "${AROS_TARGET_VARIANT}"
+                "--toolchain" "${AROS_TOOLCHAIN}"
+                "--cpu32" "${AROS_TARGET_CPU32}"
+                "--use-mmu" "${_aros_transpiler_use_mmu}"
+                "--float-abi" "${GCC_CONFIG_FLOAT_ABI}"
+        RESULT_VARIABLE TRANSPILER_RES
+        ERROR_VARIABLE _aros_transpiler_error)
+    if(NOT TRANSPILER_RES EQUAL 0)
+        message(FATAL_ERROR
+            "AROS-NG transpiler failed after fetching source inventories "
+            "(${TRANSPILER_RES}).\n${_aros_transpiler_error}")
+    endif()
+    include("${_aros_source_inventory_manifest}")
+    if(AROS_SOURCE_INVENTORY_FETCH_COUNT GREATER 0)
+        message(FATAL_ERROR
+            "Fetched source inventories remain unresolved after the second transpiler pass")
+    endif()
 endif()
 
 # What produced the file above, recorded so the run can be repeated outside
@@ -197,6 +247,7 @@ endif()
 set(_aros_transpiler_record
     "--source-dir" "${CMAKE_SOURCE_DIR}"
     "--output" "${GENERATED_TARGETS_CMAKE}"
+    "--ports-dir" "${AROS_PORTS_DIR}"
     "--cpu" "${AROS_TARGET_CPU}"
     "--platform" "${AROS_TARGET_PLATFORM}"
     "--family" "${AROS_TARGET_FAMILY}"

@@ -7,6 +7,7 @@ include("${CMAKE_CURRENT_LIST_DIR}/GenmoduleTargets.cmake")
 include("${CMAKE_CURRENT_LIST_DIR}/GenmoduleHeaders.cmake")
 include("${CMAKE_CURRENT_LIST_DIR}/PythonGenerators.cmake")
 include("${CMAKE_CURRENT_LIST_DIR}/TransitiveHeaderBindings.cmake")
+include("${CMAKE_CURRENT_LIST_DIR}/SourceInventory.cmake")
 # aros_add_program calls aros_standalone_link_wanted, so the module that
 # defines it belongs here rather than only in the top-level CMakeLists: a
 # fixture that includes AROS.cmake on its own got "Unknown CMake command"
