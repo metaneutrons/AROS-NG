@@ -5,6 +5,17 @@ set(AROS_TARGET_CPU x86_64)
 set(AROS_TARGET_PLATFORM pc)
 include("${CMAKE_CURRENT_LIST_DIR}/../../AROS.cmake")
 
+get_directory_property(_compile_options COMPILE_OPTIONS)
+if(NOT "-fno-stack-protector" IN_LIST _compile_options)
+    message(FATAL_ERROR
+        "freestanding targets must override host Clang stack-protector defaults: "
+        "${_compile_options}")
+endif()
+if(AROS_LLD_BIN AND CMAKE_LINK_DEPENDS_USE_LINKER)
+    message(FATAL_ERROR
+        "direct lld rules must not receive compiler-driver dependency flags")
+endif()
+
 file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/consumer.c" "int consumer(void) { return 0; }\n")
 file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/provider.c" "int provider(void) { return 0; }\n")
 file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/late.c" "int late(void) { return 0; }\n")

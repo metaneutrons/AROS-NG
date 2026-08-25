@@ -247,6 +247,14 @@ else()
     find_program(AROS_LLD_BIN NAMES ld.lld)
 endif()
 if(AROS_LLD_BIN)
+    # CMake 3.27+ may ask a detected LLD to write link dependencies by adding
+    # the compiler-driver spelling `-Xlinker --dependency-file=...`. The rules
+    # below deliberately invoke aros-collect and ld.lld directly, so forwarding
+    # a driver-only option makes a Linux cold build fail at its first link.
+    # Object and archive dependencies are already explicit in the generated
+    # Ninja graph; disable only CMake's linker-assisted supplement.
+    set(CMAKE_LINK_DEPENDS_USE_LINKER FALSE)
+
     # Every link below runs through aros-collect rather than calling ld.lld
     # directly, and that is not a wrapper for convenience.
     #
@@ -378,6 +386,11 @@ string(TIMESTAMP AROS_BUILD_DATE_ISO "%Y-%m-%d")
 add_compile_options(
     -ffreestanding
     -fno-builtin
+    # Some Linux distributions configure Clang with stack-protector-strong as
+    # a driver default.  A freestanding target has no host runtime providing
+    # __stack_chk_fail, and inheriting the host default also makes identical
+    # presets produce different objects.  State the bare-metal contract.
+    -fno-stack-protector
     -fno-strict-aliasing
     -fno-common
     -Wall
