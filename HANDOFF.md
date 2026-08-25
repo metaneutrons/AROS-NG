@@ -24,8 +24,20 @@ The serial log reaches ACPI/APIC setup and the VESA no-information diagnostic.
 is the strongest automated assertion made by this check; it is not a claim that
 the desktop has opened.
 
-The equivalent fresh checks for ARM/AArch64 remain to be run. The Linux result
-is for the direct CMake build; the separate deterministic toolchain producer's
+The direct ARM and AArch64 Raspberry Pi package lanes now build cleanly too.
+The named full-package targets produce a 55-module ARM BSP, its 10-module
+BCM2708 supplement, and a 60-module AArch64 BSP; an immediate second build is a
+true Ninja no-op:
+
+```text
+build/arm-raspi/SYS/aros-arm-bsp.rom          55 modules, 2,982,740 payload bytes
+build/arm-raspi/SYS/aros-arm-bcm2708.rom      10 modules,   334,664 payload bytes
+build/rpi-aarch64/SYS/aros-aarch64-bsp.rom    60 modules, 3.8 MiB on disk
+```
+
+These are compile/link/package results, not Raspberry Pi boot claims. Hardware
+boot verification remains to be run. The Linux PC result is for the direct
+CMake build; the separate deterministic toolchain producer's
 Linux/reproducibility matrix in `OPEN-POINTS.md` point 5 remains open.
 
 ## What fixed the packaged boot
@@ -70,7 +82,16 @@ versions matters; macOS/QEMU 11.1.0 had masked the defect.
   filter. This unblocks the native PC parallel/serial HIDDs without admitting a
   broad foreign architecture namespace into the SDK.
 - `aros-genmodule` emits the reference-compatible RAWARG format wrappers.
-- The configure step still reports 25 of 366 `FUNCTIONS_COUNT` disagreements;
+- ARM and AArch64's AROS-owned Gallium modules now inherit the same pinned Mesa
+  20 compile contract as the fetched Mesa archives. This restores the
+  `pipe/p_shader_tokens.h` path and the Mesa feature/aliasing flags which the
+  classic build receives through `mesa.cfg`.
+- Bootstrap refreshes the central `asm/cpu.h` dispatcher in `GENINCDIR` as well
+  as the SDK. This repairs existing build trees which retain a same-named
+  foreign-architecture header from the old unfiltered staging implementation.
+- `usb2otg` includes the standard declaration for the `memset` calls it already
+  makes; the complete device now compiles for both ARM and AArch64.
+- The configure step still reports 29 `FUNCTIONS_COUNT` disagreements;
   point 50 remains open.
 
 ## Build and boot
@@ -102,6 +123,18 @@ Then run:
 
 ```bash
 tools/aros-tools/target/release/aros test --preset pc-x86_64 --packages
+```
+
+The Raspberry Pi package build checks are:
+
+```bash
+cmake --preset rpi-aarch64
+ninja -C build/rpi-aarch64 -j 8 kernel-package-raspi-aarch64-file
+
+cmake --preset arm-raspi
+ninja -C build/arm-raspi -j 8 \
+  kernel-package-raspi-arm-file \
+  kernel-package-arm-bcm2708-file
 ```
 
 `aros test --packages` consumes existing `bootstrap`, kernel and `.pkg` files;
@@ -149,10 +182,13 @@ are not committed.
 
 ## Next work
 
-1. Configure/build the ARM and AArch64 lanes to prove the new generic mechanisms
-   across every current architecture.
-2. Resolve the 25 `FUNCTIONS_COUNT` disagreements in point 50.
-3. Continue point 25 so an unqualified full build can pass.
+1. Boot the ARM and AArch64 packages on the intended Raspberry Pi hardware and
+   capture UART evidence; the ROM packaging gate is clean, but runtime is not
+   yet proved.
+2. Resolve the 29 current `FUNCTIONS_COUNT` disagreements in point 50.
+3. Continue point 25 so an unqualified full build can pass; the clean result is
+   for the architecture's complete BSP package targets, not every unrelated
+   third-party application target.
 4. Complete the deterministic toolchain producer's Linux and byte-comparison
    matrix (point 5); the clean direct Linux build does not close that work.
 5. Add later boot milestones if Workbench/Shell readiness must be asserted

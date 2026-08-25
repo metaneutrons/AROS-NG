@@ -1913,7 +1913,42 @@ place:
 `Linking C static library SYS/Developer/lib/libmui.a`, in that order. Before
 this it had never been built from a working edge.
 
-### 43. WORK — what the other two presets look like
+### 43. RESOLVED — the ARM and AArch64 BSP package lanes build cleanly
+
+Rechecked from the direct CMake graph on 25 August 2026. Both full Raspberry Pi
+package lanes now compile, link and package without an error:
+
+```text
+arm-raspi:
+  aros-arm-bsp.rom       55 modules, 2,982,740 payload bytes
+  aros-arm-bcm2708.rom   10 modules,   334,664 payload bytes
+
+rpi-aarch64:
+  aros-aarch64-bsp.rom   60 modules, 3.8 MiB on disk
+```
+
+The second invocation of both named build commands reports `no work to do`.
+The blockers found by the first complete package run were generic rather than
+source workarounds:
+
+* `hidd-gallium` and `workbench-libs-gallium` are in-tree modules which include
+  `mesa.cfg`. The transpiler's pinned Mesa-20 compile contract had only been
+  applied in its linklib/program loop, not its `%build_module` loop, so both
+  architectures lost `src/gallium/include`, the Mesa defines and
+  `-fno-strict-aliasing`. The exact contract now covers both module declarations
+  and has profile/parser tests.
+* Existing build trees could retain m68k's `asm/cpu.h` in `GENINCDIR` from the
+  old foreign-header staging bug. That root precedes the correct SDK header, so
+  ARM and AArch64 both saw no `dmb`/`dsb` declarations. Bootstrap now refreshes
+  the common dispatcher in both roots, matching `compiler-includes` semantics.
+* `usb2otg_intern.h` used `memset` without including its declaration. It now
+  includes `<string.h>` and `usb2otg.device` builds in both lanes.
+
+This closes the named BSP build/package obligation. It does **not** close point
+25's unqualified build of every third-party application, nor does it assert a
+hardware boot; Pi/UART runtime evidence is the next architecture gate.
+
+#### Earlier baseline (superseded)
 
 Checked after a session of pc-x86_64-only work, because several changes were
 target-shaped: the flavour mapping, `aros/config.h`, and the lane attachments
