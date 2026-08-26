@@ -353,9 +353,9 @@ diff -ruN clang-11.0.0.src/lib/Driver/ToolChains/AROS.cpp clang-11.0.0.src.aros/
 +    if (llvm::sys::path::filename(Exec) == "lld") {
 +        CmdArgs.push_back("-flavor");
 +        CmdArgs.push_back("gnu");
-+        if (!D.SysRoot.empty())
-+            CmdArgs.push_back(Args.MakeArgString("--sysroot=" + SysRoot));
 +    }
++    if (!D.SysRoot.empty())
++        CmdArgs.push_back(Args.MakeArgString("--sysroot=" + SysRoot));
 +
 +    if (!Args.hasArg(options::OPT_static)) {
 +        CmdArgs.push_back("--eh-frame-hdr");
