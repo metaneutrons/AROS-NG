@@ -14,6 +14,13 @@ foreach(_required IN ITEMS
         message(FATAL_ERROR "release toolchain did not define ${_required}")
     endif()
 endforeach()
+foreach(_platform_variable IN ITEMS
+        AROS_CROSS_TOOLCHAIN_ROOT AROS_TARGET_CPU AROS_TARGET_PLATFORM)
+    if(NOT _platform_variable IN_LIST CMAKE_TRY_COMPILE_PLATFORM_VARIABLES)
+        message(FATAL_ERROR
+            "release toolchain does not propagate ${_platform_variable} into try_compile")
+    endif()
+endforeach()
 if(NOT AROS_TARGET_PROFILE STREQUAL EXPECTED_PROFILE OR
    NOT AROS_TARGET_TRIPLE STREQUAL EXPECTED_TRIPLE)
     message(FATAL_ERROR

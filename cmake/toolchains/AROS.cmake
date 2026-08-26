@@ -67,6 +67,16 @@ set(AROS_TARGET_PROFILE "${_aros_profile}" CACHE STRING
 set(AROS_TARGET_TRIPLE "${_aros_triple}" CACHE STRING
     "AROS compiler target triple" FORCE)
 
+# CMake loads this file again inside compiler checks. Custom cache variables
+# are not copied into those try_compile projects unless the toolchain declares
+# them as platform inputs, so preserve the fail-closed root/profile contract
+# across that boundary as well.
+list(APPEND CMAKE_TRY_COMPILE_PLATFORM_VARIABLES
+    AROS_CROSS_TOOLCHAIN_ROOT
+    AROS_TARGET_CPU
+    AROS_TARGET_PLATFORM)
+list(REMOVE_DUPLICATES CMAKE_TRY_COMPILE_PLATFORM_VARIABLES)
+
 # Release assets carry a manifest. Locally built legacy prefixes remain
 # usable, but when a manifest exists it is authoritative and mismatches fail
 # before any compiler or runtime probing.
