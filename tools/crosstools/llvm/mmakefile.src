@@ -331,7 +331,10 @@ LLVM_CMAKEOPTIONS       +=-DLLVM_EXTERNAL_CLANG_SOURCE_DIR="$(CLANG_BUILDBASE)"
 
 #LLVM_CMAKEOPTIONS      +=-DCMAKE_VERBOSE_MAKEFILE:BOOL=ON
 
-LLVM_TARGET_FLAGS       :=--target=$(AROS_TARGET_CPU)-unknown-aros $(ISA_FLAGS)
+# Producer builds pass deterministic file/debug/macro prefix maps here. The
+# variable is empty for ordinary upstream-compatible crosstools builds.
+LLVM_REPRO_FLAGS        :=$(AROS_TOOLCHAIN_REPRO_FLAGS)
+LLVM_TARGET_FLAGS       :=--target=$(AROS_TARGET_CPU)-unknown-aros $(ISA_FLAGS) $(LLVM_REPRO_FLAGS)
 
 # N.B.: -fno-plt must not be used here. With clang it stops external function
 # declarations being treated as dso-local, so taking their address (e.g. libcxx
@@ -640,8 +643,9 @@ LLVM_COMPILER_RT32_CMAKEOPTIONS :=                                              
   $(LLVM_COMPILER_RT_CMAKEBASE)                                                                                                         \
   -DCMAKE_C_COMPILER_TARGET=$(AROS_TARGET_CPU32)-unknown-aros                                                                           \
   -DCMAKE_CXX_COMPILER=$(LLVM_BUILD_BINDIR)/clang++                                                                                     \
-  -DCMAKE_C_FLAGS="--target=$(AROS_TARGET_CPU32)-unknown-aros -B$(AROS_LIB32)"                                                          \
-  -DCMAKE_CXX_FLAGS="--target=$(AROS_TARGET_CPU32)-unknown-aros -B$(AROS_LIB32)"                                                        \
+  -DCMAKE_C_FLAGS="--target=$(AROS_TARGET_CPU32)-unknown-aros -B$(AROS_LIB32) $(LLVM_REPRO_FLAGS)"                                    \
+  -DCMAKE_CXX_FLAGS="--target=$(AROS_TARGET_CPU32)-unknown-aros -B$(AROS_LIB32) $(LLVM_REPRO_FLAGS)"                                  \
+  -DCMAKE_ASM_FLAGS="--target=$(AROS_TARGET_CPU32)-unknown-aros -B$(AROS_LIB32) $(LLVM_REPRO_FLAGS)"                                  \
   -DCMAKE_EXE_LINKER_FLAGS="-nodefaultlibs -nostartfiles $(AROS_LIB32)/startup.o -L$(AROS_LIB32) -larossupport -lamiga -lautoinit -Wl,--allow-multiple-definition" \
   -DLLVM_TARGETS_TO_BUILD=$(LLVM_TARGET32)                                                                                              \
   -DCOMPILER_RT_TARGETS_TO_BUILD=$(LLVM_CRT_TARGET32)
