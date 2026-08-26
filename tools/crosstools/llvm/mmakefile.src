@@ -242,6 +242,7 @@ LLVM_BIN_DIR            :=$(CROSSTOOLSDIR)
 LLVM_CONFIG_OPT         :=-DLLVM_CONFIG_PATH=$(LLVM_BUILD_BINDIR)/llvm-config
 endif
 LLVM_CONFIG_OPT         += -Wno-dev
+LLVM_CONFIG_OPT         += -DCMAKE_PROJECT_INCLUDE="$(SRCDIR)/config/cmake/AROSImportedHostTargets.cmake"
 
 # sancov and sanstats are host-side sanitizer post-processing tools. Neither
 # is part of the toolchain contract: producer.py:41 and
@@ -510,7 +511,7 @@ LLVM_LIBUNWIND_CMAKEOPTIONS :=                                                  
     prefix="$(CROSSTOOLSDIR)" extraoptions="$(LLVM_LIBUNWIND_CMAKEOPTIONS)" compiler=host usecppflags=no
 
 %build_with_cmake mmake=crosstools-libunwind-release package=libunwind-release srcdir=$(LIBUNWIND_BUILDBASE)                            \
-    prefix="$(CROSSTOOLSDIR)" extraoptions="$(LLVM_LIBUNWIND_CMAKEOPTIONS)" compiler=host usecppflags=no metadeps="setup includes"
+    prefix="$(CROSSTOOLSDIR)" extraoptions="$(LLVM_LIBUNWIND_CMAKEOPTIONS)" compiler=host usecppflags=no metadeps="setup sdk-includes-1"
 
 # llvm 23+ builds libcxx, libcxxabi and libunwind together through runtimes/,
 # because each of them now refuses to configure on its own. The options are the
@@ -557,7 +558,7 @@ LLVM_RUNTIMES_CMAKEOPTIONS :=                                                   
     prefix="$(CROSSTOOLSDIR)" extraoptions="$(LLVM_RUNTIMES_CMAKEOPTIONS)" compiler=host usecppflags=no
 
 %build_with_cmake mmake=crosstools-llvm-runtimes-release package=runtimes-release srcdir=$(MONOTREE_BUILDBASE)/runtimes                  \
-    prefix="$(CROSSTOOLSDIR)" extraoptions="$(LLVM_RUNTIMES_CMAKEOPTIONS)" compiler=host usecppflags=no metadeps="setup includes"
+    prefix="$(CROSSTOOLSDIR)" extraoptions="$(LLVM_RUNTIMES_CMAKEOPTIONS)" compiler=host usecppflags=no metadeps="setup sdk-includes-1"
 
 LLVM_COMPILER_RT_CMAKEBASE :=                                                                                                           \
   $(LLVM_CONFIG_OPT)                                                                                                                    \
@@ -613,7 +614,7 @@ LLVM_COMPILER_RT_CMAKEOPTIONS :=                                                
     prefix="$(CROSSTOOLSDIR)" extraoptions="$(LLVM_COMPILER_RT_CMAKEOPTIONS)" compiler=host usecppflags=no
 
 %build_with_cmake mmake=crosstools-compiler-rt-release package=compiler-rt-release srcdir=$(COMPILER_RT_BUILDBASE)                      \
-    prefix="$(CROSSTOOLSDIR)" extraoptions="$(LLVM_COMPILER_RT_CMAKEOPTIONS)" compiler=host usecppflags=no metadeps="setup includes"
+    prefix="$(CROSSTOOLSDIR)" extraoptions="$(LLVM_COMPILER_RT_CMAKEOPTIONS)" compiler=host usecppflags=no metadeps="setup sdk-includes-1"
 
 # Clang's driver looks for libclang_rt.builtins-armhf.a on hard-float targets,
 # but compiler-rt builds it as builtins-arm.a. Provide it under both names
@@ -651,7 +652,7 @@ LLVM_COMPILER_RT32_CMAKEOPTIONS :=                                              
     prefix="$(CROSSTOOLSDIR)" extraoptions="$(LLVM_COMPILER_RT32_CMAKEOPTIONS)" compiler=host usecppflags=no
 
 %build_with_cmake mmake=crosstools-compiler-rt32-release package=compiler-rt32-release srcdir=$(COMPILER_RT_BUILDBASE)                  \
-    prefix="$(CROSSTOOLSDIR)" extraoptions="$(LLVM_COMPILER_RT32_CMAKEOPTIONS)" compiler=host usecppflags=no metadeps="setup includes"
+    prefix="$(CROSSTOOLSDIR)" extraoptions="$(LLVM_COMPILER_RT32_CMAKEOPTIONS)" compiler=host usecppflags=no metadeps="setup sdk-includes-1"
 endif
 
 # Up to llvm 21 each component had its own release archive. From llvm 22
