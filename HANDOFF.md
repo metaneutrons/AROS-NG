@@ -1,5 +1,32 @@
 # Handoff
 
+## Update 26 August 2026 — deterministic toolchain release candidate
+
+The fail-closed producer and consumer path is implemented through
+`9f84f550c0`. Runtime and host builds receive normalized prefix maps;
+producer-only `llvm-config` and LLVM CMake metadata are removed before
+packaging. The release graph now owns a single top-level `genmodule` build, so
+parallel target-header generation cannot execute a partially overwritten host
+tool. CMake propagates the AROS prefix/CPU/platform contract into its internal
+compiler probes.
+
+The downstream check now builds isolated Rust generators, configures AROS-NG
+against the extracted prefix, and builds `includes` plus `linklibs` from exact
+upstream commit `6e196552834ec338072dda8675cf0c3f1d2df0d6`. That complete path
+passed for the final macOS ARM64 `pc-x86_64` pair from commit `9f84f550c0`,
+tree `9bad0804…`, recipe `2e8be353…`. Its two archives compare byte-for-byte at
+SHA-256 `d7d7e735…`. The Linux x86_64 pair from the same inputs also compares
+byte-for-byte at SHA-256 `dd9935e8…` and passes the same full compatibility
+probe. Exact evidence paths and the no-overclaim completion gate are in
+`toolchains/HANDOFF.md`. The workflow now initializes recursive submodules so
+the clean CI consumer has the same complete source topology used by the local
+probes.
+
+This closes `pc-x86_64` on the two locally available hosts, not the complete
+publish matrix. The four GitHub hosts times three target profiles still have
+to produce and byte-compare two archives each before a release index may be
+published.
+
 ## Update 26 August 2026 — enterprise transpiler diagnostics and publication
 
 `aros-transpiler` now carries structured fatal diagnostics with stable
@@ -18,13 +45,14 @@ The generated CMake graph, source inventory, spec-switch manifest, coverage
 index and all reports now publish through one staged, rollback-capable
 transaction. The graph is replaced last as the commit marker. Report write and
 removal failures are fatal. Tests cover pre-commit failure, injected
-mid-commit rollback and stale-report deletion. The embedded fingerprint
-registry is validated without panic before the source walk.
+mid-commit rollback and stale-report deletion. The remaining narrow
+capability-fingerprint registry is validated without panic before the source
+walk.
 
-Verified so far in this change: 293 transpiler library tests, six binary/CLI
-tests, and direct x86_64, ARM hard-float and AArch64 profile runs are green.
-The complete workspace and CMake sweeps still need to be rerun after the final
-documentation edit.
+Verified in the final local gate: 293 transpiler library tests, six binary/CLI
+tests, the complete Rust workspace, Clippy with the documented pre-existing
+warnings, all 24 CMake fixtures, and direct x86_64, ARM hard-float and AArch64
+profile runs are green.
 
 ## Update 26 August 2026 — no hidden transpiler package pins
 
@@ -43,6 +71,12 @@ does not require a digest edit. The fixed GRUB 2.12 archive SHA remains once in
 `cmake/GrubSourceLock.cmake`, because that closed CMake lane downloads the
 source directly. Toolchain release locks are a separate reproducibility
 contract.
+
+The unrelated broad `aros-verify` fingerprints of the complete LLVM
+MetaMake/config/CMake inputs have also been removed. The verifier now checks
+only the structural facts that make five legacy host-tool declarations
+provisioning rather than target obligations; relevant drift still fails closed,
+while unrelated upstream edits do not require a hash refresh.
 
 Core error handling aggregates and fails on filesystem traversal, fetch
 discovery, parsing and recognised capability drift. The typed-diagnostic,

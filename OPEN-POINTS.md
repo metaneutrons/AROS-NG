@@ -1,8 +1,7 @@
 # Open points
 
-Status date: 2026-08-25. Everything here is either undecided, unfinished, or a
-finding nobody has acted on yet. Each entry names the evidence, so none of it
-has to be rediscovered.
+Status date: 2026-08-26. Open entries are undecided or unfinished; resolved and
+superseded entries retain the evidence so it does not have to be rediscovered.
 
 Marker meaning:
 
@@ -57,7 +56,7 @@ Measured costs, because the first estimates were wrong in both directions:
 There is also `compiler/boost/boost_1_89_0-aros.diff`, which the `%fetch`
 applies, so any pinned copy has to account for the patch.
 
-### 2. RISK — genmodule is run while it is still being written
+### 2. RESOLVED — the root tools graph owns one complete genmodule build
 
 A lane failed with `Bus error: 10` on
 `gen/compiler/crt/stdc/stdc/include/.stdc.library-includes`. genmodule run by
@@ -66,9 +65,18 @@ sources (`functionhead.c`, `muisupport.c`, `writefd.c`, `writelinkentries.c`)
 being compiled immediately before. Under `-j 8` the recipe executes a
 partially written binary.
 
-The tree-wide `includes` used to act as a barrier that hid this. Whether the
-ordinary build has another barrier is unchecked, so this may affect
-`make crosstools -j` as well.
+Every generated directory makefile carried the same `$(GENMODULE)` recipe, so
+parallel recursive makes could overwrite the host executable while another
+directory was running it. The tree-wide `includes` target used to hide that
+race as an accidental barrier; the narrowed release graph exposed it.
+
+`0e3c136be5` makes the top-level `tools` target depend on one root-owned
+`$(GENMODULE)` build. The fragment is included only when the real path of the
+active makefile is the root `$(TOP)/Makefile`; using `realpath` is required on
+macOS because `/tmp` is reached as `/private/tmp`. A fresh out-of-tree
+`gmake -j16 tools` built `genmodule` exactly once and completed successfully.
+The static producer contract checks both the root-only guard and the explicit
+prerequisite.
 
 ### 3. WORK — the non-release include form is untested
 
@@ -101,11 +109,30 @@ stands, and the diagnosis is confirmed:
 Until this is done, the release prefix promises the locked CMake partial-link
 contract and not arbitrary standalone linking through `clang`/`clang++`.
 
-### 5. WORK — the Linux lane and the reproducibility matrix
+### 5. WORK — complete the reproducibility matrix after the first local lane
 
-The `linux-x86_64` lane has not been run; it needs the other machine. The
-complete v1 matrix requires each host/profile pair built twice and
-byte-compared before publication, which has not started.
+The first real `pc-x86_64` producer completed once on macOS ARM64 at
+`f376c5582e`: packaging and the build-prefix scan passed. Its independent B
+copy exposed point 2's `genmodule` race, so that pair is diagnostic and cannot
+be published. The same archive passed package/two-root verification, a fresh
+AROS-NG CMake configure, and exact upstream `includes` plus `linklibs` after
+the compatibility probe itself was repaired.
+
+Fresh A/B copies for macOS ARM64 and Linux x86_64 use exact commit
+`9f84f550c0`, tree `9bad0804...`, recipe `2e8be353...`; evidence paths and
+commands for the remaining lanes are recorded in `toolchains/HANDOFF.md`.
+Both local host pairs are complete. The macOS archives and formal compare
+output have SHA-256
+`d7d7e735...`; Linux has SHA-256 `dd9935e8...`. Both compared archives pass
+package and two-root relocation verification, a fresh AROS-NG configure, and
+exact upstream `includes` plus `linklibs` at `6e196552834e...`.
+
+The complete v1 publication matrix remains four hosts by three profiles, with
+each host/profile pair built twice and byte-compared. The current local proof
+therefore closes the first profile on two hosts, not the release gate. The
+workflow initializes recursive submodules as of `db674e3040`, because the
+clean compatibility checkout proved that AHI and other generated inputs depend
+on their recorded submodule contents.
 
 This is the deterministic **toolchain producer** lane. Point 51's clean direct
 CMake build and packaged boot on Linux do not build the release prefix twice
@@ -113,10 +140,12 @@ and therefore do not close this point.
 
 ### 6. DECIDE — job count for the byte-comparison
 
-Lanes here ran with `--jobs 8`, where `toolchains/HANDOFF.md` uses 2. The
-producer sets `SOURCE_DATE_EPOCH`, `ZERO_AR_DATE` and the prefix maps itself,
-so the job count should not affect the output, but that has not been verified
-by comparing two runs at different parallelism.
+The final macOS A/B pair ran with `--jobs 5` for each copy and the final Linux
+A/B pair with `--jobs 2` for each copy. Each same-host pair is byte-identical.
+The producer sets `SOURCE_DATE_EPOCH`, `ZERO_AR_DATE` and the prefix maps
+itself, so the job count should not affect the output, but cross-job-count
+identity has not been verified by comparing two otherwise identical runs at
+different parallelism.
 
 ---
 
@@ -1863,10 +1892,10 @@ Reading them apart mattered more than moving them. They are two kinds of pin:
     means in the first class. The file states that distinction, because as
     neighbouring `const` declarations the two were indistinguishable.
 
-The lookup is shared: `aros_common::pins` holds the reader, and `aros-verify`
-uses it instead of the copy point 7 left there. Two safety nets, because a pin
-name is a string and a typo would otherwise surface as a panic on whichever run
-first reaches that capability:
+The lookup is shared: `aros_common::pins` holds the reader used by the remaining
+transpiler capability registry. Two safety nets, because a pin name is a string
+and a typo would otherwise surface as a panic on whichever run first reaches
+that capability:
 
   * the file is checked as a whole -- every value a sha256, every name unique
     and kebab-case;
@@ -2210,7 +2239,23 @@ does:
 Then `aros-cli test` is a gate the HANDOFF checklist can hold, and the answer
 to "how far does it boot" stops being a matter of who last watched the screen.
 
-### 7. RESOLVED — the pinned digests are data, and no gate hides another
+### 7. SUPERSEDED 2026-08-26 — the broad provisioning digests were removed
+
+The earlier resolution below made the three hashes visible and stopped their
+failure from masking independent inventory checks, but it did not answer the
+more important question: none of the three whole-input hashes was necessary.
+
+`c513bf311d` deletes `aros-verify/toolchain-provisioning.pins`. The verifier
+already matches each of the five excluded `%build_with_cmake` declarations by
+its complete semantic argument list. Its surrounding context now checks only
+the structural facts that make that exclusion sound: the LLVM tools install
+under `$(CROSSTOOLSDIR)`, the default sysroot remains relocatable, configure
+owns the unresolved toolchain prefix, and the CMake target is selected as
+Generic before `project()`. Mutating any of those facts fails closed and
+returns the five declarations to ordinary target coverage. An unrelated LLVM,
+MetaMake or CMake edit no longer asks for a digest refresh.
+
+The text below is retained as the history of the intermediate state.
 
 Both halves of this are fixed and both are measured.
 
@@ -2461,12 +2506,14 @@ is worth sending on.
 
 ## Stale records
 
-### 21. WRONG — `toolchains/HANDOFF.md` assumes a dirty working tree
+### 21. RESOLVED — the stale dirty-tree handoff was replaced
 
-Its opening states the tree is intentionally dirty and must not be cleaned,
-and its resume sequence builds a snapshot-and-overlay procedure on that. The
-tree is committed. The snapshot step is still worth doing for isolation from
-concurrent work, but not for the reason given.
+The old handoff stated that the tree was intentionally dirty and built its
+resume procedure around an overlay snapshot. That record was stale: the code
+was committed, and isolation is useful because work is concurrent, not because
+release inputs may be dirty.
 
-The `configure~` and `__pycache__` by-products that step 3 works around are
-ignored as of `13cd9faf62`.
+`toolchains/HANDOFF.md` is now a current release handoff with the exact
+commit/tree/recipe tuple, active clean build roots, completed gates and the
+remaining matrix scope. `configure~` and Python `__pycache__` by-products have
+been ignored since `13cd9faf62`.
