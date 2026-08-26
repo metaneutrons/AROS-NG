@@ -1,4 +1,4 @@
-# The HEIC MetaMake recipes configure two private headers after their pinned
+# The HEIC MetaMake recipes configure two private headers after their selected
 # port archives have been fetched.  They are consumed directly by C++ sources,
 # so a phony `*-genfiles` target is not sufficient: Ninja needs a concrete
 # producer for each generated pathname.

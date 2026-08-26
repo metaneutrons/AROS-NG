@@ -8,18 +8,9 @@ include(CMakeParseArguments)
 set(_AROS_GRUB_ISO_ASSETS_MODULE_DIR "${CMAKE_CURRENT_LIST_DIR}")
 set(_AROS_GRUB_ISO_ASSETS_HOST_MMAKE_RELATIVE
     "arch/all-pc/boot/grub2-host/mmakefile.src")
-set(_AROS_GRUB_ISO_ASSETS_HOST_MMAKE_SHA256
-    "66c464606f16a8ce594aac96875498beb9429836c3036095193a3e135e5b85f8")
-
 set(_AROS_GRUB_ISO_ASSETS_PC_MANIFEST "cmake/manifests/grub-2.12-pc.install")
-set(_AROS_GRUB_ISO_ASSETS_PC_MANIFEST_SHA256
-    "63fc5e9ca178cad7df59be8e43c077e8d2f6a5b492b57f8612dbde765eede83b")
 set(_AROS_GRUB_ISO_ASSETS_EFI64_MANIFEST "cmake/manifests/grub-2.12-efi64.install")
-set(_AROS_GRUB_ISO_ASSETS_EFI64_MANIFEST_SHA256
-    "1dfff4328a95fd6a42cb7593461145ed6897c1ff5d194dd2a8f8e45acde984ad")
 set(_AROS_GRUB_ISO_ASSETS_EFI32_MANIFEST "cmake/manifests/grub-2.12-efi32.install")
-set(_AROS_GRUB_ISO_ASSETS_EFI32_MANIFEST_SHA256
-    "19b64eefd2cfce180515082fb20732945fc9baf785f34c8b629a1ca290505ea6")
 
 function(_aros_grub_iso_assets_safe_value label value)
     foreach(_needle IN ITEMS ";" "\"" "\n" "\r" "$" "[" "]")
@@ -104,16 +95,11 @@ endfunction()
 # complete, sorted install manifests are a checked-in static inventory; no
 # globbing or host discovery participates in CMake's output ownership.
 function(_aros_grub_iso_assets_collect_manifest
-         source_root manifest_relative expected_hash platform expected_mods
+         source_root manifest_relative platform expected_mods
          expected_images output)
     _aros_grub_iso_assets_validate_relative("GRUB2 ISO manifest" "${manifest_relative}")
     set(_manifest "${source_root}/${manifest_relative}")
     _aros_grub_iso_assets_require_regular("${_manifest}" "GRUB2 ISO manifest")
-    file(SHA256 "${_manifest}" _actual_hash)
-    if(NOT _actual_hash STREQUAL expected_hash)
-        message(FATAL_ERROR
-            "GRUB2 ISO manifest ${manifest_relative} differs from the audited SHA-256")
-    endif()
     file(STRINGS "${_manifest}" _entries)
     set(_sorted_entries "${_entries}")
     list(SORT _sorted_entries)
@@ -222,10 +208,8 @@ function(aros_stage_grub2_iso_assets)
         "${_source_root}/${_AROS_GRUB_ISO_ASSETS_HOST_MMAKE_RELATIVE}")
     _aros_grub_iso_assets_real_path("${_expected_host_mmake}" _expected_host_mmake)
     cmake_path(IS_PREFIX _source_root "${_host_mmake}" NORMALIZE _host_mmake_owned)
-    file(SHA256 "${_host_mmake}" _host_mmake_sha256)
-    if(NOT _host_mmake_owned OR NOT _host_mmake STREQUAL _expected_host_mmake OR
-       NOT _host_mmake_sha256 STREQUAL _AROS_GRUB_ISO_ASSETS_HOST_MMAKE_SHA256)
-        message(FATAL_ERROR "GRUB2 ISO source recipe differs from the audited SHA-256")
+    if(NOT _host_mmake_owned OR NOT _host_mmake STREQUAL _expected_host_mmake)
+        message(FATAL_ERROR "GRUB2 ISO source recipe has an unsupported location")
     endif()
 
     set(_binary_input "${GIA_BINARY_DIR}")
@@ -298,13 +282,13 @@ function(aros_stage_grub2_iso_assets)
 
     _aros_grub_iso_assets_collect_manifest(
         "${_source_root}" "${_AROS_GRUB_ISO_ASSETS_PC_MANIFEST}"
-        "${_AROS_GRUB_ISO_ASSETS_PC_MANIFEST_SHA256}" "i386-pc" 273 8 _pc_products)
+        "i386-pc" 273 8 _pc_products)
     _aros_grub_iso_assets_collect_manifest(
         "${_source_root}" "${_AROS_GRUB_ISO_ASSETS_EFI64_MANIFEST}"
-        "${_AROS_GRUB_ISO_ASSETS_EFI64_MANIFEST_SHA256}" "x86_64-efi" 268 0 _efi64_products)
+        "x86_64-efi" 268 0 _efi64_products)
     _aros_grub_iso_assets_collect_manifest(
         "${_source_root}" "${_AROS_GRUB_ISO_ASSETS_EFI32_MANIFEST}"
-        "${_AROS_GRUB_ISO_ASSETS_EFI32_MANIFEST_SHA256}" "i386-efi" 269 0 _efi32_products)
+        "i386-efi" 269 0 _efi32_products)
 
     set(_inputs_logical
         "${_host_pc_logical}/grub-mkimage"
@@ -376,11 +360,7 @@ function(aros_stage_grub2_iso_assets)
         "set(GIA_HOST_PC [==[${_host_pc}]==])\n"
         "set(GIA_HOST_EFI64 [==[${_host_efi64}]==])\n"
         "set(GIA_HOST_EFI32 [==[${_host_efi32}]==])\n"
-        "set(GIA_STAMP [==[${_stamp}]==])\n"
-        "set(GIA_HOST_MMAKE_SHA256 [==[${_AROS_GRUB_ISO_ASSETS_HOST_MMAKE_SHA256}]==])\n"
-        "set(GIA_PC_MANIFEST_SHA256 [==[${_AROS_GRUB_ISO_ASSETS_PC_MANIFEST_SHA256}]==])\n"
-        "set(GIA_EFI64_MANIFEST_SHA256 [==[${_AROS_GRUB_ISO_ASSETS_EFI64_MANIFEST_SHA256}]==])\n"
-        "set(GIA_EFI32_MANIFEST_SHA256 [==[${_AROS_GRUB_ISO_ASSETS_EFI32_MANIFEST_SHA256}]==])\n")
+        "set(GIA_STAMP [==[${_stamp}]==])\n")
     foreach(_product IN LISTS _products_physical)
         _aros_grub_iso_assets_safe_value("GRUB2 ISO product" "${_product}")
         string(APPEND _contract_content "list(APPEND GIA_PRODUCTS [==[${_product}]==])\n")

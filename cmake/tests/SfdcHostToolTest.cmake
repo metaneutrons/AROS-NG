@@ -102,7 +102,7 @@ file(READ "${_contract}" _contract_content)
 string(FIND "${_contract_content}"
     "set(SFDC_PERL [==[${_perl}]==])" _perl_position)
 string(FIND "${_contract_content}"
-    "set(SFDC_INPUT_MANIFEST_SHA256 [==[8ec41ceeb354becd032adc968ad3d77b69ba0faee5f642595b321c760ec3e87c]==])"
+    "set(SFDC_INPUT_MANIFEST_SHA256 [==[${_manifest_before}]==])"
     _manifest_position)
 if(_perl_position LESS 0 OR _manifest_position LESS 0)
     message(FATAL_ERROR "sfdc host-tool contract is not closed")
@@ -178,10 +178,43 @@ if(NOT _main_before STREQUAL _main_after OR
     message(FATAL_ERROR "sfdc host-tool runner modified its source tree")
 endif()
 
-_sfdc_configure("bad-manifest" FALSE "input manifest differs from its audited SHA-256")
+_sfdc_configure("bad-manifest" FALSE "input extra.pl is missing or symlinked")
 _sfdc_configure("symlink-input" FALSE "input CLib.pl is missing or symlinked")
 _sfdc_configure("symlink-binary" FALSE "audited paths escape their owning tree")
 _sfdc_configure("relative-perl" FALSE "PERL must be an absolute path")
+
+# Repository inventories contain paths, not fixed content hashes. A normal
+# source edit must make CMake refresh the runner snapshot automatically and
+# rebuild successfully without touching sfdc-host.inputs.
+_sfdc_configure("mutable-source" TRUE "")
+set(_mutable_build "${CONFIGURED_BUILD}")
+execute_process(
+    COMMAND "${CMAKE_COMMAND}" --build "${_mutable_build}" --target host-sfdc
+    RESULT_VARIABLE _mutable_first_result
+    OUTPUT_VARIABLE _mutable_first_stdout
+    ERROR_VARIABLE _mutable_first_stderr)
+if(NOT _mutable_first_result EQUAL 0)
+    message(FATAL_ERROR
+        "sfdc mutable-source initial build failed\n${_mutable_first_stdout}${_mutable_first_stderr}")
+endif()
+set(_mutable_contract "${_mutable_build}/.aros-host-sfdc-contract.cmake")
+file(READ "${_mutable_contract}" _mutable_contract_before)
+file(APPEND "${_mutable_build}/source-root/tools/sfdc/Dump.pl"
+    "\n# source snapshot refresh regression\n")
+execute_process(
+    COMMAND "${CMAKE_COMMAND}" --build "${_mutable_build}" --target host-sfdc
+    RESULT_VARIABLE _mutable_second_result
+    OUTPUT_VARIABLE _mutable_second_stdout
+    ERROR_VARIABLE _mutable_second_stderr)
+if(NOT _mutable_second_result EQUAL 0)
+    message(FATAL_ERROR
+        "sfdc mutable-source rebuild failed\n${_mutable_second_stdout}${_mutable_second_stderr}")
+endif()
+file(READ "${_mutable_contract}" _mutable_contract_after)
+if(_mutable_contract_before STREQUAL _mutable_contract_after)
+    message(FATAL_ERROR
+        "sfdc mutable-source edit did not refresh the dynamic runner snapshot")
+endif()
 
 file(REMOVE_RECURSE "${_root}")
 message(STATUS "sfdc host-tool test passed")

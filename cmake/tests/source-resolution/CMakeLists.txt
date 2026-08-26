@@ -10,10 +10,7 @@ include("${CMAKE_CURRENT_LIST_DIR}/../../AROS.cmake")
 set(_fetch_destination "${AROS_PORTS_DIR}/fixture")
 set(_source_root "${_fetch_destination}/package")
 set(_fetch_stamp "${_fetch_destination}/.fixture-fetched")
-set(_archive "${AROS_PORTS_SOURCE_DIR}/fixture.tar.xz")
 file(MAKE_DIRECTORY "${_source_root}" "${AROS_PORTS_SOURCE_DIR}")
-file(WRITE "${_archive}" "pinned source-resolution fixture\n")
-file(SHA256 "${_archive}" _archive_sha256)
 file(WRITE "${_source_root}/generator.py"
     "import sys\nsys.stdout.write('.text\\n')\n")
 file(WRITE "${_source_root}/input.txt" "fixture\n")
@@ -32,8 +29,6 @@ aros_generate_python_outputs(
     SOURCE_ROOT "${_source_root}"
     BUILD_ROOT "${_build_root}"
     FETCH_TARGET fixture-fetch
-    SOURCE_ARCHIVE "${_archive}"
-    SOURCE_SHA256 "${_archive_sha256}"
     SOURCE_INPUTS input.txt
     JOB
         SCRIPT generator.py
@@ -58,5 +53,5 @@ aros_resolve_sources(_resolved_c ""
 if(_resolved_c STREQUAL "${_source_root}/port.c" OR
    NOT _resolved_c MATCHES "/CMakeFiles/aros-port-sources/[0-9a-f]+\\.c$")
     message(FATAL_ERROR
-        "audited fetched source did not retain its stable proxy: ${_resolved_c}")
+        "fetched source did not retain its stable proxy: ${_resolved_c}")
 endif()

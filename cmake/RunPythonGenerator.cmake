@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.22)
 
 foreach(_required IN ITEMS OWNER PYTHON_EXECUTABLE SOURCE_ROOT BUILD_ROOT
-        SOURCE_ARCHIVE SOURCE_SHA256 GENERATOR_SCRIPT OUTPUT SOURCE_INPUT_COUNT
+        GENERATOR_SCRIPT OUTPUT SOURCE_INPUT_COUNT
         PACKAGE_COUNT GENERATOR_ARGUMENT_COUNT)
     if(NOT DEFINED ${_required} OR "${${_required}}" STREQUAL "")
         message(FATAL_ERROR
@@ -14,20 +14,10 @@ if(NOT SOURCE_INPUT_COUNT MATCHES "^[0-9]+$" OR
     message(FATAL_ERROR
         "${OWNER}: invalid Python-generator input/argument count")
 endif()
-string(LENGTH "${SOURCE_SHA256}" _source_sha256_length)
-if(NOT _source_sha256_length EQUAL 64 OR
-   NOT SOURCE_SHA256 MATCHES "^[0-9A-Fa-f]+$")
-    message(FATAL_ERROR
-        "${OWNER}: invalid Python-generator source SHA-256")
-endif()
-string(TOLOWER "${SOURCE_SHA256}" _expected_source_sha256)
-
 cmake_path(ABSOLUTE_PATH SOURCE_ROOT NORMALIZE OUTPUT_VARIABLE _source_root)
 cmake_path(ABSOLUTE_PATH BUILD_ROOT NORMALIZE OUTPUT_VARIABLE _build_root)
 cmake_path(ABSOLUTE_PATH GENERATOR_SCRIPT NORMALIZE OUTPUT_VARIABLE _script)
 cmake_path(ABSOLUTE_PATH OUTPUT NORMALIZE OUTPUT_VARIABLE _output)
-cmake_path(ABSOLUTE_PATH SOURCE_ARCHIVE NORMALIZE
-    OUTPUT_VARIABLE _source_archive)
 cmake_path(IS_PREFIX _source_root "${_script}" NORMALIZE _script_is_owned)
 if(NOT _script_is_owned OR _script STREQUAL _source_root)
     message(FATAL_ERROR
@@ -43,50 +33,23 @@ if(NOT EXISTS "${PYTHON_EXECUTABLE}" OR IS_DIRECTORY "${PYTHON_EXECUTABLE}")
     message(FATAL_ERROR
         "${OWNER}: Python 3 interpreter disappeared before generation: ${PYTHON_EXECUTABLE}")
 endif()
-if(NOT EXISTS "${_source_archive}" OR IS_DIRECTORY "${_source_archive}")
-    message(FATAL_ERROR
-        "${OWNER}: pinned source archive is missing before Python generation: ${_source_archive}")
-endif()
-file(SHA256 "${_source_archive}" _actual_source_sha256)
-if(NOT _actual_source_sha256 STREQUAL _expected_source_sha256)
-    message(FATAL_ERROR
-        "${OWNER}: source archive SHA-256 mismatch before Python generation: expected ${_expected_source_sha256}, got ${_actual_source_sha256}")
-endif()
 if(NOT EXISTS "${_script}" OR IS_DIRECTORY "${_script}")
     message(FATAL_ERROR
         "${OWNER}: Python generator script is missing after fetch: ${_script}")
 endif()
 
 set(_driver "")
-if((DEFINED DRIVER_SCRIPT AND NOT "${DRIVER_SCRIPT}" STREQUAL "") OR
-   (DEFINED DRIVER_SHA256 AND NOT "${DRIVER_SHA256}" STREQUAL ""))
-    if(NOT DEFINED DRIVER_SCRIPT OR "${DRIVER_SCRIPT}" STREQUAL "" OR
-       NOT DEFINED DRIVER_SHA256 OR "${DRIVER_SHA256}" STREQUAL "")
-        message(FATAL_ERROR
-            "${OWNER}: generator driver path and SHA-256 must be declared together")
-    endif()
-    string(LENGTH "${DRIVER_SHA256}" _driver_sha256_length)
-    if(NOT _driver_sha256_length EQUAL 64 OR
-       NOT DRIVER_SHA256 MATCHES "^[0-9A-Fa-f]+$")
-        message(FATAL_ERROR
-            "${OWNER}: invalid generator driver SHA-256")
-    endif()
-    string(TOLOWER "${DRIVER_SHA256}" _expected_driver_sha256)
+if(DEFINED DRIVER_SCRIPT AND NOT "${DRIVER_SCRIPT}" STREQUAL "")
     cmake_path(ABSOLUTE_PATH DRIVER_SCRIPT NORMALIZE OUTPUT_VARIABLE _driver)
     if(NOT EXISTS "${_driver}" OR IS_DIRECTORY "${_driver}")
         message(FATAL_ERROR
-            "${OWNER}: pinned generator driver is missing: ${_driver}")
-    endif()
-    file(SHA256 "${_driver}" _actual_driver_sha256)
-    if(NOT _actual_driver_sha256 STREQUAL _expected_driver_sha256)
-        message(FATAL_ERROR
-            "${OWNER}: generator driver SHA-256 mismatch: expected ${_expected_driver_sha256}, got ${_actual_driver_sha256}")
+            "${OWNER}: repository generator driver is missing: ${_driver}")
     endif()
     foreach(_tool IN ITEMS FLEX_EXECUTABLE BISON_EXECUTABLE)
         if(NOT DEFINED ${_tool} OR "${${_tool}}" STREQUAL "" OR
            NOT EXISTS "${${_tool}}" OR IS_DIRECTORY "${${_tool}}")
             message(FATAL_ERROR
-                "${OWNER}: pinned host tool ${_tool} is missing")
+                "${OWNER}: required host tool ${_tool} is missing")
         endif()
     endforeach()
 endif()
@@ -95,8 +58,7 @@ set(_package_python_paths "")
 if(PACKAGE_COUNT GREATER 0)
     math(EXPR _last_package "${PACKAGE_COUNT} - 1")
     foreach(_index RANGE 0 ${_last_package})
-        foreach(_field IN ITEMS SOURCE_ROOT SOURCE_ARCHIVE SOURCE_SHA256
-                PYTHON_PATH)
+        foreach(_field IN ITEMS SOURCE_ROOT PYTHON_PATH)
             set(_field_name "PACKAGE_${_field}_${_index}")
             if(NOT DEFINED ${_field_name} OR "${${_field_name}}" STREQUAL "")
                 message(FATAL_ERROR
@@ -104,17 +66,11 @@ if(PACKAGE_COUNT GREATER 0)
             endif()
         endforeach()
         set(_package_root_name "PACKAGE_SOURCE_ROOT_${_index}")
-        set(_package_archive_name "PACKAGE_SOURCE_ARCHIVE_${_index}")
-        set(_package_sha256_name "PACKAGE_SOURCE_SHA256_${_index}")
         set(_python_path_name "PACKAGE_PYTHON_PATH_${_index}")
         set(_package_root "${${_package_root_name}}")
-        set(_package_archive "${${_package_archive_name}}")
-        set(_package_sha256 "${${_package_sha256_name}}")
         set(_python_path "${${_python_path_name}}")
         cmake_path(ABSOLUTE_PATH _package_root NORMALIZE
             OUTPUT_VARIABLE _package_root)
-        cmake_path(ABSOLUTE_PATH _package_archive NORMALIZE
-            OUTPUT_VARIABLE _package_archive)
         cmake_path(ABSOLUTE_PATH _python_path NORMALIZE
             OUTPUT_VARIABLE _python_path)
         cmake_path(IS_PREFIX _package_root "${_python_path}" NORMALIZE
@@ -124,22 +80,6 @@ if(PACKAGE_COUNT GREATER 0)
            NOT IS_DIRECTORY "${_python_path}")
             message(FATAL_ERROR
                 "${OWNER}: Python package or import root is missing after fetch: ${_package_root} / ${_python_path}")
-        endif()
-        if(NOT EXISTS "${_package_archive}" OR IS_DIRECTORY "${_package_archive}")
-            message(FATAL_ERROR
-                "${OWNER}: pinned Python package archive is missing: ${_package_archive}")
-        endif()
-        string(LENGTH "${_package_sha256}" _package_sha256_length)
-        if(NOT _package_sha256_length EQUAL 64 OR
-           NOT _package_sha256 MATCHES "^[0-9A-Fa-f]+$")
-            message(FATAL_ERROR
-                "${OWNER}: invalid Python package SHA-256 at index ${_index}")
-        endif()
-        string(TOLOWER "${_package_sha256}" _expected_package_sha256)
-        file(SHA256 "${_package_archive}" _actual_package_sha256)
-        if(NOT _actual_package_sha256 STREQUAL _expected_package_sha256)
-            message(FATAL_ERROR
-                "${OWNER}: Python package archive SHA-256 mismatch at index ${_index}: expected ${_expected_package_sha256}, got ${_actual_package_sha256}")
         endif()
         list(APPEND _package_python_paths "${_python_path}")
     endforeach()

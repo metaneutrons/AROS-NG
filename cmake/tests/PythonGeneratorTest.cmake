@@ -10,9 +10,6 @@ set(_root "${_temp_root}/aros python generator ${_suffix}")
 set(_source "${_root}/source")
 set(_archive "${_source}/archive")
 file(MAKE_DIRECTORY "${_archive}")
-set(_fixture_source_archive "${_source}/fixture.tar.xz")
-file(WRITE "${_fixture_source_archive}" "pinned fixture archive\n")
-file(SHA256 "${_fixture_source_archive}" FIXTURE_SOURCE_SHA256)
 
 set(_generator [=[
 import argparse
@@ -58,15 +55,10 @@ set(_fetch_destination "${CMAKE_BINARY_DIR}/fetched")
 set(_source_root "${_fetch_destination}/package")
 set(_fetch_stamp "${_fetch_destination}/.fixture-fetched")
 set(AROS_PORTS_SOURCE_DIR "${CMAKE_BINARY_DIR}/portssources")
-set(_source_archive "${AROS_PORTS_SOURCE_DIR}/fixture.tar.xz")
-set(_source_sha256 "@FIXTURE_SOURCE_SHA256@")
 add_custom_command(
     OUTPUT "${_fetch_stamp}"
     COMMAND "${CMAKE_COMMAND}" -E make_directory
         "${_source_root}" "${AROS_PORTS_SOURCE_DIR}"
-    COMMAND "${CMAKE_COMMAND}" -E copy_if_different
-        "${CMAKE_CURRENT_SOURCE_DIR}/fixture.tar.xz"
-        "${_source_archive}"
     COMMAND "${CMAKE_COMMAND}" -E copy_if_different
         "${CMAKE_CURRENT_SOURCE_DIR}/archive/generator.py"
         "${_source_root}/generator.py"
@@ -81,7 +73,6 @@ add_custom_command(
         "${CMAKE_CURRENT_SOURCE_DIR}/archive/generator.py"
         "${CMAKE_CURRENT_SOURCE_DIR}/archive/fixture_helper.py"
         "${CMAKE_CURRENT_SOURCE_DIR}/archive/input.txt"
-        "${CMAKE_CURRENT_SOURCE_DIR}/fixture.tar.xz"
     VERBATIM)
 add_custom_target(fixture-fetch DEPENDS "${_fetch_stamp}")
 set_property(TARGET fixture-fetch PROPERTY
@@ -104,10 +95,6 @@ elseif(PYTHON_GENERATOR_CASE STREQUAL "build-root-escape")
     set(_build_root "${CMAKE_BINARY_DIR}/outside")
 elseif(PYTHON_GENERATOR_CASE STREQUAL "missing-input")
     set(_source_inputs "missing.txt")
-elseif(PYTHON_GENERATOR_CASE STREQUAL "archive-escape")
-    set(_source_archive "${CMAKE_BINARY_DIR}/outside.tar.xz")
-elseif(PYTHON_GENERATOR_CASE STREQUAL "bad-archive-sha")
-    set(_source_sha256 "not-a-sha256")
 endif()
 
 aros_generate_python_outputs(
@@ -115,8 +102,6 @@ aros_generate_python_outputs(
     SOURCE_ROOT "${_source_root}"
     BUILD_ROOT "${_build_root}"
     FETCH_TARGET fixture-fetch
-    SOURCE_ARCHIVE "${_source_archive}"
-    SOURCE_SHA256 "${_source_sha256}"
     SOURCE_INPUTS ${_source_inputs}
     JOB
         SCRIPT "${_script}"
@@ -139,8 +124,6 @@ if(PYTHON_GENERATOR_CASE STREQUAL "collision")
         SOURCE_ROOT "${_source_root}"
         BUILD_ROOT "${_build_root}"
         FETCH_TARGET fixture-fetch
-        SOURCE_ARCHIVE "${_source_archive}"
-        SOURCE_SHA256 "${_source_sha256}"
         SOURCE_INPUTS input.txt
         JOB
             SCRIPT generator.py
@@ -249,7 +232,7 @@ if(_noop_found LESS 0)
         "second Python-generator build was not a Ninja no-op:\n${noop_LOG}")
 endif()
 
-# The archive input is a real dependency of the simulated fetch. Once its
+# The fetched inputs are real dependencies of the simulated fetch. Once its
 # completion stamp advances, all Python jobs must regenerate.
 execute_process(COMMAND "${CMAKE_COMMAND}" -E sleep 1)
 file(WRITE "${_archive}/input.txt" "second\n")
@@ -295,35 +278,11 @@ _build("${_success_build}" fixture-generate TRUE restored)
 _assert_contents("${_second_output}"
     "#define SECOND_VALUE \"recovered-two\"\n" "restored deleted output")
 
-# A replaced cache archive must be rejected before its fetched Python can run,
-# even when the fetch stamp itself is still current.
-file(REMOVE "${_second_output}")
-file(WRITE "${_success_build}/portssources/fixture.tar.xz" "tampered\n")
-_build("${_success_build}" fixture-generate FALSE tampered_archive)
-string(FIND "${tampered_archive_LOG}"
-    "source archive SHA-256 mismatch before Python generation"
-    _tampered_archive_found)
-if(_tampered_archive_found LESS 0)
-    message(FATAL_ERROR
-        "tampered source archive missed its diagnostic:\n${tampered_archive_LOG}")
-endif()
-execute_process(COMMAND "${CMAKE_COMMAND}" -E copy_if_different
-    "${_fixture_source_archive}"
-    "${_success_build}/portssources/fixture.tar.xz")
-_build("${_success_build}" fixture-generate TRUE restored_archive)
-_assert_contents("${_second_output}"
-    "#define SECOND_VALUE \"recovered-two\"\n"
-    "output restored after archive recovery")
-
 _configure(collision FALSE "owned by fixture-generate")
 _configure(script-escape FALSE "SCRIPT escapes SOURCE_ROOT")
 _configure(source-input-escape FALSE "SOURCE_INPUT escapes SOURCE_ROOT")
 _configure(output-escape FALSE "OUTPUT escapes BUILD_ROOT")
 _configure(build-root-escape FALSE "BUILD_ROOT must be a private child")
-_configure(archive-escape FALSE
-    "SOURCE_ARCHIVE must be a file")
-_configure(bad-archive-sha FALSE
-    "invalid Python-generator source SHA-256")
 _configure(utility-consumer FALSE
     "Python-generator consumer noncompiling-consumer")
 _configure(missing-python FALSE "a working Python 3 interpreter is required"

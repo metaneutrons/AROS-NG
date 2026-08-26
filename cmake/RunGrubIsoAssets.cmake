@@ -15,9 +15,7 @@ include("${_contract}")
 
 foreach(_required IN ITEMS
         GIA_MODE GIA_SOURCE_ROOT GIA_BUILD_ROOT GIA_BINARY_DIR GIA_SYS_DIR
-        GIA_HOST_PC GIA_HOST_EFI64 GIA_HOST_EFI32 GIA_STAMP
-        GIA_HOST_MMAKE_SHA256 GIA_PC_MANIFEST_SHA256
-        GIA_EFI64_MANIFEST_SHA256 GIA_EFI32_MANIFEST_SHA256)
+        GIA_HOST_PC GIA_HOST_EFI64 GIA_HOST_EFI32 GIA_STAMP)
     if(NOT DEFINED ${_required} OR "${${_required}}" STREQUAL "")
         message(FATAL_ERROR "GRUB2 ISO asset contract omits ${_required}")
     endif()
@@ -35,11 +33,7 @@ foreach(_value IN ITEMS
     list(GET _parts 1 _path)
     _aros_grub_iso_assets_safe_value("GRUB2 ISO runner ${_label}" "${_path}")
 endforeach()
-if(NOT GIA_MODE STREQUAL "x86_64" OR
-   NOT GIA_HOST_MMAKE_SHA256 STREQUAL _AROS_GRUB_ISO_ASSETS_HOST_MMAKE_SHA256 OR
-   NOT GIA_PC_MANIFEST_SHA256 STREQUAL _AROS_GRUB_ISO_ASSETS_PC_MANIFEST_SHA256 OR
-   NOT GIA_EFI64_MANIFEST_SHA256 STREQUAL _AROS_GRUB_ISO_ASSETS_EFI64_MANIFEST_SHA256 OR
-   NOT GIA_EFI32_MANIFEST_SHA256 STREQUAL _AROS_GRUB_ISO_ASSETS_EFI32_MANIFEST_SHA256)
+if(NOT GIA_MODE STREQUAL "x86_64")
     message(FATAL_ERROR "GRUB2 ISO asset contract differs from the audited identity")
 endif()
 
@@ -122,22 +116,19 @@ foreach(_source_file IN ITEMS "${_host_mmake}" "${_pc_manifest}" "${_efi64_manif
         "${GIA_SOURCE_ROOT}" "${_source_file}" "GRUB2 ISO source input")
 endforeach()
 file(SHA256 "${_host_mmake}" _host_mmake_before)
-if(NOT _host_mmake_before STREQUAL _AROS_GRUB_ISO_ASSETS_HOST_MMAKE_SHA256)
-    message(FATAL_ERROR "GRUB2 ISO source recipe differs from the audited SHA-256")
-endif()
 file(SHA256 "${_pc_manifest}" _pc_manifest_before)
 file(SHA256 "${_efi64_manifest}" _efi64_manifest_before)
 file(SHA256 "${_efi32_manifest}" _efi32_manifest_before)
 
 _aros_grub_iso_assets_collect_manifest(
     "${GIA_SOURCE_ROOT}" "${_AROS_GRUB_ISO_ASSETS_PC_MANIFEST}"
-    "${_AROS_GRUB_ISO_ASSETS_PC_MANIFEST_SHA256}" "i386-pc" 273 8 _pc_products)
+    "i386-pc" 273 8 _pc_products)
 _aros_grub_iso_assets_collect_manifest(
     "${GIA_SOURCE_ROOT}" "${_AROS_GRUB_ISO_ASSETS_EFI64_MANIFEST}"
-    "${_AROS_GRUB_ISO_ASSETS_EFI64_MANIFEST_SHA256}" "x86_64-efi" 268 0 _efi64_products)
+    "x86_64-efi" 268 0 _efi64_products)
 _aros_grub_iso_assets_collect_manifest(
     "${GIA_SOURCE_ROOT}" "${_AROS_GRUB_ISO_ASSETS_EFI32_MANIFEST}"
-    "${_AROS_GRUB_ISO_ASSETS_EFI32_MANIFEST_SHA256}" "i386-efi" 269 0 _efi32_products)
+    "i386-efi" 269 0 _efi32_products)
 
 function(_gia_require_executable path label)
     _aros_grub_iso_assets_require_regular("${path}" "${label}")

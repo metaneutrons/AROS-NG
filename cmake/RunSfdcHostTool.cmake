@@ -1,7 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
 
-set(_AROS_SFDC_INPUT_MANIFEST_SHA256
-    "8ec41ceeb354becd032adc968ad3d77b69ba0faee5f642595b321c760ec3e87c")
 set(_AROS_SFDC_VERSION "1.3")
 set(_AROS_SFDC_DATE "2004-11-12")
 
@@ -39,14 +37,13 @@ set(_required
     SFDC_MMAKE_ID SFDC_SOURCE_ROOT SFDC_BUILD_ROOT SFDC_SOURCE_DIR
     SFDC_BINARY_DIR SFDC_OUTPUT SFDC_INPUT_MANIFEST
     SFDC_INPUT_MANIFEST_SHA256 SFDC_PERL SFDC_VERSION SFDC_DATE
-    SFDC_OUTPUT_SHA256)
+    SFDC_OUTPUT_SHA256 SFDC_INPUT_RELATIVE SFDC_INPUT_SHA256)
 foreach(_name IN LISTS _required)
     if(NOT DEFINED ${_name} OR "${${_name}}" STREQUAL "")
         message(FATAL_ERROR "host-sfdc runner contract omits ${_name}")
     endif()
 endforeach()
 if(NOT SFDC_MMAKE_ID STREQUAL "host-sfdc" OR
-   NOT SFDC_INPUT_MANIFEST_SHA256 STREQUAL _AROS_SFDC_INPUT_MANIFEST_SHA256 OR
    NOT SFDC_VERSION STREQUAL _AROS_SFDC_VERSION OR
    NOT SFDC_DATE STREQUAL _AROS_SFDC_DATE)
     message(FATAL_ERROR "host-sfdc runner contract differs from audited identity")
@@ -115,22 +112,31 @@ if(NOT _source_dir STREQUAL _expected_source OR
 endif()
 
 file(SHA256 "${_manifest}" _actual_manifest_sha256)
-if(NOT _actual_manifest_sha256 STREQUAL _AROS_SFDC_INPUT_MANIFEST_SHA256)
-    message(FATAL_ERROR "host-sfdc input manifest differs from its audited SHA-256")
+if(NOT _actual_manifest_sha256 STREQUAL SFDC_INPUT_MANIFEST_SHA256)
+    message(FATAL_ERROR "host-sfdc input manifest changed after configuration; rerun CMake")
 endif()
 file(STRINGS "${_manifest}" _manifest_lines ENCODING UTF-8)
 if(NOT _manifest_lines)
     message(FATAL_ERROR "host-sfdc input manifest is empty")
 endif()
+list(LENGTH SFDC_INPUT_RELATIVE _relative_count)
+list(LENGTH SFDC_INPUT_SHA256 _hash_count)
+if(NOT _manifest_lines STREQUAL SFDC_INPUT_RELATIVE OR
+   NOT _relative_count EQUAL _hash_count)
+    message(FATAL_ERROR
+        "host-sfdc input inventory differs from the configuration snapshot; rerun CMake")
+endif()
 
 set(_manifest_paths "")
 set(_output_content "#!${_perl} -w\n")
+set(_input_index 0)
 foreach(_line IN LISTS _manifest_lines)
-    if(NOT _line MATCHES "^([0-9a-f]+)  ([A-Za-z0-9_.+/-]+)$")
+    if(NOT _line MATCHES "^([A-Za-z0-9_.+/-]+)$")
         message(FATAL_ERROR "malformed host-sfdc input-manifest line '${_line}'")
     endif()
-    set(_digest "${CMAKE_MATCH_1}")
-    set(_relative "${CMAKE_MATCH_2}")
+    set(_relative "${CMAKE_MATCH_1}")
+    list(GET SFDC_INPUT_SHA256 ${_input_index} _digest)
+    math(EXPR _input_index "${_input_index} + 1")
     string(LENGTH "${_digest}" _digest_length)
     if(NOT _digest_length EQUAL 64 OR IS_ABSOLUTE "${_relative}" OR
        _relative MATCHES "(^|/)[.][.]?(/|$)" OR
@@ -151,7 +157,7 @@ foreach(_line IN LISTS _manifest_lines)
     file(SHA256 "${_input_real}" _actual_input_sha256)
     if(NOT _actual_input_sha256 STREQUAL _digest)
         message(FATAL_ERROR
-            "host-sfdc input ${_relative} differs from its audited SHA-256")
+            "host-sfdc input ${_relative} changed after configuration; rerun CMake")
     endif()
     file(READ "${_input_real}" _input_content)
     if(_relative STREQUAL "main.pl")

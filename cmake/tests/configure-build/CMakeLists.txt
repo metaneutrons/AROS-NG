@@ -37,13 +37,19 @@ set(AROS_CONFIGURE_SOURCE_ROOT "${AROS_REPO_ROOT}")
 include("${AROS_REPO_ROOT}/cmake/ConfigureBuild.cmake")
 
 set(_source_root "${AROS_REPO_ROOT}")
-if(CONFIGURE_BUILD_CASE STREQUAL "symlink-input")
+if(CONFIGURE_BUILD_CASE STREQUAL "symlink-input" OR
+   CONFIGURE_BUILD_CASE STREQUAL "bad-inventory")
     set(_source_root "${CMAKE_BINARY_DIR}/input-source")
     file(MAKE_DIRECTORY "${_source_root}/tools")
     file(COPY "${AROS_REPO_ROOT}/tools/ADFlib" DESTINATION "${_source_root}/tools")
-    file(REMOVE "${_source_root}/tools/ADFlib/src/adf_env.c")
-    file(CREATE_LINK "${AROS_REPO_ROOT}/tools/ADFlib/src/adf_env.c"
-        "${_source_root}/tools/ADFlib/src/adf_env.c" SYMBOLIC)
+    if(CONFIGURE_BUILD_CASE STREQUAL "symlink-input")
+        file(REMOVE "${_source_root}/tools/ADFlib/src/adf_env.c")
+        file(CREATE_LINK "${AROS_REPO_ROOT}/tools/ADFlib/src/adf_env.c"
+            "${_source_root}/tools/ADFlib/src/adf_env.c" SYMBOLIC)
+    else()
+        file(APPEND "${_source_root}/tools/ADFlib/adflib-configure.inputs"
+            "missing.c\n")
+    endif()
 endif()
 set(AROS_CONFIGURE_SOURCE_ROOT "${_source_root}")
 
@@ -55,7 +61,6 @@ set(_headers
 
 set(_adflib_source "${_source_root}/tools/ADFlib")
 set(_adflib_manifest "${_adflib_source}/adflib-configure.inputs")
-set(_adflib_digest "a63a7498752d68175093b94dba873cc8a343d75179feec5cd6a6020e56e779a5")
 set(_host_binary "${CMAKE_BINARY_DIR}/gen/configure/tools/ADFlib/host")
 set(_host_prefix "${CMAKE_BINARY_DIR}/hosttools")
 set(_target_binary "${CMAKE_BINARY_DIR}/gen/configure/tools/ADFlib/target")
@@ -63,9 +68,7 @@ set(_target_prefix "${CMAKE_BINARY_DIR}/SYS/Developer")
 set(_host_id host-adflib)
 set(_target_id linklib-adflib)
 
-if(CONFIGURE_BUILD_CASE STREQUAL "bad-digest")
-    set(_adflib_digest "0000000000000000000000000000000000000000000000000000000000000000")
-elseif(CONFIGURE_BUILD_CASE STREQUAL "escape-binary")
+if(CONFIGURE_BUILD_CASE STREQUAL "escape-binary")
     set(_host_binary "${CMAKE_BINARY_DIR}/escaped")
 elseif(CONFIGURE_BUILD_CASE STREQUAL "wrong-identity")
     set(_target_id wrong-adflib-target)
@@ -110,7 +113,6 @@ aros_build_configure(
     BINARY_DIR "${_host_binary}"
     INSTALL_PREFIX "${_host_prefix}"
     INPUT_MANIFEST "${_adflib_manifest}"
-    INPUT_MANIFEST_SHA256 "${_adflib_digest}"
     PRIVATE_PRODUCTS "${_host_binary}/build/libadf.a"
     INSTALL_PRODUCTS ${_host_installed})
 
@@ -121,12 +123,13 @@ aros_build_configure(
     BINARY_DIR "${_target_binary}"
     INSTALL_PREFIX "${_target_prefix}"
     INPUT_MANIFEST "${_adflib_manifest}"
-    INPUT_MANIFEST_SHA256 "${_adflib_digest}"
     PRIVATE_PRODUCTS "${_target_binary}/build/libadf.a"
     INSTALL_PRODUCTS ${_target_installed}
     PROVIDED_LIBRARY adf)
 
 set(_wireless_source "${_source_root}/workbench/network/WirelessManager")
+set(_wireless_manifest
+    "${_wireless_source}/wirelessmanager-configure.inputs")
 set(_wireless_binary
     "${CMAKE_BINARY_DIR}/gen/configure/workbench/network/WirelessManager")
 set(_wireless_prefix "${CMAKE_BINARY_DIR}/SYS")
@@ -136,9 +139,7 @@ aros_build_configure(
     SOURCE_DIR "${_wireless_source}"
     BINARY_DIR "${_wireless_binary}"
     INSTALL_PREFIX "${_wireless_prefix}"
-    INPUT_MANIFEST "${_wireless_source}/wirelessmanager-configure.inputs"
-    INPUT_MANIFEST_SHA256
-        "27e629e694f6cbc8dd036f7b188604fd03ed901d181962db143a0789512af760"
+    INPUT_MANIFEST "${_wireless_manifest}"
     PRIVATE_PRODUCTS
         "${_wireless_binary}/source/wpa_supplicant/wpa_supplicant"
         "${_wireless_binary}/source/wpa_supplicant/wpa_passphrase"

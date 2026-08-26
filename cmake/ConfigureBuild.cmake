@@ -37,20 +37,19 @@ endfunction()
 #     SOURCE_DIR <read-only-local-source-root>
 #     BINARY_DIR <private-stage/build-root>
 #     INSTALL_PREFIX <build-tree-prefix>
-#     INPUT_MANIFEST <sha256/path-manifest>
-#     INPUT_MANIFEST_SHA256 <digest>
+#     INPUT_MANIFEST <path-inventory>
 #     PRIVATE_PRODUCTS <paths...>
 #     INSTALL_PRODUCTS <paths...>
 #     [DEPENDENCY_TARGETS <link-library targets...>]
 #     [PROVIDED_LIBRARY <uselibs-name>])
 #
-# Closed counterpart for the three audited local `%build_with_configure`
-# declarations.  The transpiler selects a capability and pins every source;
+# Closed counterpart for the three supported local `%build_with_configure`
+# declarations.  The transpiler selects a capability and validates every source;
 # this layer independently checks the same path/product shape, generates an
 # immutable runner contract and tracks every private and installed output.
 function(aros_build_configure)
     set(oneValueArgs MMAKE_ID MODE SOURCE_DIR BINARY_DIR INSTALL_PREFIX
-        INPUT_MANIFEST INPUT_MANIFEST_SHA256 PROVIDED_LIBRARY)
+        INPUT_MANIFEST PROVIDED_LIBRARY)
     set(multiValueArgs PRIVATE_PRODUCTS INSTALL_PRODUCTS
         DEPENDENCY_TARGETS)
     cmake_parse_arguments(PARSE_ARGV 0 CB "" "${oneValueArgs}" "${multiValueArgs}")
@@ -59,7 +58,7 @@ function(aros_build_configure)
         message(FATAL_ERROR "aros_build_configure received malformed arguments")
     endif()
     foreach(_required IN ITEMS MMAKE_ID MODE SOURCE_DIR BINARY_DIR INSTALL_PREFIX
-            INPUT_MANIFEST INPUT_MANIFEST_SHA256)
+            INPUT_MANIFEST)
         if(NOT CB_${_required})
             message(FATAL_ERROR "aros_build_configure requires ${_required}")
         endif()
@@ -79,13 +78,6 @@ function(aros_build_configure)
     if(TARGET "${CB_MMAKE_ID}")
         message(FATAL_ERROR
             "${CB_MMAKE_ID}: configure-style target was already declared")
-    endif()
-
-    string(LENGTH "${CB_INPUT_MANIFEST_SHA256}" _manifest_digest_length)
-    if(NOT _manifest_digest_length EQUAL 64 OR
-       NOT CB_INPUT_MANIFEST_SHA256 MATCHES "^[0-9a-f]+$")
-        message(FATAL_ERROR
-            "${CB_MMAKE_ID}: invalid input-manifest SHA-256")
     endif()
 
     if(DEFINED AROS_CONFIGURE_SOURCE_ROOT)
@@ -177,8 +169,6 @@ function(aros_build_configure)
         set(_expected_mmake_id "host-adflib")
         set(_expected_source_relative "tools/ADFlib")
         set(_expected_manifest_relative "tools/ADFlib/adflib-configure.inputs")
-        set(_expected_manifest_sha256
-            "a63a7498752d68175093b94dba873cc8a343d75179feec5cd6a6020e56e779a5")
         set(_expected_binary_relative "gen/configure/tools/ADFlib/host")
         set(_expected_prefix_relative "hosttools")
         set(_expected_provided_library "")
@@ -186,8 +176,6 @@ function(aros_build_configure)
         set(_expected_mmake_id "linklib-adflib")
         set(_expected_source_relative "tools/ADFlib")
         set(_expected_manifest_relative "tools/ADFlib/adflib-configure.inputs")
-        set(_expected_manifest_sha256
-            "a63a7498752d68175093b94dba873cc8a343d75179feec5cd6a6020e56e779a5")
         set(_expected_binary_relative "gen/configure/tools/ADFlib/target")
         set(_expected_prefix_relative "SYS/Developer")
         set(_expected_provided_library "adf")
@@ -196,8 +184,6 @@ function(aros_build_configure)
         set(_expected_source_relative "workbench/network/WirelessManager")
         set(_expected_manifest_relative
             "workbench/network/WirelessManager/wirelessmanager-configure.inputs")
-        set(_expected_manifest_sha256
-            "27e629e694f6cbc8dd036f7b188604fd03ed901d181962db143a0789512af760")
         set(_expected_binary_relative
             "gen/configure/workbench/network/WirelessManager")
         set(_expected_prefix_relative "SYS")
@@ -219,10 +205,9 @@ function(aros_build_configure)
         message(FATAL_ERROR
             "${CB_MMAKE_ID}: source identity differs from the audited capability")
     endif()
-    if(NOT _input_manifest STREQUAL _expected_input_manifest OR
-       NOT CB_INPUT_MANIFEST_SHA256 STREQUAL _expected_manifest_sha256)
+    if(NOT _input_manifest STREQUAL _expected_input_manifest)
         message(FATAL_ERROR
-            "${CB_MMAKE_ID}: input-manifest identity differs from the audited capability")
+            "${CB_MMAKE_ID}: input-manifest identity differs from the supported capability")
     endif()
     if(NOT _binary_dir STREQUAL _expected_binary_dir)
         message(FATAL_ERROR
@@ -238,26 +223,20 @@ function(aros_build_configure)
     endif()
 
     file(SHA256 "${_input_manifest}" _actual_manifest_sha256)
-    if(NOT _actual_manifest_sha256 STREQUAL CB_INPUT_MANIFEST_SHA256)
-        message(FATAL_ERROR
-            "${CB_MMAKE_ID}: input manifest differs from the audited SHA-256")
-    endif()
     file(STRINGS "${_input_manifest}" _manifest_lines ENCODING UTF-8)
     if(NOT _manifest_lines)
         message(FATAL_ERROR "${CB_MMAKE_ID}: input manifest is empty")
     endif()
     set(_input_files "")
     set(_manifest_paths "")
+    set(_input_hashes "")
     foreach(_line IN LISTS _manifest_lines)
-        if(NOT _line MATCHES "^([0-9a-f]+)  ([A-Za-z0-9_.+/-]+)$")
+        if(NOT _line MATCHES "^([A-Za-z0-9_.+/-]+)$")
             message(FATAL_ERROR
                 "${CB_MMAKE_ID}: malformed input-manifest line '${_line}'")
         endif()
-        set(_digest "${CMAKE_MATCH_1}")
-        set(_relative "${CMAKE_MATCH_2}")
-        string(LENGTH "${_digest}" _digest_length)
-        if(NOT _digest_length EQUAL 64 OR
-           _relative MATCHES "(^|/)[.][.]?(/|$)" OR
+        set(_relative "${CMAKE_MATCH_1}")
+        if(_relative MATCHES "(^|/)[.][.]?(/|$)" OR
            IS_ABSOLUTE "${_relative}")
             message(FATAL_ERROR
                 "${CB_MMAKE_ID}: unsafe input-manifest line '${_line}'")
@@ -281,12 +260,11 @@ function(aros_build_configure)
                 "${CB_MMAKE_ID}: missing or escaped configure input ${_relative}")
         endif()
         file(SHA256 "${_input_real}" _actual_input_sha256)
-        if(NOT _actual_input_sha256 STREQUAL _digest)
-            message(FATAL_ERROR
-                "${CB_MMAKE_ID}: configure input ${_relative} differs from its manifest")
-        endif()
         list(APPEND _input_files "${_input_real}")
+        list(APPEND _input_hashes "${_actual_input_sha256}")
     endforeach()
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+        "${_input_manifest}" ${_input_files})
 
     set(_private_products "")
     set(_install_products "")
@@ -496,7 +474,7 @@ function(aros_build_configure)
             "CB_BINARY_DIR|${_binary_dir}"
             "CB_INSTALL_PREFIX|${_install_prefix}"
             "CB_INPUT_MANIFEST|${_input_manifest}"
-            "CB_INPUT_MANIFEST_SHA256|${CB_INPUT_MANIFEST_SHA256}"
+            "CB_INPUT_MANIFEST_SHA256|${_actual_manifest_sha256}"
             "CB_COMPILER|${_compiler}"
             "CB_ARCHIVER|${_archiver}"
             "CB_RANLIB|${_ranlib}"
@@ -513,7 +491,8 @@ function(aros_build_configure)
         string(APPEND _contract_content "set(${_name} [==[${_value}]==])\n")
     endforeach()
     foreach(_list_name IN ITEMS CB_PRIVATE_PRODUCTS CB_INSTALL_PRODUCTS
-            CB_DEPENDENCY_PRODUCTS CB_COMPILE_FLAGS)
+            CB_DEPENDENCY_PRODUCTS CB_COMPILE_FLAGS CB_INPUT_RELATIVE
+            CB_INPUT_SHA256)
         string(APPEND _contract_content "set(${_list_name})\n")
     endforeach()
     foreach(_value IN LISTS _private_products)
@@ -531,6 +510,14 @@ function(aros_build_configure)
     foreach(_value IN LISTS _compile_flags)
         string(APPEND _contract_content
             "list(APPEND CB_COMPILE_FLAGS [==[${_value}]==])\n")
+    endforeach()
+    foreach(_value IN LISTS _manifest_paths)
+        string(APPEND _contract_content
+            "list(APPEND CB_INPUT_RELATIVE [==[${_value}]==])\n")
+    endforeach()
+    foreach(_value IN LISTS _input_hashes)
+        string(APPEND _contract_content
+            "list(APPEND CB_INPUT_SHA256 [==[${_value}]==])\n")
     endforeach()
     file(GENERATE OUTPUT "${_contract}" CONTENT "${_contract_content}")
 

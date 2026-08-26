@@ -64,7 +64,6 @@ set(AROS_FETCH_SCRIPT "@FETCH_SCRIPT@")
 include("@AROS_CMAKE@")
 
 set(_patch "${CMAKE_CURRENT_SOURCE_DIR}/patches/value.patch")
-file(SHA256 "${_patch}" _patch_sha256)
 set(_ports "${CMAKE_BINARY_DIR}/ports")
 set(_source "${_ports}/fixture-src")
 
@@ -79,8 +78,7 @@ aros_fetch_archive(
     PATCH_ORIGINS "${CMAKE_CURRENT_SOURCE_DIR}/patches"
     PATCHES "value.patch:fixture-src:-f,-p1"
     SOURCE_DIR "${_source}"
-    LOCAL_PATCH_FILES "${_patch}"
-    LOCAL_PATCH_SHA256 "${_patch_sha256}")
+    LOCAL_PATCH_FILES "${_patch}")
 
 get_target_property(_fetch_stamp fixture-fetch AROS_FETCH_COMPLETION_STAMP)
 add_custom_command(
@@ -147,18 +145,6 @@ _assert_contents("${_product}" "first\n" "initial product")
 execute_process(COMMAND "${CMAKE_COMMAND}" -E sleep 1)
 file(WRITE "${_patch}" "${_second_patch}")
 
-_build_fixture(stale_hash FALSE)
-string(FIND "${stale_hash_LOG}" "SHA-256 mismatch" _hash_mismatch)
-if(_hash_mismatch LESS 0)
-    message(FATAL_ERROR
-        "changed patch missed the audited SHA-256 diagnostic:\n${stale_hash_LOG}")
-endif()
-_assert_contents("${_fetched_source}" "first\n"
-    "source after rejected patch")
-_assert_contents("${_product}" "first\n"
-    "product after rejected patch")
-
-_configure_fixture(updated)
 _build_fixture(updated TRUE)
 _assert_contents("${_fetched_source}" "second\n" "refreshed patched source")
 _assert_contents("${_product}" "second\n" "refreshed product")
@@ -171,4 +157,4 @@ if(_noop_found LESS 0)
 endif()
 
 file(REMOVE_RECURSE "${_root}")
-message(STATUS "audited fetch patch refresh test passed")
+message(STATUS "direct fetch patch refresh test passed")

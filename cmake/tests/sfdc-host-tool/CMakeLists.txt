@@ -12,17 +12,20 @@ if(NOT DEFINED SFDC_HOST_TOOL_CASE)
 endif()
 
 set(AROS_SFDC_SOURCE_ROOT "${AROS_REPO_ROOT}")
-if(SFDC_HOST_TOOL_CASE STREQUAL "bad-manifest" OR
+if(SFDC_HOST_TOOL_CASE STREQUAL "mutable-source" OR
+   SFDC_HOST_TOOL_CASE STREQUAL "bad-manifest" OR
    SFDC_HOST_TOOL_CASE STREQUAL "symlink-input")
     set(AROS_SFDC_SOURCE_ROOT "${CMAKE_BINARY_DIR}/source-root")
-    file(MAKE_DIRECTORY "${AROS_SFDC_SOURCE_ROOT}/tools")
-    file(COPY "${AROS_REPO_ROOT}/tools/sfdc"
-        DESTINATION "${AROS_SFDC_SOURCE_ROOT}/tools")
+    if(NOT EXISTS "${AROS_SFDC_SOURCE_ROOT}/tools/sfdc")
+        file(MAKE_DIRECTORY "${AROS_SFDC_SOURCE_ROOT}/tools")
+        file(COPY "${AROS_REPO_ROOT}/tools/sfdc"
+            DESTINATION "${AROS_SFDC_SOURCE_ROOT}/tools")
+    endif()
     if(SFDC_HOST_TOOL_CASE STREQUAL "bad-manifest")
         file(APPEND
             "${AROS_SFDC_SOURCE_ROOT}/tools/sfdc/sfdc-host.inputs"
-            "0000000000000000000000000000000000000000000000000000000000000000  extra.pl\n")
-    else()
+            "extra.pl\n")
+    elseif(SFDC_HOST_TOOL_CASE STREQUAL "symlink-input")
         set(_copied "${AROS_SFDC_SOURCE_ROOT}/tools/sfdc/CLib.pl")
         file(REMOVE "${_copied}")
         file(CREATE_LINK "${AROS_REPO_ROOT}/tools/sfdc/CLib.pl" "${_copied}" SYMBOLIC)
@@ -41,7 +44,8 @@ if(NOT AROS_HOST_SFDC STREQUAL "${CMAKE_BINARY_DIR}/hosttools/sfdc")
     message(FATAL_ERROR "host-sfdc did not export its private output path")
 endif()
 
-if(NOT SFDC_HOST_TOOL_CASE STREQUAL "")
+if(NOT SFDC_HOST_TOOL_CASE STREQUAL "" AND
+   NOT SFDC_HOST_TOOL_CASE STREQUAL "mutable-source")
     message(FATAL_ERROR
         "sfdc-host-tool fixture case ${SFDC_HOST_TOOL_CASE} unexpectedly configured")
 endif()

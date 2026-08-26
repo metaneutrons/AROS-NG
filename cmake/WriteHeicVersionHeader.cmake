@@ -1,7 +1,7 @@
 # Implements the two exact version-header substitutions in
 # workbench/classes/datatypes/heic/mmakefile.src.  These headers are private
 # to the fetched ports, so their values deliberately remain tied to the
-# corresponding pinned archive revisions.
+# corresponding archive versions.
 
 foreach(_required IN ITEMS
         AROS_HEIC_VERSION_KIND

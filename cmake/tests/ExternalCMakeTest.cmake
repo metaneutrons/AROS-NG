@@ -98,22 +98,6 @@ _configure(toolchain-override FALSE "overrides a forced toolchain setting")
 _configure(collision FALSE "is already owned by")
 _configure(binary-collision FALSE "binary directory is already owned")
 
-_configure(bad-hash TRUE "")
-execute_process(
-    COMMAND "${CMAKE_COMMAND}" --build "${_root}/bad-hash"
-        --target fixture-external
-    RESULT_VARIABLE _hash_result
-    OUTPUT_VARIABLE _hash_stdout
-    ERROR_VARIABLE _hash_stderr)
-if(_hash_result EQUAL 0)
-    message(FATAL_ERROR "bad external source hash unexpectedly built")
-endif()
-set(_hash_log "${_hash_stdout}\n${_hash_stderr}")
-string(FIND "${_hash_log}" "SHA-256 mismatch" _hash_found)
-if(_hash_found LESS 0)
-    message(FATAL_ERROR "bad hash missed diagnostic:\n${_hash_log}")
-endif()
-
 _configure(missing-output TRUE "")
 execute_process(
     COMMAND "${CMAKE_COMMAND}" --build "${_root}/missing-output"

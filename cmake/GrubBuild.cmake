@@ -1,6 +1,7 @@
 include_guard(GLOBAL)
 
 include(CMakeParseArguments)
+include("${CMAKE_CURRENT_LIST_DIR}/GrubSourceLock.cmake")
 
 set(_AROS_GRUB_BUILD_MODULE_DIR "${CMAKE_CURRENT_LIST_DIR}")
 
@@ -17,12 +18,6 @@ endif()
 # Closed GRUB 2.12 host-tool builder.  The legacy declarations all consume the
 # same patched upstream source, but their PC, EFI64 and EFI32 build trees must
 # never share an install prefix: GRUB installs host programs into --bindir.
-set(_AROS_GRUB2_VERSION "2.12")
-set(_AROS_GRUB2_ARCHIVE_SHA256
-    "f3c97391f7c4eaa677a78e090c7e97e6dc47b16f655f04683ebd37bef7fe0faa")
-set(_AROS_GRUB2_PATCH_SHA256
-    "b2c391c0ee5a7ff1bf2777698195f137f7cf450cc6b077ed3478211aa9b55e85")
-set(_AROS_GRUB2_SOURCE_URL "https://ftp.gnu.org/gnu/grub/grub-2.12.tar.xz")
 set(_AROS_GRUB2_PATCH_RELATIVE
     "arch/all-pc/boot/grub2-aros/grub-2.12-aros.diff")
 
@@ -200,10 +195,6 @@ function(aros_build_grub2)
         set(_link_format "-melf_i386")
         set(_expected_file_count 615)
         set(_install_manifest_relative "cmake/manifests/grub-2.12-pc.install")
-        set(_install_manifest_sha256
-            "63fc5e9ca178cad7df59be8e43c077e8d2f6a5b492b57f8612dbde765eede83b")
-        set(_module_manifest_sha256
-            "1012ee0c7345997671a4da91db5ffd8ea5590d883ebae4dabd70b07d520a5487")
         set(_platform_dir "i386-pc")
     elseif(GB_MODE STREQUAL "efi64")
         set(_expected_id "grub2-efi-host")
@@ -215,10 +206,6 @@ function(aros_build_grub2)
         set(_link_format "-melf_x86_64")
         set(_expected_file_count 591)
         set(_install_manifest_relative "cmake/manifests/grub-2.12-efi64.install")
-        set(_install_manifest_sha256
-            "1dfff4328a95fd6a42cb7593461145ed6897c1ff5d194dd2a8f8e45acde984ad")
-        set(_module_manifest_sha256
-            "0182a8924f5efa2e329f55008ea98cf0641608ca505d8c536373ea89ca905efc")
         set(_platform_dir "x86_64-efi")
     elseif(GB_MODE STREQUAL "efi32")
         set(_expected_id "grub2-efi32-host")
@@ -230,10 +217,6 @@ function(aros_build_grub2)
         set(_link_format "-melf_i386")
         set(_expected_file_count 593)
         set(_install_manifest_relative "cmake/manifests/grub-2.12-efi32.install")
-        set(_install_manifest_sha256
-            "19b64eefd2cfce180515082fb20732945fc9baf785f34c8b629a1ca290505ea6")
-        set(_module_manifest_sha256
-            "eab078c379d196ff49d2bde98be26599009a58c482bdbd27b027be76555d0d54")
         set(_platform_dir "i386-efi")
     else()
         message(FATAL_ERROR "${GB_MMAKE_ID}: unsupported GRUB2 mode ${GB_MODE}")
@@ -286,9 +269,6 @@ function(aros_build_grub2)
         message(FATAL_ERROR "${GB_MMAKE_ID}: GRUB2 patch escaped the source tree")
     endif()
     file(SHA256 "${_patch}" _actual_patch_sha256)
-    if(NOT _actual_patch_sha256 STREQUAL _AROS_GRUB2_PATCH_SHA256)
-        message(FATAL_ERROR "${GB_MMAKE_ID}: GRUB2 patch differs from audited SHA-256")
-    endif()
 
     set(_install_manifest_logical
         "${_source_root_logical}/${_install_manifest_relative}")
@@ -306,8 +286,7 @@ function(aros_build_grub2)
         _install_manifest_owned)
     file(SHA256 "${_install_manifest}" _actual_install_manifest_sha256)
     if(NOT _install_manifest_owned OR
-       NOT _install_manifest STREQUAL _expected_install_manifest OR
-       NOT _actual_install_manifest_sha256 STREQUAL _install_manifest_sha256)
+       NOT _install_manifest STREQUAL _expected_install_manifest)
         message(FATAL_ERROR
             "${GB_MMAKE_ID}: GRUB2 install manifest differs from the audited product set")
     endif()
@@ -571,7 +550,7 @@ function(aros_build_grub2)
     _aros_grub_contract_set(GB_INSTALL_MANIFEST "${_install_manifest}")
     _aros_grub_contract_set(GB_SOURCE_URL "${_AROS_GRUB2_SOURCE_URL}")
     _aros_grub_contract_set(GB_ARCHIVE_SHA256 "${_AROS_GRUB2_ARCHIVE_SHA256}")
-    _aros_grub_contract_set(GB_PATCH_SHA256 "${_AROS_GRUB2_PATCH_SHA256}")
+    _aros_grub_contract_set(GB_PATCH_SHA256 "${_actual_patch_sha256}")
     # Keep the audited /opt/homebrew/opt spellings in the environment and
     # tool commands.  Their physical resolutions are used above only for
     # containment/identity validation, just as CMake's logical OUTPUT paths
@@ -614,8 +593,7 @@ function(aros_build_grub2)
     _aros_grub_contract_set(GB_LINK_FORMAT "${_link_format}")
     _aros_grub_contract_set(GB_PLATFORM_DIR "${_platform_dir}")
     _aros_grub_contract_set(GB_EXPECTED_FILE_COUNT "${_expected_file_count}")
-    _aros_grub_contract_set(GB_INSTALL_MANIFEST_SHA256 "${_install_manifest_sha256}")
-    _aros_grub_contract_set(GB_MODULE_MANIFEST_SHA256 "${_module_manifest_sha256}")
+    _aros_grub_contract_set(GB_INSTALL_MANIFEST_SHA256 "${_actual_install_manifest_sha256}")
     _aros_grub_contract_set(GB_STAMP "${_stamp}")
     foreach(_product IN LISTS _private_products_physical)
         _aros_grub_safe_value("${GB_MMAKE_ID}: private product" "${_product}")

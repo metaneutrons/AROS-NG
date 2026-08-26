@@ -1739,6 +1739,29 @@ whether it is still needed is unchecked.
 
 ## Quality gates
 
+### 52. WORK — transpiler error handling is fail-closed at the core, not yet enterprise-complete
+
+The worst failure mode is closed: directory-walk, fetch-discovery and parse
+errors are no longer discarded through `.ok()`, and recognised capability
+drift no longer survives only in `unmodelled-declarations.txt`. Parallel
+failures are aggregated, sorted and deduplicated, and capability fingerprints
+name the expected and observed value plus the required transpiler update.
+
+Five pieces remain before calling the CLI enterprise-grade:
+
+1. diagnostics need stable error codes, typed categories and source spans
+   rather than mostly formatted strings;
+2. generated CMake and every sidecar/report need a single atomic publication
+   transaction, so a late write failure cannot leave a mixed generation;
+3. report removal/write errors must be fatal rather than logged and ignored;
+4. automation needs a machine-readable diagnostic mode in addition to the
+   human CLI rendering;
+5. embedded fingerprint lookup and similar internal invariants should return
+   structured internal errors instead of panicking.
+
+Until those five are gated by tests, “enterprise grade” would overstate the
+implementation.
+
 ### 47. WORK — `parse_mmakefile_impl` is the last thing in the way
 
 The decomposition took `parser.rs` from 12 415 lines to 5 250, in eleven
@@ -1747,7 +1770,7 @@ commits, each of them verified byte-identical on all three presets by the point
 
 | module | lines | what it owns |
 |---|---|---|
-| `capability/` (nine files) | 4 219 | the declarations modelled exactly, each pinned |
+| `capability/` (nine files) | 4 219 | declarations modelled by semantic contracts or narrow fingerprints |
 | `make_vars.rs` | 788 | variables per line, and the three-valued conditional |
 | `sources.rs` | 464 | argument text to four language lanes |
 | `module_paths.rs` | 379 | output directory by module type, implied `#MM` edges |
@@ -1780,7 +1803,35 @@ not make the design.
 Worth doing, not urgent. `parser.rs` is now the file its name says it is, and
 the argument for going further is readability rather than a blocked change.
 
-### 46. RESOLVED — the 26 pinned digests are data, in two classes
+### 46. SUPERSEDED 2026-08-26 — package pins removed; 14 narrow capability fingerprints remain
+
+The design recorded below was an intermediate state and is no longer the
+current contract. The transpiler no longer embeds archive hashes for Mesa,
+Mako, MarkupSafe, CUnit or libaom, and it no longer hashes repository drivers,
+patches, whole AHI/GRUB/Nouveau recipes, or redundant outer manifests.
+
+The current rules are documented in
+`tools/aros-tools/crates/aros-transpiler/README.md`. In short:
+
+- package identity comes from the upstream `%fetch` declaration;
+- repository files and patches are direct dependencies;
+- explicit source manifests contain paths only; CMake watches their files and
+  passes transient configure-time content hashes to the runner;
+- `capability-fingerprints.pins` has 14 entries, restricted to opaque Mesa
+  recipe fragments and versioned source inventories expanded into fixed jobs;
+- GRUB 2.12 retains one fixed archive SHA-256 in `cmake/GrubSourceLock.cmake`
+  because CMake downloads it directly and therefore needs an integrity anchor.
+
+Fingerprint drift now stops the transpiler with the affected input, expected
+and observed fingerprints, and the instruction to review and update the
+capability. It cannot silently fall through to a partial graph. Expected
+architecture exclusions, such as the x86-only GRUB host lanes on ARM, remain
+non-fatal.
+
+The following text is retained as investigation history for the superseded
+26-digest design.
+
+#### Historical intermediate design
 
 26 `*_SHA256` constants left `parser.rs` for
 `aros-transpiler/pinned-digests.pins`, and they turned out to be 24 distinct

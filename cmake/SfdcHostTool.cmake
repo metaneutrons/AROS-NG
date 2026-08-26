@@ -6,8 +6,6 @@ include(CMakeParseArguments)
 # separate from HostTools.cmake until a translated declaration consumes it:
 # unlike the C host tools there is no target compilation, and the executable
 # is an exact concatenation of a small, audited Perl source closure.
-set(_AROS_SFDC_INPUT_MANIFEST_SHA256
-    "8ec41ceeb354becd032adc968ad3d77b69ba0faee5f642595b321c760ec3e87c")
 set(_AROS_SFDC_VERSION "1.3")
 set(_AROS_SFDC_DATE "2004-11-12")
 
@@ -50,7 +48,7 @@ endfunction()
 # Produces only ${CMAKE_BINARY_DIR}/hosttools/sfdc and exports that path as
 # AROS_HOST_SFDC to the caller.  The optional AROS_SFDC_SOURCE_ROOT variable is
 # intentionally useful only for focused fixtures; production defaults to the
-# top-level source tree and still requires the exact pinned input manifest.
+# top-level source tree and still requires the explicit checked input manifest.
 function(aros_build_host_sfdc)
     set(one_value_args PERL)
     cmake_parse_arguments(PARSE_ARGV 0 SFDC "" "${one_value_args}" "")
@@ -144,9 +142,6 @@ function(aros_build_host_sfdc)
     endif()
 
     file(SHA256 "${_manifest}" _actual_manifest_sha256)
-    if(NOT _actual_manifest_sha256 STREQUAL _AROS_SFDC_INPUT_MANIFEST_SHA256)
-        message(FATAL_ERROR "host-sfdc: input manifest differs from its audited SHA-256")
-    endif()
     file(STRINGS "${_manifest}" _manifest_lines ENCODING UTF-8)
     if(NOT _manifest_lines)
         message(FATAL_ERROR "host-sfdc: input manifest is empty")
@@ -154,15 +149,14 @@ function(aros_build_host_sfdc)
 
     set(_input_files "")
     set(_manifest_paths "")
+    set(_input_hashes "")
     set(_output_content "#!${_perl} -w\n")
     foreach(_line IN LISTS _manifest_lines)
-        if(NOT _line MATCHES "^([0-9a-f]+)  ([A-Za-z0-9_.+/-]+)$")
+        if(NOT _line MATCHES "^([A-Za-z0-9_.+/-]+)$")
             message(FATAL_ERROR "host-sfdc: malformed input-manifest line '${_line}'")
         endif()
-        set(_digest "${CMAKE_MATCH_1}")
-        set(_relative "${CMAKE_MATCH_2}")
-        string(LENGTH "${_digest}" _digest_length)
-        if(NOT _digest_length EQUAL 64 OR IS_ABSOLUTE "${_relative}" OR
+        set(_relative "${CMAKE_MATCH_1}")
+        if(IS_ABSOLUTE "${_relative}" OR
            _relative MATCHES "(^|/)[.][.]?(/|$)" OR
            _relative IN_LIST _manifest_paths)
             message(FATAL_ERROR "host-sfdc: unsafe input-manifest line '${_line}'")
@@ -180,10 +174,7 @@ function(aros_build_host_sfdc)
             message(FATAL_ERROR "host-sfdc: input ${_relative} escaped the source tree")
         endif()
         file(SHA256 "${_input}" _actual_input_sha256)
-        if(NOT _actual_input_sha256 STREQUAL _digest)
-            message(FATAL_ERROR
-                "host-sfdc: input ${_relative} differs from its audited SHA-256")
-        endif()
+        list(APPEND _input_hashes "${_actual_input_sha256}")
         file(READ "${_input}" _input_content)
         if(_relative STREQUAL "main.pl")
             string(REGEX REPLACE "^#![^\n]*\n" "" _input_content "${_input_content}")
@@ -195,6 +186,8 @@ function(aros_build_host_sfdc)
         string(APPEND _output_content "${_input_content}")
         list(APPEND _input_files "${_input_lexical}")
     endforeach()
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+        "${_manifest_lexical}" ${_input_files})
     string(SHA256 _output_sha256 "${_output_content}")
 
     string(SHA256 _product_key "${_output}")
@@ -215,7 +208,7 @@ function(aros_build_host_sfdc)
             "SFDC_BINARY_DIR|${_binary_dir}"
             "SFDC_OUTPUT|${_output}"
             "SFDC_INPUT_MANIFEST|${_manifest}"
-            "SFDC_INPUT_MANIFEST_SHA256|${_AROS_SFDC_INPUT_MANIFEST_SHA256}"
+            "SFDC_INPUT_MANIFEST_SHA256|${_actual_manifest_sha256}"
             "SFDC_PERL|${_perl}"
             "SFDC_VERSION|${_AROS_SFDC_VERSION}"
             "SFDC_DATE|${_AROS_SFDC_DATE}"
@@ -225,6 +218,15 @@ function(aros_build_host_sfdc)
         math(EXPR _value_start "${_separator} + 1")
         string(SUBSTRING "${_pair}" ${_value_start} -1 _value)
         string(APPEND _contract_content "set(${_name} [==[${_value}]==])\n")
+    endforeach()
+    string(APPEND _contract_content "set(SFDC_INPUT_RELATIVE)\nset(SFDC_INPUT_SHA256)\n")
+    foreach(_relative IN LISTS _manifest_paths)
+        string(APPEND _contract_content
+            "list(APPEND SFDC_INPUT_RELATIVE [==[${_relative}]==])\n")
+    endforeach()
+    foreach(_digest IN LISTS _input_hashes)
+        string(APPEND _contract_content
+            "list(APPEND SFDC_INPUT_SHA256 [==[${_digest}]==])\n")
     endforeach()
     file(GENERATE OUTPUT "${_contract}" CONTENT "${_contract_content}")
 

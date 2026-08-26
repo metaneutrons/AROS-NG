@@ -9,7 +9,6 @@ include("${CMAKE_CURRENT_LIST_DIR}/../../AROS.cmake")
 
 set(_archive "${CMAKE_CURRENT_LIST_DIR}/archive/source.txt")
 set(_upstream "${CMAKE_CURRENT_LIST_DIR}/upstream")
-file(SHA256 "${_archive}" _archive_sha256)
 
 add_custom_target(fixture-fetch)
 set_property(TARGET fixture-fetch PROPERTY
@@ -41,10 +40,6 @@ if(EXTERNAL_CMAKE_CASE STREQUAL "escape-product")
 elseif(EXTERNAL_CMAKE_CASE STREQUAL "missing-output")
     set(_header "${_prefix}/include/not-installed.h")
 endif()
-if(EXTERNAL_CMAKE_CASE STREQUAL "bad-hash")
-    set(_archive_sha256
-        "0000000000000000000000000000000000000000000000000000000000000000")
-endif()
 if(EXTERNAL_CMAKE_CASE STREQUAL "unsafe-option")
     set(_options "-Pbad.cmake")
 elseif(EXTERNAL_CMAKE_CASE STREQUAL "toolchain-override")
@@ -59,8 +54,6 @@ aros_build_external_cmake(
     BINARY_DIR "${_binary}"
     INSTALL_PREFIX "${_prefix}"
     FETCH_TARGET "${_fetch_target}"
-    SOURCE_ARCHIVE "${_archive}"
-    SOURCE_SHA256 "${_archive_sha256}"
     PROVIDED_LIBRARY tiny
     OPTIONS "${_options}"
     LIBRARY_PRODUCTS "${_library}"
@@ -82,8 +75,6 @@ if(EXTERNAL_CMAKE_CASE STREQUAL "collision" OR
         BINARY_DIR "${_second_binary}"
         INSTALL_PREFIX "${_prefix}"
         FETCH_TARGET fixture-fetch
-        SOURCE_ARCHIVE "${_archive}"
-        SOURCE_SHA256 "${_archive_sha256}"
         PROVIDED_LIBRARY tiny
         OPTIONS -DMINI_FEATURE=yes
         LIBRARY_PRODUCTS "${_prefix}/lib/libtiny.a"

@@ -7,10 +7,8 @@ cmake_path(GET _cmake_dir PARENT_PATH _source_dir)
 set(_compat_dir
     "${_source_dir}/workbench/libs/mesa/libcompiler/cxx-compat")
 set(_compat_header "${_compat_dir}/new")
-file(SHA256 "${_compat_header}" _compat_sha256)
-if(NOT _compat_sha256 STREQUAL
-   "a1163dd966449e85f08deeb4775716a34c69b68831e1ac5fc75ea121814bf0ba")
-    message(FATAL_ERROR "Mesa placement-new compatibility header drifted")
+if(NOT EXISTS "${_compat_header}" OR IS_DIRECTORY "${_compat_header}")
+    message(FATAL_ERROR "Mesa placement-new compatibility header is missing")
 endif()
 
 if(DEFINED ENV{TMPDIR} AND IS_DIRECTORY "$ENV{TMPDIR}")

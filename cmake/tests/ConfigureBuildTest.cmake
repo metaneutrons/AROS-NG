@@ -186,7 +186,7 @@ if(NOT _wireless_source_before STREQUAL _wireless_source_after)
     message(FATAL_ERROR "configure-style runner modified WirelessManager sources")
 endif()
 
-_configure(bad-digest FALSE "input-manifest identity differs from the audited capability")
+_configure(bad-inventory FALSE "missing or escaped configure input missing.c")
 _configure(escape-binary FALSE "binary directory must be a private child")
 _configure(wrong-identity FALSE "target identity differs from the audited")
 _configure(symlink-binary FALSE "configure root escapes the build tree")

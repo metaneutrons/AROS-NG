@@ -2225,8 +2225,7 @@ set_property(GLOBAL PROPERTY AROS_FETCH_TARGETS "")
 #                    LOCATION <l> DESTINATION <d> [BASE <b>]
 #                    PATCH_ORIGINS <po> PATCHES <p>
 #                    [SOURCE_DIR <audited-source>
-#                     LOCAL_PATCH_FILES <files...>
-#                     LOCAL_PATCH_SHA256 <digests...>])
+#                     LOCAL_PATCH_FILES <files...>])
 #
 # Declares a fetch target. The recipe mirrors the %fetch macro's invocation of
 # scripts/fetch.sh.  The completion stamp lives in the concrete unpack
@@ -2236,7 +2235,7 @@ set_property(GLOBAL PROPERTY AROS_FETCH_TARGETS "")
 function(aros_fetch_archive)
     set(oneValueArgs NAME ARCHIVE SUFFIXES ORIGINS LOCATION DESTINATION BASE
         PATCH_ORIGINS PATCHES SOURCE_DIR)
-    set(multiValueArgs LOCAL_PATCH_FILES LOCAL_PATCH_SHA256)
+    set(multiValueArgs LOCAL_PATCH_FILES)
     cmake_parse_arguments(FA "" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
 
     # Empty LOCATION/BASE/SUFFIXES values are part of the legacy %fetch
@@ -2268,7 +2267,8 @@ function(aros_fetch_archive)
     endif()
     set(_stamp "${FA_DESTINATION}/.${FA_ARCHIVE}-fetched")
 
-    # Strict external-CMake profiles pin their in-tree patches.  fetch.sh
+    # Strict external-CMake profiles track their in-tree patches directly.
+    # fetch.sh
     # deliberately caches both the copied patch and an `.applied` marker, so a
     # plain file dependency would rerun the recipe but still use the old
     # patch.  When one of these audited inputs changes, discard only the
@@ -2276,18 +2276,12 @@ function(aros_fetch_archive)
     # letting fetch.sh unpack and patch it again.
     set(_patch_refresh_commands "")
     set(_patch_dependency_args "")
-    if(FA_SOURCE_DIR OR FA_LOCAL_PATCH_FILES OR FA_LOCAL_PATCH_SHA256)
-        if(NOT FA_SOURCE_DIR OR NOT FA_LOCAL_PATCH_FILES OR
-           NOT FA_LOCAL_PATCH_SHA256)
+    if(FA_SOURCE_DIR OR FA_LOCAL_PATCH_FILES)
+        if(NOT FA_SOURCE_DIR OR NOT FA_LOCAL_PATCH_FILES)
             message(FATAL_ERROR
-                "${FA_NAME}: SOURCE_DIR, LOCAL_PATCH_FILES and LOCAL_PATCH_SHA256 must be declared together")
+                "${FA_NAME}: SOURCE_DIR and LOCAL_PATCH_FILES must be declared together")
         endif()
         list(LENGTH FA_LOCAL_PATCH_FILES _local_patch_count)
-        list(LENGTH FA_LOCAL_PATCH_SHA256 _local_patch_hash_count)
-        if(NOT _local_patch_count EQUAL _local_patch_hash_count)
-            message(FATAL_ERROR
-                "${FA_NAME}: local patch files and SHA-256 digests differ in length")
-        endif()
 
         set(_destination "${FA_DESTINATION}")
         set(_source "${FA_SOURCE_DIR}")
@@ -2317,14 +2311,6 @@ function(aros_fetch_archive)
         math(EXPR _last_local_patch "${_local_patch_count} - 1")
         foreach(_index RANGE 0 ${_last_local_patch})
             list(GET FA_LOCAL_PATCH_FILES ${_index} _raw_patch)
-            list(GET FA_LOCAL_PATCH_SHA256 ${_index} _patch_sha256)
-            string(LENGTH "${_patch_sha256}" _patch_sha256_length)
-            if(NOT _patch_sha256_length EQUAL 64 OR
-               NOT _patch_sha256 MATCHES "^[0-9A-Fa-f]+$")
-                message(FATAL_ERROR
-                    "${FA_NAME}: invalid local patch SHA-256 '${_patch_sha256}'")
-            endif()
-            string(TOLOWER "${_patch_sha256}" _patch_sha256)
 
             if("${_raw_patch}" MATCHES "[;\"$\\\r\n]")
                 message(FATAL_ERROR
@@ -2374,11 +2360,6 @@ function(aros_fetch_archive)
             list(APPEND _cached_patch_paths "${_patch_base}/${_patch_name}")
             list(APPEND _applied_patch_markers
                 "${_patch_base}/.${_patch_name}.applied")
-            list(APPEND _patch_refresh_commands
-                COMMAND "${CMAKE_COMMAND}"
-                    "-DFILE=${_patch}"
-                    "-DEXPECTED=${_patch_sha256}"
-                    -P "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/VerifySHA256.cmake")
         endforeach()
 
         separate_arguments(_archive_suffixes UNIX_COMMAND "${FA_SUFFIXES}")
@@ -2401,8 +2382,7 @@ function(aros_fetch_archive)
                     "${_patch}" "${_patch_base}/${_patch_name}")
         endforeach()
         set(_patch_dependency_args DEPENDS
-            ${_local_patch_inputs}
-            "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/VerifySHA256.cmake")
+            ${_local_patch_inputs})
     endif()
 
     add_custom_command(
@@ -2442,8 +2422,6 @@ endfunction()
 #     BINARY_DIR <private-build-dir>
 #     INSTALL_PREFIX <build-tree-prefix>
 #     FETCH_TARGET <fetch-owner>
-#     SOURCE_ARCHIVE <downloaded-archive>
-#     SOURCE_SHA256 <digest>
 #     PROVIDED_LIBRARY <uselibs-name>
 #     OPTIONS <cmake-options...>
 #     LIBRARY_PRODUCTS <installed-archives...>
@@ -2458,7 +2436,7 @@ endfunction()
 # an escape hatch for arbitrary configure commands.
 function(aros_build_external_cmake)
     set(oneValueArgs MMAKE_ID SOURCE_DIR BINARY_DIR INSTALL_PREFIX
-        FETCH_TARGET SOURCE_ARCHIVE SOURCE_SHA256 PROVIDED_LIBRARY)
+        FETCH_TARGET PROVIDED_LIBRARY)
     set(multiValueArgs OPTIONS LIBRARY_PRODUCTS HEADER_PRODUCTS
         AUXILIARY_PRODUCTS PUBLIC_INCLUDE_DIRS)
     cmake_parse_arguments(PARSE_ARGV 0 EC "" "${oneValueArgs}" "${multiValueArgs}")
@@ -2468,7 +2446,7 @@ function(aros_build_external_cmake)
             "aros_build_external_cmake received malformed arguments")
     endif()
     foreach(_required IN ITEMS MMAKE_ID SOURCE_DIR BINARY_DIR INSTALL_PREFIX
-            FETCH_TARGET SOURCE_ARCHIVE SOURCE_SHA256 PROVIDED_LIBRARY)
+        FETCH_TARGET PROVIDED_LIBRARY)
         if(NOT EC_${_required})
             message(FATAL_ERROR
                 "aros_build_external_cmake requires ${_required}")
@@ -2494,14 +2472,6 @@ function(aros_build_external_cmake)
         message(FATAL_ERROR
             "${EC_MMAKE_ID}: external CMake interface target already exists")
     endif()
-    string(LENGTH "${EC_SOURCE_SHA256}" _source_sha256_length)
-    if(NOT _source_sha256_length EQUAL 64 OR
-       NOT EC_SOURCE_SHA256 MATCHES "^[0-9A-Fa-f]+$")
-        message(FATAL_ERROR
-            "${EC_MMAKE_ID}: invalid external source SHA-256")
-    endif()
-    string(TOLOWER "${EC_SOURCE_SHA256}" _source_sha256)
-
     if(NOT TARGET "${EC_FETCH_TARGET}")
         message(FATAL_ERROR
             "${EC_MMAKE_ID}: missing fetch target ${EC_FETCH_TARGET}")
@@ -2517,14 +2487,11 @@ function(aros_build_external_cmake)
 
     cmake_path(ABSOLUTE_PATH CMAKE_BINARY_DIR
         NORMALIZE OUTPUT_VARIABLE _build_root)
-    cmake_path(ABSOLUTE_PATH AROS_PORTS_SOURCE_DIR
-        NORMALIZE OUTPUT_VARIABLE _archive_root)
     set(_raw_source "${EC_SOURCE_DIR}")
     set(_raw_binary "${EC_BINARY_DIR}")
     set(_raw_prefix "${EC_INSTALL_PREFIX}")
-    set(_raw_archive "${EC_SOURCE_ARCHIVE}")
     set(_raw_fetch "${_fetch_destination}")
-    foreach(_kind IN ITEMS source binary prefix archive fetch)
+    foreach(_kind IN ITEMS source binary prefix fetch)
         set(_raw_path "${_raw_${_kind}}")
         string(FIND "${_raw_path}" ";" _semicolon)
         string(FIND "${_raw_path}" "$" _dollar)
@@ -2580,12 +2547,6 @@ function(aros_build_external_cmake)
                 "${EC_MMAKE_ID}: external binary directory overlaps ${_kind}: ${_${_kind}}")
         endif()
     endforeach()
-    cmake_path(IS_PREFIX _archive_root "${_archive}" NORMALIZE _archive_owned)
-    if(NOT _archive_owned OR _archive STREQUAL _archive_root)
-        message(FATAL_ERROR
-            "${EC_MMAKE_ID}: source archive escapes the ports cache: ${_archive}")
-    endif()
-
     set(_products "")
     set(_library_products "")
     set(_header_products "")
@@ -2729,8 +2690,6 @@ function(aros_build_external_cmake)
 
     cmake_path(GET CMAKE_CURRENT_FUNCTION_LIST_DIR PARENT_PATH
         _aros_source_root)
-    set(_hash_verifier
-        "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/VerifySHA256.cmake")
     set(_output_verifier
         "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/VerifyOutputs.cmake")
 
@@ -2781,10 +2740,6 @@ function(aros_build_external_cmake)
         # removed option from surviving in the nested CMakeCache.txt.
         COMMAND "${CMAKE_COMMAND}" -E rm -rf "${_binary}"
         COMMAND "${CMAKE_COMMAND}" -E make_directory "${_binary}" "${_prefix}"
-        COMMAND "${CMAKE_COMMAND}"
-            "-DFILE=${_archive}"
-            "-DEXPECTED=${_source_sha256}"
-            -P "${_hash_verifier}"
         COMMAND "${CMAKE_COMMAND}" -S "${_source}" -B "${_binary}"
             -G "${CMAKE_GENERATOR}"
             ${EC_OPTIONS}
@@ -2795,8 +2750,8 @@ function(aros_build_external_cmake)
             "-DMANIFEST=${_products_manifest}"
             -P "${_output_verifier}"
         COMMAND "${CMAKE_COMMAND}" -E touch "${_stamp}"
-        DEPENDS "${_fetch_stamp}" "${_hash_verifier}"
-            "${_output_verifier}" "${_products_manifest}"
+        DEPENDS "${_fetch_stamp}" "${_output_verifier}"
+            "${_products_manifest}"
         COMMENT "Building external CMake target ${EC_MMAKE_ID}"
         VERBATIM
         COMMAND_EXPAND_LISTS)

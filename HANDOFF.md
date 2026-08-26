@@ -1,5 +1,33 @@
 # Handoff
 
+## Update 26 August 2026 — no hidden transpiler package pins
+
+On `integration/upstream-20260826`, the transpiler package/archive pins were
+removed. Mesa, Mako, MarkupSafe, CUnit and libaom now follow their upstream
+`%fetch` declarations; local scripts and patches are direct dependencies.
+Only 14 documented fingerprints remain for opaque Mesa recipe fragments and
+source inventories which are expanded into hard-coded jobs. Drift in one of
+those inputs is fatal and explicitly requests a transpiler update.
+
+The fixed per-file and redundant caller-provided hashes for configure, AHI and
+SFDC were also removed. Their checked-in manifests now contain paths only;
+CMake watches every listed source and calculates a transient runner snapshot
+at configure time. A source edit automatically refreshes that snapshot and
+does not require a digest edit. The fixed GRUB 2.12 archive SHA remains once in
+`cmake/GrubSourceLock.cmake`, because that closed CMake lane downloads the
+source directly. Toolchain release locks are a separate reproducibility
+contract.
+
+Core error handling now aggregates and fails on filesystem traversal, fetch
+discovery, parsing and recognised capability drift. It is not yet fully
+enterprise-grade; `OPEN-POINTS.md` point 52 lists the remaining atomic-output,
+typed-diagnostic and report-I/O work.
+
+Verified in this change: all 291 transpiler unit tests and all integration
+tests pass; the affected CMake fixtures pass, including real AHI and GRUB
+contracts; direct x86_64, ARM hard-float and AArch64 transpiler runs each emit
+a complete graph.
+
 Written 25 August 2026 on `feat/cmake-build-propagation`. This is the short
 restart document; `OPEN-POINTS.md` contains the investigation history and is
 authoritative where details differ.
@@ -82,7 +110,7 @@ versions matters; macOS/QEMU 11.1.0 had masked the defect.
   filter. This unblocks the native PC parallel/serial HIDDs without admitting a
   broad foreign architecture namespace into the SDK.
 - `aros-genmodule` emits the reference-compatible RAWARG format wrappers.
-- ARM and AArch64's AROS-owned Gallium modules now inherit the same pinned Mesa
+- ARM and AArch64's AROS-owned Gallium modules now inherit the same checked Mesa
   20 compile contract as the fetched Mesa archives. This restores the
   `pipe/p_shader_tokens.h` path and the Mesa feature/aliasing flags which the
   classic build receives through `mesa.cfg`.

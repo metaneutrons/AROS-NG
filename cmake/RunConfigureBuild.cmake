@@ -36,7 +36,7 @@ if(NOT CB_MODE MATCHES "^(adflib-host|adflib-target|wirelessmanager)$")
 endif()
 set(_required CB_MODE CB_SOURCE_ROOT CB_BUILD_ROOT CB_SOURCE_DIR CB_BINARY_DIR
     CB_INSTALL_PREFIX CB_INPUT_MANIFEST CB_INPUT_MANIFEST_SHA256 CB_COMPILER
-    CB_ARCHIVER CB_RANLIB CB_MAKE CB_SHELL)
+    CB_ARCHIVER CB_RANLIB CB_MAKE CB_SHELL CB_INPUT_RELATIVE CB_INPUT_SHA256)
 if(CB_MODE STREQUAL "wirelessmanager")
     list(APPEND _required CB_LINKER)
 endif()
@@ -122,11 +122,19 @@ endfunction()
 
 file(SHA256 "${_input_manifest}" _actual_manifest_sha256)
 if(NOT _actual_manifest_sha256 STREQUAL CB_INPUT_MANIFEST_SHA256)
-    message(FATAL_ERROR "configure input manifest differs from its audited SHA-256")
+    message(FATAL_ERROR
+        "configure input inventory changed after configuration; rerun CMake")
 endif()
 file(STRINGS "${_input_manifest}" _manifest_lines ENCODING UTF-8)
 if(NOT _manifest_lines)
     message(FATAL_ERROR "configure input manifest is empty")
+endif()
+list(LENGTH CB_INPUT_RELATIVE _relative_count)
+list(LENGTH CB_INPUT_SHA256 _hash_count)
+if(NOT _manifest_lines STREQUAL CB_INPUT_RELATIVE OR
+   NOT _relative_count EQUAL _hash_count)
+    message(FATAL_ERROR
+        "configure input inventory differs from the configuration snapshot; rerun CMake")
 endif()
 
 # Rebuild in a fresh private tree.  No generated file can leak into or alter
@@ -144,12 +152,14 @@ if(NOT _stage_owned OR NOT _build_owned)
     message(FATAL_ERROR "configure runner staging escaped its private binary directory")
 endif()
 set(_seen_paths "")
+set(_input_index 0)
 foreach(_line IN LISTS _manifest_lines)
-    if(NOT _line MATCHES "^([0-9a-f]+)  ([A-Za-z0-9_.+/-]+)$")
+    if(NOT _line MATCHES "^([A-Za-z0-9_.+/-]+)$")
         message(FATAL_ERROR "malformed configure input-manifest line '${_line}'")
     endif()
-    set(_digest "${CMAKE_MATCH_1}")
-    set(_relative "${CMAKE_MATCH_2}")
+    set(_relative "${CMAKE_MATCH_1}")
+    list(GET CB_INPUT_SHA256 ${_input_index} _digest)
+    math(EXPR _input_index "${_input_index} + 1")
     string(LENGTH "${_digest}" _digest_length)
     if(NOT _digest_length EQUAL 64 OR
        _relative MATCHES "(^|/)[.][.]?(/|$)" OR
@@ -173,7 +183,7 @@ foreach(_line IN LISTS _manifest_lines)
     file(SHA256 "${_source_real}" _actual_input_sha256)
     if(NOT _actual_input_sha256 STREQUAL _digest)
         message(FATAL_ERROR
-            "configure input ${_relative} differs from its audited SHA-256")
+            "configure input ${_relative} changed after configuration; rerun CMake")
     endif()
     cmake_path(GET _destination PARENT_PATH _destination_parent)
     file(MAKE_DIRECTORY "${_destination_parent}")

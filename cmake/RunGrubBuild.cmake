@@ -1,10 +1,8 @@
 cmake_minimum_required(VERSION 3.22)
 
-set(_GB_ARCHIVE_SHA256
-    "f3c97391f7c4eaa677a78e090c7e97e6dc47b16f655f04683ebd37bef7fe0faa")
-set(_GB_PATCH_SHA256
-    "b2c391c0ee5a7ff1bf2777698195f137f7cf450cc6b077ed3478211aa9b55e85")
-set(_GB_SOURCE_URL "https://ftp.gnu.org/gnu/grub/grub-2.12.tar.xz")
+include("${CMAKE_CURRENT_LIST_DIR}/GrubSourceLock.cmake")
+set(_GB_ARCHIVE_SHA256 "${_AROS_GRUB2_ARCHIVE_SHA256}")
+set(_GB_SOURCE_URL "${_AROS_GRUB2_SOURCE_URL}")
 set(_GB_PATCH_RELATIVE "arch/all-pc/boot/grub2-aros/grub-2.12-aros.diff")
 
 function(_gb_real_path path output)
@@ -130,8 +128,6 @@ function(_gb_lane_contract mode)
         set(_platform_dir "i386-pc")
         set(_file_count 615)
         set(_manifest_relative "cmake/manifests/grub-2.12-pc.install")
-        set(_install_hash "63fc5e9ca178cad7df59be8e43c077e8d2f6a5b492b57f8612dbde765eede83b")
-        set(_module_hash "1012ee0c7345997671a4da91db5ffd8ea5590d883ebae4dabd70b07d520a5487")
         set(_private_relative
             "build/grub-mkimage"
             "build/grub-core/boot.img"
@@ -157,8 +153,6 @@ function(_gb_lane_contract mode)
         set(_platform_dir "x86_64-efi")
         set(_file_count 591)
         set(_manifest_relative "cmake/manifests/grub-2.12-efi64.install")
-        set(_install_hash "1dfff4328a95fd6a42cb7593461145ed6897c1ff5d194dd2a8f8e45acde984ad")
-        set(_module_hash "0182a8924f5efa2e329f55008ea98cf0641608ca505d8c536373ea89ca905efc")
         set(_private_relative
             "build/grub-mkimage"
             "build/grub-core/kernel.img"
@@ -181,8 +175,6 @@ function(_gb_lane_contract mode)
         set(_platform_dir "i386-efi")
         set(_file_count 593)
         set(_manifest_relative "cmake/manifests/grub-2.12-efi32.install")
-        set(_install_hash "19b64eefd2cfce180515082fb20732945fc9baf785f34c8b629a1ca290505ea6")
-        set(_module_hash "eab078c379d196ff49d2bde98be26599009a58c482bdbd27b027be76555d0d54")
         set(_private_relative
             "build/grub-mkimage"
             "build/grub-core/kernel.img"
@@ -207,8 +199,6 @@ function(_gb_lane_contract mode)
     set(GB_EXPECTED_platform_dir "${_platform_dir}" PARENT_SCOPE)
     set(GB_EXPECTED_file_count "${_file_count}" PARENT_SCOPE)
     set(GB_EXPECTED_manifest_relative "${_manifest_relative}" PARENT_SCOPE)
-    set(GB_EXPECTED_install_hash "${_install_hash}" PARENT_SCOPE)
-    set(GB_EXPECTED_module_hash "${_module_hash}" PARENT_SCOPE)
     set(GB_EXPECTED_private_relative "${_private_relative}" PARENT_SCOPE)
 endfunction()
 
@@ -313,7 +303,7 @@ set(_required GB_MODE GB_MMAKE_ID GB_SOURCE_ROOT GB_BUILD_ROOT GB_BINARY_DIR
     GB_GREP GB_TARGET_CLANG GB_TARGET_LD GB_TARGET_OBJCOPY GB_TARGET_RANLIB GB_TARGET_NM
     GB_TARGET_STRIP GB_CONFIGURE_TARGET GB_PLATFORM GB_TARGET_TRIPLE
     GB_TARGET_ISA_FLAGS GB_LINK_FORMAT GB_PLATFORM_DIR GB_EXPECTED_FILE_COUNT
-    GB_INSTALL_MANIFEST_SHA256 GB_MODULE_MANIFEST_SHA256 GB_STAMP)
+    GB_INSTALL_MANIFEST_SHA256 GB_STAMP)
 foreach(_required IN LISTS _required)
     if(NOT DEFINED ${_required} OR "${${_required}}" STREQUAL "")
         message(FATAL_ERROR "GRUB2 build contract omits ${_required}")
@@ -331,9 +321,7 @@ if(NOT "${GB_MMAKE_ID}" STREQUAL "${GB_EXPECTED_id}" OR
    NOT "${GB_TARGET_ISA_FLAGS}" STREQUAL "${GB_EXPECTED_isa_flags}" OR
    NOT "${GB_LINK_FORMAT}" STREQUAL "${GB_EXPECTED_link_format}" OR
    NOT "${GB_PLATFORM_DIR}" STREQUAL "${GB_EXPECTED_platform_dir}" OR
-   NOT "${GB_EXPECTED_FILE_COUNT}" EQUAL "${GB_EXPECTED_file_count}" OR
-   NOT "${GB_INSTALL_MANIFEST_SHA256}" STREQUAL "${GB_EXPECTED_install_hash}" OR
-   NOT "${GB_MODULE_MANIFEST_SHA256}" STREQUAL "${GB_EXPECTED_module_hash}")
+   NOT "${GB_EXPECTED_FILE_COUNT}" EQUAL "${GB_EXPECTED_file_count}")
     message(FATAL_ERROR
         "GRUB2 build contract differs from its audited lane identity\n"
         "id=${GB_MMAKE_ID}/${GB_EXPECTED_id}; "
@@ -343,13 +331,10 @@ if(NOT "${GB_MMAKE_ID}" STREQUAL "${GB_EXPECTED_id}" OR
         "isa=${GB_TARGET_ISA_FLAGS}/${GB_EXPECTED_isa_flags}; "
         "link=${GB_LINK_FORMAT}/${GB_EXPECTED_link_format}; "
         "directory=${GB_PLATFORM_DIR}/${GB_EXPECTED_platform_dir}; "
-        "count=${GB_EXPECTED_FILE_COUNT}/${GB_EXPECTED_file_count}; "
-        "install=${GB_INSTALL_MANIFEST_SHA256}/${GB_EXPECTED_install_hash}; "
-        "modules=${GB_MODULE_MANIFEST_SHA256}/${GB_EXPECTED_module_hash}")
+        "count=${GB_EXPECTED_FILE_COUNT}/${GB_EXPECTED_file_count}")
 endif()
 if(NOT GB_SOURCE_URL STREQUAL _GB_SOURCE_URL OR
-   NOT GB_ARCHIVE_SHA256 STREQUAL _GB_ARCHIVE_SHA256 OR
-   NOT GB_PATCH_SHA256 STREQUAL _GB_PATCH_SHA256)
+   NOT GB_ARCHIVE_SHA256 STREQUAL _GB_ARCHIVE_SHA256)
     message(FATAL_ERROR "GRUB2 build contract differs from audited source identity")
 endif()
 
@@ -417,10 +402,10 @@ endif()
 file(SHA256 "${_patch}" _actual_patch_sha256)
 file(SHA256 "${_archive}" _actual_archive_sha256)
 file(SHA256 "${_install_manifest}" _actual_install_manifest_sha256)
-if(NOT _actual_patch_sha256 STREQUAL _GB_PATCH_SHA256 OR
+if(NOT _actual_patch_sha256 STREQUAL GB_PATCH_SHA256 OR
    NOT _actual_archive_sha256 STREQUAL _GB_ARCHIVE_SHA256 OR
-   NOT _actual_install_manifest_sha256 STREQUAL GB_EXPECTED_install_hash)
-    message(FATAL_ERROR "GRUB2 runner source inputs differ from audited SHA-256 values")
+   NOT _actual_install_manifest_sha256 STREQUAL GB_INSTALL_MANIFEST_SHA256)
+    message(FATAL_ERROR "GRUB2 runner inputs changed after configuration; rerun CMake")
 endif()
 
 if(NOT EXISTS "${GB_XZ_PREFIX}" OR NOT IS_DIRECTORY "${GB_XZ_PREFIX}")
@@ -672,12 +657,5 @@ if(NOT _installed_count EQUAL GB_EXPECTED_FILE_COUNT OR
     message(FATAL_ERROR
         "GRUB2 ${GB_MODE} install manifest differs from the audited product set "
         "(count ${_installed_count}, sha256 ${_installed_sha256})")
-endif()
-_gb_manifest_sha256("${_install_prefix}/lib/grub/${GB_PLATFORM_DIR}" "*.mod"
-    _module_count _module_sha256)
-if(NOT _module_sha256 STREQUAL GB_MODULE_MANIFEST_SHA256)
-    message(FATAL_ERROR
-        "GRUB2 ${GB_MODE} module manifest differs from the audited product set "
-        "(count ${_module_count}, sha256 ${_module_sha256})")
 endif()
 file(TOUCH "${_stamp}")

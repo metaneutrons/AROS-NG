@@ -174,7 +174,7 @@ function(aros_bootstrap_sdk_includes)
         )
     endif()
 
-    # 5. Boost is staged later from the pinned compiler/boost %fetch input.
+    # 5. Boost is staged later from the compiler/boost %fetch input.
     # Do not copy the host's headers here: that made macOS and Linux SDKs
     # silently differ before the target's ports-includes closure had run.
 
