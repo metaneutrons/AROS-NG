@@ -21,13 +21,16 @@
 #include "debug.h"
 
 #include "hwtask.h"
+#include "aes128.h"
 
+#include <dos/dos.h>
 #include <proto/exec.h>
 #include <proto/dos.h>
 #include <proto/utility.h>
 #include <proto/timer.h>
 
 #include <string.h>
+#include <stdio.h>
 
 #define NewList(list) NEWLIST(list)
 #define min(x,y) (((x) < (y)) ? (x) : (y))
@@ -39,6 +42,10 @@ static void bStartDiscoveryPhase(struct BtHWCore *hc);
 static void bFinishDiscovery(struct BtHWCore *hc);
 static void bNextNameRequest(struct BtHWCore *hc);
 static void bBringupStep(struct BtHWCore *hc);
+static void bHandleDevReply(struct BtHWCore *hc, struct IOBTHCIReq *req);
+static void bTick(struct BtHWCore *hc);
+static void bArmTimer(struct BtHWCore *hc);
+static void bHandleEvent(struct BtHWCore *hc, const UBYTE *data, ULONG len);
 
 /* /// "bNowUS()" */
 uint64_t bNowUS(struct BtHWCore *hc)
@@ -150,7 +157,56 @@ struct BtDevice * bFindDeviceByAddr(struct BtHWCore *hc, const UBYTE *addr)
         if(!memcmp(bd->bd_Address.bd_Addr, addr, 6)) {
             return(bd);
         }
+        /* a bonded peer currently using a resolvable private address */
+        if(bd->bd_CurAddrValid && !memcmp(bd->bd_CurAddr, addr, 6)) {
+            return(bd);
+        }
         bd = (struct BtDevice *) bd->bd_Node.ln_Succ;
+    }
+    return(NULL);
+}
+/* \\\ */
+
+/* /// "bResolvePrivateAddr()" */
+/* LE privacy: a bonded peer that gave us its IRK advertises from a random
+   resolvable private address (top bits 01) that changes every few minutes.
+   hash = ah(IRK, prand) - check the 24 bit hash against every stored IRK.
+   On a match the device is returned and remembers this address as the one
+   the peer answers to right now (bd_CurAddr). Base must be locked. */
+static struct BtDevice * bResolvePrivateAddr(struct BtHWCore *hc, const UBYTE *addr)
+{
+    struct BtHardware *bth = hc->hc_Hardware;
+    struct BtDevice *bd;
+    UBYTE rp[16];
+    UBYTE key[16];
+    UBYTE out[16];
+    ULONG i;
+
+    if((addr[5] & 0xc0) != 0x40) {
+        return(NULL);
+    }
+    /* r' = padding || prand; prand most significant octet first */
+    memset(rp, 0, sizeof(rp));
+    rp[13] = addr[5];
+    rp[14] = addr[4];
+    rp[15] = addr[3];
+    for(bd = (struct BtDevice *) bth->bth_Devices.lh_Head; bd->bd_Node.ln_Succ; bd = (struct BtDevice *) bd->bd_Node.ln_Succ) {
+        if(!(bd->bd_Keys.bkc_Flags & BKCF_IRK)) {
+            continue;
+        }
+        /* the IRK is stored as distributed (LSB first); AES wants MSB first */
+        for(i = 0; i < 16; i++) {
+            key[i] = bd->bd_Keys.bkc_IRK[15 - i];
+        }
+        bAES128Encrypt(key, rp, out);
+        if((out[15] == addr[0]) && (out[14] == addr[1]) && (out[13] == addr[2])) {
+            if(!bd->bd_CurAddrValid || memcmp(bd->bd_CurAddr, addr, 6)) {
+                CopyMem((APTR) addr, bd->bd_CurAddr, 6);
+                bd->bd_CurAddrType = BDAT_RANDOM;
+                bd->bd_CurAddrValid = TRUE;
+            }
+            return(bd);
+        }
     }
     return(NULL);
 }
@@ -210,9 +266,10 @@ static BOOL bSetDeviceName(struct BtHWCore *hc, struct BtDevice *bd, const UBYTE
  * Called for every inquiry result / advertising report. Creates or updates
  * the BtDevice and raises the ADDDEVICE/DEVICEUPDATE events.
  */
-static void bNoteDevice(struct BtHWCore *hc, const UBYTE *addr, UBYTE addrtype, BOOL isle,
+static BOOL bNoteDevice(struct BtHWCore *hc, const UBYTE *addr, UBYTE addrtype, BOOL isle,
                         ULONG cod, LONG rssi, const UBYTE *name, ULONG namelen,
-                        const UBYTE *advdata, ULONG advlen, UWORD appearance)
+                        const UBYTE *advdata, ULONG advlen, UWORD appearance,
+                        const struct bt_le_adv_info *info)
 {
     struct BtBase *BluetoothBase = hc->hc_Base;
     struct BtHardware *bth = hc->hc_Hardware;
@@ -222,21 +279,36 @@ static void bNoteDevice(struct BtHWCore *hc, const UBYTE *addr, UBYTE addrtype, 
 
     btLockWriteBase();
     bd = bFindDeviceByAddr(hc, addr);
+    if(!bd && isle && (addrtype == BDAT_RANDOM)) {
+        bd = bResolvePrivateAddr(hc, addr);
+    }
+    if(!bd && hc->hc_BgScanActive && !(bth->bth_Flags & BTHF_DISCOVERING)) {
+        /* the background scan only exists to catch our own bonded devices
+           waking up; strangers are not listed outside a discovery */
+        btUnlockBase();
+        return(FALSE);
+    }
     if(!bd) {
         if(isle && (addrtype == BDAT_RANDOM)) {
-            /* private (rotating) random addresses without a name would only
-               clutter the list */
+            /* Private (rotating) random addresses would only clutter the list -
+               unless the device tells us it wants to be found: a name, an
+               appearance, the HID service, or the LE General/Limited Discoverable
+               flag (a PC or phone in its "discoverable" mode advertises exactly
+               that from a resolvable private address). */
             struct bt_addr ba;
+            BOOL discoverable = info && info->has_flags && (info->flags & 0x03);
+            BOOL hid = info && info->hid;
             CopyMem((APTR) addr, ba.b, 6);
-            if(!bt_le_addr_is_stable(&ba, addrtype) && !namelen && !appearance) {
+            if(!bt_le_addr_is_stable(&ba, addrtype) && !namelen && !appearance && !discoverable && !hid) {
                 btUnlockBase();
-                return;
+                hc->hc_DiagDropped++;
+                return(FALSE);
             }
         }
         btUnlockBase();
         bd = btAllocDevice(bth);
         if(!bd) {
-            return;
+            return(FALSE);
         }
         btLockWriteBase();
         btLockWriteDevice(bd);
@@ -306,6 +378,160 @@ static void bNoteDevice(struct BtHWCore *hc, const UBYTE *addr, UBYTE addrtype, 
     } else if(changed) {
         btSendEvent(BEHMB_DEVICEUPDATE, bd, NULL);
     }
+    if(isle && (bd->bd_Flags & BDFF_REGISTERED)) {
+        /* one of ours is awake and advertising: reconnect it if wanted */
+        bConnAdvertising(hc, bd);
+    }
+    return(TRUE);
+}
+/* \\\ */
+
+
+/* /// "bScanDiagNote()" */
+/* Journal one raw report (LE advertising/scan-response or classic inquiry) per
+   address, whether or not bNoteDevice() accepted it, so the scan log can show
+   exactly what each device sent and why it was or was not listed. */
+static void bScanDiagNote(struct BtHWCore *hc, const UBYTE *addr, UBYTE addrtype, BOOL isle,
+                          UBYTE evbit, UBYTE extbits, const UBYTE *ad, ULONG adlen,
+                          const struct bt_le_adv_info *info, LONG rssi, ULONG cod, BOOL noted)
+{
+    struct BtScanDiag *sd = NULL;
+    UWORD i;
+
+    if(!(hc->hc_Base->bt_Flags & BTF_KLOG)) {
+        return;                         /* journal only with the "btdebug" boot argument */
+    }
+
+    for(i = 0; i < hc->hc_ScanDiagCount; i++) {
+        if(!memcmp(hc->hc_ScanDiag[i].sd_Addr, addr, 6) && (hc->hc_ScanDiag[i].sd_IsLE == (UBYTE) isle)) {
+            sd = &hc->hc_ScanDiag[i];
+            break;
+        }
+    }
+    if(!sd) {
+        if(hc->hc_ScanDiagCount >= HC_SCANDIAG_MAX) {
+            hc->hc_ScanDiagOverflow++;
+            return;
+        }
+        sd = &hc->hc_ScanDiag[hc->hc_ScanDiagCount++];
+        memset(sd, 0, sizeof(*sd));
+        CopyMem((APTR) addr, sd->sd_Addr, 6);
+        sd->sd_AddrType = addrtype;
+        sd->sd_IsLE = isle ? 1 : 0;
+        if(isle) {
+            struct bt_addr ba;
+            CopyMem((APTR) addr, ba.b, 6);
+            sd->sd_Stable = bt_le_addr_is_stable(&ba, addrtype) ? 1 : 0;
+        } else {
+            sd->sd_Stable = 1;
+        }
+        sd->sd_RSSI = 127;
+    }
+    if(sd->sd_Count < 0xffff) sd->sd_Count++;
+    sd->sd_EvMask |= evbit;
+    sd->sd_ExtMask |= extbits;
+    if(noted) { if(sd->sd_Noted < 255) sd->sd_Noted++; }
+    else      { if(sd->sd_Dropped < 255) sd->sd_Dropped++; }
+    if(rssi != 127) sd->sd_RSSI = rssi;
+    if(cod) sd->sd_CoD = cod;
+    if(ad && adlen) {
+        ULONG o = 0;
+        while(o < adlen) {
+            UBYTE flen = ad[o];
+            if(!flen || (o + 1 + flen > adlen)) break;
+            if(ad[o + 1] < 32) sd->sd_ADTypes |= (1UL << ad[o + 1]);
+            else sd->sd_ADTypes |= (1UL << 31);
+            o += 1 + flen;
+        }
+    }
+    if(info) {
+        if(info->has_flags) { sd->sd_HasFlags = 1; sd->sd_Flags = info->flags; }
+        if(info->hid) sd->sd_HID = 1;
+        if(info->appearance) sd->sd_Appearance = info->appearance;
+        if(info->name && info->name_len && !sd->sd_Name[0]) {
+            ULONG n = min(info->name_len, sizeof(sd->sd_Name) - 1);
+            CopyMem((APTR) info->name, sd->sd_Name, n);
+            sd->sd_Name[n] = 0;
+        }
+    }
+}
+/* \\\ */
+
+/* /// "bScanDiagDump()" */
+/* Append this discovery run's journal to SYS:BluetoothScan.log. Runs in the
+   hardware task (a Process, so DOS I/O is fine). */
+static void bScanDiagDump(struct BtHWCore *hc)
+{
+    struct BtBase *BluetoothBase = hc->hc_Base;
+    struct BtHardware *bth = hc->hc_Hardware;
+    static const char *legacyev[5] = { "ADV_IND", "ADV_DIRECT", "ADV_SCAN_IND", "ADV_NONCONN", "SCAN_RSP" };
+    static const char *classicev[3] = { "std", "rssi", "eir" };
+    char line[400];
+    char addr[BT_ADDRSTR_LEN];
+    struct DateStamp ds;
+    BPTR fh;
+    UWORD i;
+    ULONG rpa_droppedonly = 0, rpa_discoverable = 0;
+
+    if(!bHaveDOS(BluetoothBase)) {
+        return;
+    }
+    if(!(fh = Open("SYS:BluetoothScan.log", MODE_READWRITE))) {
+        btAddErrorMsg(RETURN_WARN, (STRPTR) GM_UNIQUENAME(libname),
+                       "%s/%ld: could not open SYS:BluetoothScan.log for the scan diagnostics.",
+                       bth->bth_DevName, bth->bth_Unit);
+        return;
+    }
+    Seek(fh, 0, OFFSET_END);
+    DateStamp(&ds);
+    snprintf(line, sizeof(line),
+             "==== scan on %s/%lu  day %ld %02ld:%02ld  controller %s LMP 0x%04lx  reports: LE legacy=%lu ext=%lu other=%lu scanrsp=%lu classic=%lu  dropped(RPA rule)=%lu  addresses=%u overflow=%lu\n",
+             bth->bth_DevName, (unsigned long) bth->bth_Unit, (long) ds.ds_Days, (long)(ds.ds_Minute / 60), (long)(ds.ds_Minute % 60),
+             btNumToStr(BNTS_MANUFACTURER, bth->bth_ManufacturerID, "?"), (unsigned long) bth->bth_LMPSubversion,
+             (unsigned long) hc->hc_DiagAdvLegacy, (unsigned long) hc->hc_DiagAdvExt, (unsigned long) hc->hc_DiagAdvOther,
+             (unsigned long) hc->hc_DiagScanRsp, (unsigned long) hc->hc_DiagInqResults, (unsigned long) hc->hc_DiagDropped,
+             (unsigned) hc->hc_ScanDiagCount, (unsigned long) hc->hc_ScanDiagOverflow);
+    FPuts(fh, line);
+    for(i = 0; i < hc->hc_ScanDiagCount; i++) {
+        struct BtScanDiag *sd = &hc->hc_ScanDiag[i];
+        char ev[96], ad[160];
+        ULONG b, p = 0;
+        ev[0] = 0;
+        if(sd->sd_IsLE) {
+            for(b = 0; b < 5; b++) if(sd->sd_EvMask & (1 << b)) p += snprintf(ev + p, sizeof(ev) - p, "%s%s", p ? "," : "", legacyev[b]);
+            if(sd->sd_ExtMask) p += snprintf(ev + p, sizeof(ev) - p, "%sext:0x%02x", p ? "," : "", sd->sd_ExtMask);
+        } else {
+            for(b = 0; b < 3; b++) if(sd->sd_EvMask & (1 << b)) p += snprintf(ev + p, sizeof(ev) - p, "%s%s", p ? "," : "", classicev[b]);
+        }
+        p = 0; ad[0] = 0;
+        for(b = 0; b < 32; b++) if(sd->sd_ADTypes & (1UL << b)) p += snprintf(ad + p, sizeof(ad) - p, "%s%02lx", p ? "," : "", (b == 31) ? 0xffUL : (unsigned long) b);
+        bAddrToStr(sd->sd_Addr, (STRPTR) addr);
+        if(sd->sd_IsLE) {
+            const char *kind = (sd->sd_AddrType == 0) ? "public" : (sd->sd_AddrType >= 2) ? "identity" : sd->sd_Stable ? "static-random" : "RPA";
+            BOOL disc = sd->sd_HasFlags && (sd->sd_Flags & 0x03);
+            if(!sd->sd_Noted && !sd->sd_Stable) { rpa_droppedonly++; if(disc || sd->sd_HID) rpa_discoverable++; }
+            snprintf(line, sizeof(line),
+                     "LE  %s %-13s ev=%-28s ad=[%s] flags=%s%02x%s name=\"%s\" appear=0x%04x hid=%c rssi=%ld reports=%u noted=%u dropped=%u -> %s\n",
+                     addr, kind, ev, ad, sd->sd_HasFlags ? "" : "(none)", sd->sd_Flags,
+                     disc ? "(discoverable)" : "", sd->sd_Name, sd->sd_Appearance, sd->sd_HID ? 'y' : 'n',
+                     (long) sd->sd_RSSI, sd->sd_Count, sd->sd_Noted, sd->sd_Dropped,
+                     sd->sd_Noted ? "LISTED" : "NOT LISTED (private address, not discoverable, no name/appearance/HID)");
+        } else {
+            snprintf(line, sizeof(line),
+                     "BR  %s %-13s ev=%-28s cod=0x%06lx name=\"%s\" rssi=%ld reports=%u -> %s\n",
+                     addr, "public", ev, (unsigned long) sd->sd_CoD, sd->sd_Name, (long) sd->sd_RSSI, sd->sd_Count,
+                     sd->sd_Noted ? "LISTED" : "NOT LISTED");
+        }
+        FPuts(fh, line);
+    }
+    snprintf(line, sizeof(line),
+             "---- %lu private-address devices never listed (%lu discoverable/HID - should be 0)\n\n",
+             (unsigned long) rpa_droppedonly, (unsigned long) rpa_discoverable);
+    FPuts(fh, line);
+    Close(fh);
+    btAddErrorMsg(RETURN_OK, (STRPTR) GM_UNIQUENAME(libname),
+                   "%s/%ld: scan diagnostics: %ld addresses seen, %ld private-address devices unlisted (%ld of them discoverable) - details in SYS:BluetoothScan.log",
+                   bth->bth_DevName, bth->bth_Unit, (ULONG) hc->hc_ScanDiagCount, rpa_droppedonly, rpa_discoverable);
 }
 /* \\\ */
 
@@ -415,11 +641,167 @@ static void bFinishDiscovery(struct BtHWCore *hc)
     if(bth->bth_Flags & BTHF_DISCOVERING) {
         bth->bth_Flags &= ~BTHF_DISCOVERING;
         bt_timer_list_cancel(&hc->hc_Timers, &hc->hc_DiscoveryTimer);
+        /* the conclusive line: how many results actually came back off the radio.
+           All zero => the controller reported nothing (init/transport/firmware);
+           adv-ext>0 => it speaks BT 5/6 extended reports. */
         btAddErrorMsg(RETURN_OK, (STRPTR) GM_UNIQUENAME(libname),
-                       "%s/%ld: discovery finished, %ld device(s) known.",
-                       bth->bth_DevName, bth->bth_Unit, bth->bth_NumDevices);
+                       "%s/%ld: discovery finished - %ld known; results: LE legacy=%ld, LE ext=%ld, LE other=%ld, classic=%ld.",
+                       bth->bth_DevName, bth->bth_Unit, bth->bth_NumDevices,
+                       hc->hc_DiagAdvLegacy, hc->hc_DiagAdvExt, hc->hc_DiagAdvOther, hc->hc_DiagInqResults);
+        if(BluetoothBase->bt_Flags & BTF_KLOG) {
+            bScanDiagDump(hc);          /* SYS:BluetoothScan.log, "btdebug" only */
+        }
         btSendEvent(BEHMB_DISCOVERYSTOP, bth, NULL);
+        bBgScanSchedule(hc);
     }
+}
+/* \\\ */
+
+/* /// "bScanCmdLog()" */
+/* Completion logger for the LE scan setup commands. Previously these used
+   bIgnoreCompletion, so a controller that rejected legacy LE scan (some BT 5/6
+   parts answer Command Disallowed and only accept the extended scan commands)
+   failed silently - the #1 "scanning finds nothing" trap. Now the result is
+   logged. */
+static void bScanCmdLog(struct BtHWCore *hc, struct bt_cmdq_completion *completion, CONST_STRPTR what)
+{
+    struct BtBase *BluetoothBase = hc->hc_Base;
+    if((completion->result != BT_CMDQ_RESULT_COMPLETE) || completion->status) {
+        btAddErrorMsg(RETURN_WARN, (STRPTR) GM_UNIQUENAME(libname),
+                       "%s/%ld: %s FAILED: %s (0x%02lx).",
+                       hc->hc_Hardware->bth_DevName, hc->hc_Hardware->bth_Unit, (STRPTR) what,
+                       (completion->result == BT_CMDQ_RESULT_TIMEOUT) ? (STRPTR) "timeout" :
+                       btNumToStr(BNTS_HCISTATUS, completion->status, "unknown"),
+                       (ULONG) completion->status);
+    } else {
+        btAddErrorMsg(RETURN_OK, (STRPTR) GM_UNIQUENAME(libname),
+                       "%s/%ld: %s ok.",
+                       hc->hc_Hardware->bth_DevName, hc->hc_Hardware->bth_Unit, (STRPTR) what);
+    }
+}
+static void bScanParamCB(struct bt_cmdq_completion *completion, void *user_data)
+{ bScanCmdLog((struct BtHWCore *) user_data, completion, "LE Set Scan Parameters"); }
+static void bScanEnableCB(struct bt_cmdq_completion *completion, void *user_data)
+{ bScanCmdLog((struct BtHWCore *) user_data, completion, "LE Set Scan Enable"); }
+/* \\\ */
+
+/* *** background LE scan *** */
+
+/* /// "bBgScanCmdCB()" */
+static void bBgScanCmdCB(struct bt_cmdq_completion *completion, void *user_data)
+{
+    struct BtHWCore *hc = user_data;
+    if((completion->result != BT_CMDQ_RESULT_COMPLETE) || completion->status) {
+        struct BtBase *BluetoothBase = hc->hc_Base;
+        hc->hc_BgScanActive = FALSE;
+        btAddErrorMsg(RETURN_WARN, (STRPTR) GM_UNIQUENAME(libname),
+                       "Background LE scan refused by the controller: %s (%ld).",
+                       btNumToStr(BNTS_HCISTATUS, completion->status, "unknown"), completion->status);
+    }
+}
+/* \\\ */
+
+/* /// "bBgScanStop()" */
+/* Called before any LE scan or connect command: they are refused (Command
+   Disallowed) while a scan is enabled on most controllers. */
+void bBgScanStop(struct BtHWCore *hc)
+{
+    bt_timer_list_cancel(&hc->hc_Timers, &hc->hc_BgScanTimer);
+    if(hc->hc_BgScanActive) {
+        UBYTE params[2] = { 0, 0 };
+        hc->hc_BgScanActive = FALSE;
+        bSubmitCmd(hc, HC_OP_LE_SET_SCAN_ENABLE, params, 2, bIgnoreCompletion, hc);
+    }
+}
+/* \\\ */
+
+/* /// "bBgScanNeeded()" */
+/* Is there a bonded LE device that should be reconnected when it shows up?
+   Either a class is already waiting for it (cn_WaitAdv) or its auto-connect
+   policy says so. */
+static BOOL bBgScanNeeded(struct BtHWCore *hc)
+{
+    struct BtBase *BluetoothBase = hc->hc_Base;
+    struct BtHardware *bth = hc->hc_Hardware;
+    struct BtDevice *bd;
+    BOOL needed = FALSE;
+
+    if((bth->bth_State != BHS_READY) || !(bth->bth_Flags & BTHF_LE)) {
+        return(FALSE);
+    }
+    if(!BluetoothBase->bt_GlobalCfg->bgc_AutoConnect) {
+        return(FALSE);
+    }
+    btLockReadBase();
+    for(bd = (struct BtDevice *) bth->bth_Devices.lh_Head; bd->bd_Node.ln_Succ; bd = (struct BtDevice *) bd->bd_Node.ln_Succ) {
+        if((bd->bd_Flags & (BDFF_LE|BDFF_REGISTERED|BDFF_BONDED)) != (BDFF_LE|BDFF_REGISTERED|BDFF_BONDED)) {
+            continue;
+        }
+        if(bd->bd_Conns[1] && (bd->bd_Conns[1]->cn_State == HCNS_CONNECTED)) {
+            continue;
+        }
+        if(bd->bd_PoPoCfg.bpc_AutoConnect || (bd->bd_Conns[1] && bd->bd_Conns[1]->cn_WaitAdv)) {
+            needed = TRUE;
+            break;
+        }
+    }
+    btUnlockBase();
+    return(needed);
+}
+/* \\\ */
+
+/* /// "bBgScanUpdate()" */
+/* Start or stop the background scan according to the current state. */
+void bBgScanUpdate(struct BtHWCore *hc)
+{
+    struct BtHardware *bth = hc->hc_Hardware;
+    BOOL want;
+
+    bt_timer_list_cancel(&hc->hc_Timers, &hc->hc_BgScanTimer);
+    if((bth->bth_Flags & BTHF_DISCOVERING) || hc->hc_DiscoveryPending || hc->hc_LEScanActive ||
+       hc->hc_Connecting || !hc->hc_BringupDone || hc->hc_BringupFailed) {
+        want = FALSE;
+    } else {
+        want = bBgScanNeeded(hc);
+    }
+    if(want && !hc->hc_BgScanActive) {
+        UBYTE params[7];
+        struct bt_buf_writer w;
+        bt_buf_writer_init(&w, params, sizeof(params));
+        bt_buf_writer_write_u8(&w, 0x00);     /* passive: we only want to see who is there */
+        bt_buf_writer_write_le16(&w, 0x0800); /* interval 1.28 s */
+        bt_buf_writer_write_le16(&w, 0x0030); /* window 30 ms (~2% duty) */
+        bt_buf_writer_write_u8(&w, 0x00);     /* public own address */
+        bt_buf_writer_write_u8(&w, 0x00);     /* no filter policy (private addresses are resolved here) */
+        bSubmitCmd(hc, HC_OP_LE_SET_SCAN_PARAMETERS, params, 7, bBgScanCmdCB, hc);
+        params[0] = 0x01; /* enable */
+        params[1] = 0x00; /* every report: a device may need a second look */
+        bSubmitCmd(hc, HC_OP_LE_SET_SCAN_ENABLE, params, 2, bBgScanCmdCB, hc);
+        hc->hc_BgScanActive = TRUE;
+        KPRINTF(5, ("background LE scan on\n"));
+    } else if(!want && hc->hc_BgScanActive) {
+        bBgScanStop(hc);
+        KPRINTF(5, ("background LE scan off\n"));
+    }
+}
+/* \\\ */
+
+/* /// "bBgScanTimerCB()" */
+static void bBgScanTimerCB(struct bt_timer *timer, void *user_data)
+{
+    (void) timer;
+    bBgScanUpdate((struct BtHWCore *) user_data);
+}
+/* \\\ */
+
+/* /// "bBgScanSchedule()" */
+/* Re-evaluate in a couple of seconds: links come and go in bursts (a class
+   retrying a connect, a dual-mode device bringing up both bearers) and the
+   scan should not flap on and off in between. */
+void bBgScanSchedule(struct BtHWCore *hc)
+{
+    bt_timer_list_cancel(&hc->hc_Timers, &hc->hc_BgScanTimer);
+    bt_timer_list_add(&hc->hc_Timers, &hc->hc_BgScanTimer, bNowUS(hc) + 2000000ULL);
 }
 /* \\\ */
 
@@ -477,8 +859,21 @@ static LONG bStartDiscovery(struct BtHWCore *hc, struct BtDiscoveryParams *bdp)
     bth->bth_Flags |= BTHF_DISCOVERING;
     hc->hc_ResolveNames = bdp->bdp_ResolveNames && classic;
     hc->hc_DiscoveryPending = TRUE;
+    /* reset the scan diagnostics for this run */
+    hc->hc_DiagAdvLegacy = hc->hc_DiagAdvExt = hc->hc_DiagAdvOther = 0;
+    hc->hc_DiagInqResults = 0;
+    hc->hc_DiagLESubeventMask = 0;
+    hc->hc_DiagScanRsp = hc->hc_DiagDropped = 0;
+    hc->hc_ScanDiagCount = 0;
+    hc->hc_ScanDiagOverflow = 0;
+    btAddErrorMsg(RETURN_OK, (STRPTR) GM_UNIQUENAME(libname),
+                   "%s/%ld: discovery started (classic=%s, LE=%s, %lds).",
+                   bth->bth_DevName, bth->bth_Unit,
+                   classic ? (STRPTR) "yes" : (STRPTR) "no",
+                   le ? (STRPTR) "yes" : (STRPTR) "no", dur);
     btSendEvent(BEHMB_DISCOVERYSTART, bth, NULL);
 
+    bBgScanStop(hc);   /* scan parameters cannot be changed while scanning */
     if(le) {
         UBYTE params[7];
         struct bt_buf_writer w;
@@ -488,10 +883,10 @@ static LONG bStartDiscovery(struct BtHWCore *hc, struct BtDiscoveryParams *bdp)
         bt_buf_writer_write_le16(&w, 0x0030); /* window 30ms */
         bt_buf_writer_write_u8(&w, 0x00);     /* public own address */
         bt_buf_writer_write_u8(&w, 0x00);     /* no filter policy */
-        bSubmitCmd(hc, HC_OP_LE_SET_SCAN_PARAMETERS, params, 7, bIgnoreCompletion, hc);
+        bSubmitCmd(hc, HC_OP_LE_SET_SCAN_PARAMETERS, params, 7, bScanParamCB, hc);
         params[0] = 0x01; /* enable */
         params[1] = 0x00; /* report duplicates: RSSI/name updates */
-        bSubmitCmd(hc, HC_OP_LE_SET_SCAN_ENABLE, params, 2, bIgnoreCompletion, hc);
+        bSubmitCmd(hc, HC_OP_LE_SET_SCAN_ENABLE, params, 2, bScanEnableCB, hc);
         hc->hc_LEScanActive = TRUE;
     }
     if(classic) {
@@ -516,7 +911,7 @@ static LONG bStartDiscovery(struct BtHWCore *hc, struct BtDiscoveryParams *bdp)
 /* \\\ */
 
 /* /// "bStopDiscovery()" */
-static LONG bStopDiscovery(struct BtHWCore *hc)
+LONG bStopDiscovery(struct BtHWCore *hc)
 {
     struct BtBase *BluetoothBase = hc->hc_Base;
     struct BtHardware *bth = hc->hc_Hardware;
@@ -677,7 +1072,9 @@ static void bHandleInquiryResult(struct BtHWCore *hc, UBYTE code, const UBYTE *p
             return;
         }
         while(bt_hci_inquiry_result_iter_next(&it, &entry) == BT_OK) {
-            bNoteDevice(hc, entry.bd_addr.b, BDAT_PUBLIC, FALSE, entry.class_of_device, 127, NULL, 0, NULL, 0, 0);
+            hc->hc_DiagInqResults++;
+            bScanDiagNote(hc, entry.bd_addr.b, 0xfe, FALSE, 0x01, 0, NULL, 0, NULL, 127, entry.class_of_device,
+                          bNoteDevice(hc, entry.bd_addr.b, BDAT_PUBLIC, FALSE, entry.class_of_device, 127, NULL, 0, NULL, 0, 0, NULL));
         }
         break;
     }
@@ -695,7 +1092,9 @@ static void bHandleInquiryResult(struct BtHWCore *hc, UBYTE code, const UBYTE *p
             const UBYTE *cod = &params[1 + count * 8 + n * 3];
             LONG rssi = (BYTE) params[1 + count * 13 + n];
             ULONG codv = cod[0] | (cod[1] << 8) | (cod[2] << 16);
-            bNoteDevice(hc, addr, BDAT_PUBLIC, FALSE, codv, rssi, NULL, 0, NULL, 0, 0);
+            hc->hc_DiagInqResults++;
+            bScanDiagNote(hc, addr, 0xfe, FALSE, 0x02, 0, NULL, 0, NULL, rssi, codv,
+                          bNoteDevice(hc, addr, BDAT_PUBLIC, FALSE, codv, rssi, NULL, 0, NULL, 0, 0, NULL));
         }
         break;
     case HC_EVT_EXTENDED_INQUIRY_RESULT: {
@@ -708,10 +1107,12 @@ static void bHandleInquiryResult(struct BtHWCore *hc, UBYTE code, const UBYTE *p
             return;
         }
         addr = &params[1];
-        codv = params[10] | (params[11] << 8) | (params[12] << 16);
-        rssi = (BYTE) params[15];
-        bt_le_adv_parse(&params[16], len - 16, &info);
-        bNoteDevice(hc, addr, BDAT_PUBLIC, FALSE, codv, rssi, info.name, info.name_len, &params[16], len - 16, 0);
+        codv = params[9] | (params[10] << 8) | (params[11] << 16);
+        rssi = (BYTE) params[14];
+        bt_le_adv_parse(&params[15], len - 15, &info);
+        hc->hc_DiagInqResults++;
+        bScanDiagNote(hc, addr, 0xfe, FALSE, 0x04, 0, &params[15], len - 15, &info, rssi, codv,
+                      bNoteDevice(hc, addr, BDAT_PUBLIC, FALSE, codv, rssi, info.name, info.name_len, &params[15], len - 15, 0, &info));
         break;
     }
     }
@@ -719,19 +1120,86 @@ static void bHandleInquiryResult(struct BtHWCore *hc, UBYTE code, const UBYTE *p
 /* \\\ */
 
 /* /// "bHandleLEMeta()" */
+/* Advertising-report handler. Connection-related LE Meta subevents are consumed
+   earlier by bConnHandleEvent(); this deals with the scan results. It accepts
+   BOTH the legacy advertising report (subevent 0x02, BT 4.x) and the extended
+   advertising report (subevent 0x0D) used by BT 5.0 / 6.0 controllers, feeding
+   both into the same device-discovery path. The first time each subevent code
+   is seen during a run it is logged, which conclusively shows whether a real
+   adapter is emitting legacy or extended reports (or nothing). */
 static void bHandleLEMeta(struct BtHWCore *hc, const UBYTE *params, ULONG len)
 {
-    struct bt_hci_le_adv_report_iter it;
-    struct bt_hci_le_adv_report report;
+    struct BtBase *BluetoothBase = hc->hc_Base;
+    UBYTE subevent;
 
-    if(bt_hci_le_adv_report_iter_init(&it, params, len) != BT_OK) {
-        return; /* not an advertising report */
+    if(len < 1) {
+        return;
     }
-    while(bt_hci_le_adv_report_iter_next(&it, &report) == BT_OK) {
-        struct bt_le_adv_info info;
-        bt_le_adv_parse(report.data, report.data_len, &info);
-        bNoteDevice(hc, report.address.b, report.address_type & 3, TRUE, 0, report.rssi,
-                    info.name, info.name_len, report.data, report.data_len, info.appearance);
+    subevent = params[0];
+
+    if((subevent < 32) && !(hc->hc_DiagLESubeventMask & (1UL << subevent))) {
+        hc->hc_DiagLESubeventMask |= (1UL << subevent);
+        btAddErrorMsg(RETURN_OK, (STRPTR) GM_UNIQUENAME(libname),
+                       "%s/%ld: first LE Meta subevent 0x%02lx (%s).",
+                       hc->hc_Hardware->bth_DevName, hc->hc_Hardware->bth_Unit, (ULONG) subevent,
+                       (subevent == 0x02) ? (STRPTR) "legacy advertising report" :
+                       (subevent == 0x0d) ? (STRPTR) "extended advertising report - BT 5/6" :
+                       (STRPTR) "non-advertising");
+    }
+
+    if(subevent == BT_HCI_LE_META_SUBEVENT_ADVERTISING_REPORT) {   /* 0x02 legacy */
+        struct bt_hci_le_adv_report_iter it;
+        struct bt_hci_le_adv_report report;
+        if(bt_hci_le_adv_report_iter_init(&it, params, len) != BT_OK) {
+            return;
+        }
+        while(bt_hci_le_adv_report_iter_next(&it, &report) == BT_OK) {
+            struct bt_le_adv_info info;
+            bt_le_adv_parse(report.data, report.data_len, &info);
+            hc->hc_DiagAdvLegacy++;
+            if(report.event_type == 0x04) hc->hc_DiagScanRsp++;
+            {
+                BOOL noted = bNoteDevice(hc, report.address.b, report.address_type & 3, TRUE, 0, report.rssi,
+                                         info.name, info.name_len, report.data, report.data_len, info.appearance, &info);
+                bScanDiagNote(hc, report.address.b, report.address_type & 3, TRUE, (UBYTE)(1u << (report.event_type & 7)), 0,
+                              report.data, report.data_len, &info, report.rssi, 0, noted);
+            }
+        }
+    } else if(subevent == 0x0d) {   /* LE Extended Advertising Report (BT 5.0+) */
+        ULONG num = (len >= 2) ? params[1] : 0;
+        ULONG o = 2;
+        ULONG i;
+        /* Reports are laid out sequentially (variable-length Data forbids parallel
+           arrays); each has a 24-byte fixed header then Data_Length bytes. */
+        for(i = 0; i < num; i++) {
+            const UBYTE *rep = &params[o];
+            UBYTE addrtype;
+            LONG rssi;
+            ULONG dlen;
+            struct bt_le_adv_info info;
+            if(o + 24 > len) {
+                break;   /* truncated event */
+            }
+            addrtype = rep[2];
+            rssi = (BYTE) rep[13];
+            dlen = rep[23];
+            if(o + 24 + dlen > len) {
+                dlen = (len > o + 24) ? (len - (o + 24)) : 0;   /* clamp to what arrived */
+            }
+            hc->hc_DiagAdvExt++;
+            if(addrtype != 0xff) {   /* 0xff == anonymous advertiser (no address) */
+                bt_le_adv_parse(&rep[24], dlen, &info);
+                if(rep[0] & 0x08) hc->hc_DiagScanRsp++;
+                {
+                    BOOL noted = bNoteDevice(hc, &rep[3], addrtype & 3, TRUE, 0, rssi,
+                                             info.name, info.name_len, &rep[24], dlen, info.appearance, &info);
+                    bScanDiagNote(hc, &rep[3], addrtype & 3, TRUE, 0, rep[0], &rep[24], dlen, &info, rssi, 0, noted);
+                }
+            }
+            o += 24 + rep[23];
+        }
+    } else {
+        hc->hc_DiagAdvOther++;
     }
 }
 /* \\\ */
@@ -792,6 +1260,90 @@ static void bHandleEvent(struct BtHWCore *hc, const UBYTE *data, ULONG len)
 
 /* *** bring-up *** */
 
+/* /// "bSyncCmdCB()" */
+/* completion callback for bHciDoSync() - records the outcome for the waiter. */
+static void bSyncCmdCB(struct bt_cmdq_completion *completion, void *user_data)
+{
+    struct BtHWCore *hc = user_data;
+
+    hc->hc_SyncOK = (completion->result == BT_CMDQ_RESULT_COMPLETE);
+    hc->hc_SyncStatus = completion->status;
+    hc->hc_SyncRespLen = 0;
+    if(hc->hc_SyncResp && hc->hc_SyncRespMax && completion->return_params) {
+        UWORD n = (UWORD) completion->return_params_len;
+        if(n > hc->hc_SyncRespMax) {
+            n = hc->hc_SyncRespMax;
+        }
+        CopyMem((APTR) completion->return_params, hc->hc_SyncResp, n);
+        hc->hc_SyncRespLen = n;
+    }
+    hc->hc_SyncDone = TRUE;
+}
+/* \\\ */
+
+/* /// "bHciDoSync()" */
+/* Send a single HCI command and block (pumping this hwtask's device/event/timer
+   ports) until it completes or the command queue times it out. This is the
+   channel pluggable firmware loaders use via BtFirmwareContext.fwc_HciCommand;
+   it must only be called from the hwtask itself. Returns 0 on a completed,
+   zero-status command, else the HCI status (or -1 on timeout / send failure). */
+LONG bHciDoSync(struct BtHWCore *hc, UWORD opcode, CONST_APTR params, UWORD plen,
+                UBYTE *status, UBYTE *resp, UWORD *resplen, UWORD respmax)
+{
+    struct BtBase *BluetoothBase = hc->hc_Base;
+    struct BtHardware *bth = hc->hc_Hardware;
+    struct IOBTHCIReq *req;
+    struct BTHCIEventMsg *bem;
+    ULONG sigmask, sigs;
+
+    hc->hc_SyncDone = FALSE;
+    hc->hc_SyncOK = FALSE;
+    hc->hc_SyncStatus = 0xff;
+    hc->hc_SyncResp = resp;
+    hc->hc_SyncRespMax = respmax;
+    hc->hc_SyncRespLen = 0;
+
+    if(!bSubmitCmd(hc, opcode, (const UBYTE *) params, (UBYTE) plen, bSyncCmdCB, hc)) {
+        if(status) *status = 0xff;
+        if(resplen) *resplen = 0;
+        return(-1);
+    }
+
+    sigmask = (1UL<<bth->bth_DevMsgPort.mp_SigBit) |
+              (1UL<<bth->bth_EventMsgPort.mp_SigBit) |
+              (1UL<<hc->hc_TimerPort->mp_SigBit);
+    while(!hc->hc_SyncDone) {
+        sigs = Wait(sigmask | SIGBREAKF_CTRL_C);
+        while((req = (struct IOBTHCIReq *) GetMsg(&bth->bth_DevMsgPort))) {
+            bHandleDevReply(hc, req);
+        }
+        while((bem = (struct BTHCIEventMsg *) GetMsg(&bth->bth_EventMsgPort))) {
+            bHandleEvent(hc, (UBYTE *) &bem->bem_Event, bem->bem_Event.bhe_PayloadLength + 2);
+            ReplyMsg(&bem->bem_Msg);
+        }
+        if(sigs & (1UL<<hc->hc_TimerPort->mp_SigBit)) {
+            while(GetMsg(hc->hc_TimerPort)) {
+                hc->hc_TimerPending = FALSE;
+            }
+            bTick(hc);
+            bArmTimer(hc);
+        }
+        if(sigs & SIGBREAKF_CTRL_C) {
+            /* leave CTRL_C pending for the caller's outer loop and give up */
+            SetSignal(SIGBREAKF_CTRL_C, SIGBREAKF_CTRL_C);
+            break;
+        }
+    }
+
+    if(status) *status = hc->hc_SyncStatus;
+    if(resplen) *resplen = hc->hc_SyncRespLen;
+    if(!hc->hc_SyncDone || !hc->hc_SyncOK) {
+        return(-1);
+    }
+    return((LONG) hc->hc_SyncStatus);
+}
+/* \\\ */
+
 /* /// "bBringupCB()" */
 static void bBringupCB(struct bt_cmdq_completion *completion, void *user_data)
 {
@@ -815,6 +1367,12 @@ static void bBringupCB(struct bt_cmdq_completion *completion, void *user_data)
         optional = TRUE;
         break;
     }
+    /* trace every init step so a real adapter's bring-up is visible end to end */
+    btAddErrorMsg(ok ? RETURN_OK : (optional ? RETURN_WARN : RETURN_FAIL), (STRPTR) GM_UNIQUENAME(libname),
+                   "%s/%ld: init step %ld -> %s (0x%02lx).",
+                   bth->bth_DevName, bth->bth_Unit, (ULONG) hc->hc_BringupStep,
+                   ok ? (STRPTR) "ok" : (completion->result == BT_CMDQ_RESULT_TIMEOUT) ? (STRPTR) "timeout" : (STRPTR) "error",
+                   (ULONG) completion->status);
     if(!ok) {
         bth->bth_LastHCIError = completion->status;
         if(!optional) {
@@ -871,6 +1429,11 @@ static void bBringupCB(struct bt_cmdq_completion *completion, void *user_data)
                 bAddrToStr(bth->bth_Address.bd_Addr, (STRPTR) bth->bth_AddrString);
             }
             break;
+        case HCB_LE_READ_LOCAL_FEATURES:
+            if(rplen >= 9) {
+                CopyMem((APTR) &rp[1], bth->bth_LEFeatures, 8);
+            }
+            break;
         case HCB_LE_READ_BUFFER_SIZE:
             if(rplen >= 4) {
                 bth->bth_LEACLMaxPktSize = rp[1] | (rp[2] << 8);
@@ -925,6 +1488,13 @@ static void bBringupStep(struct BtHWCore *hc)
         case HCB_READ_VERSION:
             opcode = HC_OP_READ_LOCAL_VERSION;
             break;
+        case HCB_FIRMWARE:
+            /* Hand off to any pluggable firmware loader that matches this
+               controller. The load is synchronous and must run outside this
+               async callback chain, so flag it and let the hwtask main loop
+               run bDoFirmware() before continuing the bring-up. */
+            hc->hc_FirmwarePending = TRUE;
+            return;
         case HCB_READ_FEATURES:
             opcode = HC_OP_READ_LOCAL_FEATURES;
             break;
@@ -957,6 +1527,13 @@ static void bBringupStep(struct BtHWCore *hc)
                 continue;
             }
             opcode = HC_OP_LE_READ_BUFFER_SIZE;
+            break;
+        case HCB_LE_READ_LOCAL_FEATURES:
+            if(!(bth->bth_Flags & BTHF_LE)) {
+                hc->hc_BringupStep++;
+                continue;
+            }
+            opcode = HC_OP_LE_READ_LOCAL_FEATURES;
             break;
         case HCB_WRITE_LE_HOST_SUPPORT:
             if(!(bth->bth_Flags & BTHF_LE) || !(bth->bth_Flags & BTHF_CLASSIC)) {
@@ -1036,7 +1613,30 @@ static void bBringupStep(struct BtHWCore *hc)
             len = 1;
             break;
         default:
+            if(hc->hc_Reinit) {
+                /* re-initialisation after a late firmware load: back in service */
+                hc->hc_Reinit = FALSE;
+                hc->hc_ACLCredits = bth->bth_ACLNumPkts;
+                hc->hc_LEACLCredits = bth->bth_LEACLNumPkts;
+                bth->bth_State = BHS_READY;
+                btAddErrorMsg(RETURN_OK, (STRPTR) GM_UNIQUENAME(libname),
+                               "%s/%ld: controller re-initialised on the new firmware.",
+                               bth->bth_DevName, bth->bth_Unit);
+            }
+            btAddErrorMsg(RETURN_OK, (STRPTR) GM_UNIQUENAME(libname),
+                           "%s/%ld: bring-up complete - HCI %ld.%ld LMP %ld.%ld, %s%s%s, addr %s.",
+                           bth->bth_DevName, bth->bth_Unit,
+                           (ULONG) bth->bth_HCIVersion, (ULONG) bth->bth_HCIRevision,
+                           (ULONG) bth->bth_LMPVersion, (ULONG) bth->bth_LMPSubversion,
+                           (bth->bth_Flags & BTHF_CLASSIC) ? (STRPTR) "BR/EDR" : (STRPTR) "",
+                           ((bth->bth_Flags & BTHF_CLASSIC) && (bth->bth_Flags & BTHF_LE)) ? (STRPTR) "+" : (STRPTR) "",
+                           (bth->bth_Flags & BTHF_LE) ? (STRPTR) "LE" : (STRPTR) "",
+                           bth->bth_AddrString);
             hc->hc_BringupDone = TRUE;
+            /* stock up on controller entropy for LE pairing */
+            bConnRequestEntropy(hc, 4);
+            /* and start listening for our bonded LE devices */
+            bBgScanSchedule(hc);
             return;
         }
     }
@@ -1163,7 +1763,7 @@ void bHandleChannel(LIBBASETYPEPTR BluetoothBase, struct BtHardware *bth, struct
             if(!(bd->bd_Flags & BDFF_REGISTERED)) {
                 bd->bd_Flags |= BDFF_REGISTERED;
                 btUnlockDevice(bd);
-                bStoreDevConfig(BluetoothBase, bd);
+                bStoreDevConfig(BluetoothBase, bd, TRUE);
                 btAddErrorMsg(RETURN_OK, (STRPTR) GM_UNIQUENAME(libname),
                                "Device %s registered.", bd->bd_Name);
                 btSendEvent(BEHMB_DEVICEREGISTERED, bd, NULL);
@@ -1181,8 +1781,10 @@ void bHandleChannel(LIBBASETYPEPTR BluetoothBase, struct BtHardware *bth, struct
             btLockWriteDevice(bd);
             if(bd->bd_Flags & BDFF_REGISTERED) {
                 bd->bd_Flags &= ~(BDFF_REGISTERED|BDFF_BONDED);
+                memset(&bd->bd_Keys, 0, sizeof(bd->bd_Keys));
+                bd->bd_CurAddrValid = FALSE;
                 btUnlockDevice(bd);
-                bStoreDevConfig(BluetoothBase, bd);
+                bStoreDevConfig(BluetoothBase, bd, TRUE);
                 btAddErrorMsg(RETURN_OK, (STRPTR) GM_UNIQUENAME(libname),
                                "Device %s unregistered.", bd->bd_Name);
                 /* bindings are released by the event handler task */
@@ -1305,6 +1907,7 @@ static struct BtHWCore * bAllocCore(struct BtBase *BluetoothBase, struct BtHardw
     bt_timer_list_init(&hc->hc_Timers);
     bt_cmdq_init(&hc->hc_CmdQ, &hc->hc_Transport, &hc->hc_Timers);
     bt_timer_init(&hc->hc_DiscoveryTimer, bDiscoveryTimerCB, hc);
+    bt_timer_init(&hc->hc_BgScanTimer, bBgScanTimerCB, hc);
 
     for(n = 0; n < HC_NUMCMDREQS; n++) {
         hc->hc_CmdReq[n] = (struct IOBTHCIReq *) CreateIORequest(&bth->bth_DevMsgPort, sizeof(struct IOBTHCIReq));
@@ -1508,6 +2111,14 @@ static void bTick(struct BtHWCore *hc)
         }
     }
     bConnTick(hc);
+    /* registrations and policies change from other tasks: re-check the
+       background scan every few seconds as a catch-all */
+    if((LONG) (hc->hc_Tick - hc->hc_BgScanCheckTick) >= 5000) {
+        hc->hc_BgScanCheckTick = hc->hc_Tick;
+        if(!hc->hc_BgScanTimer.pending) {
+            bBgScanUpdate(hc);
+        }
+    }
 }
 /* \\\ */
 
@@ -1662,7 +2273,7 @@ AROS_UFH0(void, bHWTask)
                 }
                 bConnInit(hc);
 
-                sigmask = SIGBREAKF_CTRL_C |
+                sigmask = SIGBREAKF_CTRL_C | SIGBREAKF_CTRL_F |
                           (1UL<<bth->bth_DevMsgPort.mp_SigBit) |
                           (1UL<<bth->bth_TaskMsgPort.mp_SigBit) |
                           (1UL<<bth->bth_EventMsgPort.mp_SigBit) |
@@ -1679,6 +2290,15 @@ AROS_UFH0(void, bHWTask)
                 }
                 bArmTimer(hc);
                 while(!hc->hc_BringupDone) {
+                    if(hc->hc_FirmwarePending) {
+                        /* HCB_FIRMWARE reached: run the (synchronous) firmware
+                           loader here, then resume the bring-up sequence. */
+                        hc->hc_FirmwarePending = FALSE;
+                        bDoFirmware(hc);
+                        hc->hc_BringupStep++;
+                        bBringupStep(hc);
+                        continue;
+                    }
                     sigs = Wait(sigmask & ~(1UL<<bth->bth_TaskMsgPort.mp_SigBit));
                     while((req = (struct IOBTHCIReq *) GetMsg(&bth->bth_DevMsgPort))) {
                         bHandleDevReply(hc, req);
@@ -1741,6 +2361,32 @@ AROS_UFH0(void, bHWTask)
                         if(!hc->hc_TimerPending) {
                             bTick(hc);
                             bArmTimer(hc);
+                        }
+                        if(hc->hc_FirmwarePending) {
+                            /* HCB_FIRMWARE reached during a re-run bring-up */
+                            hc->hc_FirmwarePending = FALSE;
+                            bDoFirmware(hc);
+                            hc->hc_BringupStep++;
+                            bBringupStep(hc);
+                        }
+                        if(sigs & SIGBREAKF_CTRL_F) {
+                            /* a firmware loader bound after this controller was
+                               already up (the USB class adds the radio long before
+                               BTStackLoader runs): load the firmware now. The
+                               controller restarts on it at HCI defaults, so every
+                               event mask/mode set during bring-up is gone - run the
+                               bring-up again from Reset. */
+                            if(bDoFirmware(hc)) {
+                                btAddErrorMsg(RETURN_WARN, (STRPTR) GM_UNIQUENAME(libname),
+                                               "%s/%ld: firmware loaded after bring-up - re-initialising the controller.",
+                                               bth->bth_DevName, bth->bth_Unit);
+                                bth->bth_State = BHS_STARTING;
+                                hc->hc_Reinit = TRUE;
+                                hc->hc_BringupDone = FALSE;
+                                hc->hc_BringupFailed = FALSE;
+                                hc->hc_BringupStep = HCB_RESET;
+                                bBringupStep(hc);
+                            }
                         }
                         sigs = Wait(sigmask);
                     } while(!(sigs & SIGBREAKF_CTRL_C));

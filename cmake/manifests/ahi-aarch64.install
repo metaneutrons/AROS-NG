@@ -81,3 +81,5 @@ elf  Devs/AHI/rpipwm.audio
 mode  Devs/AudioModes/RPIPWM
 elf  Devs/AHI/rpihdmi.audio
 mode  Devs/AudioModes/RPIHDMI
+elf  Devs/AHI/rpii2s.audio
+mode  Devs/AudioModes/RPII2S

@@ -2,13 +2,13 @@ cmake_minimum_required(VERSION 3.22)
 
 set(_AROS_AHI_MMAKE_ID "workbench-devs-AHI-subsystem")
 set(_AROS_AHI_SOURCE_MANIFEST_SHA256
-    "6c1acb2243a49efea9f7ec1fb5e9d13a1138c77a49ebae3d62fb878d1e2fde72")
+    "08825cf192261fa90da1a959a8e7ee8a5223953a8533df17f7766fcfc233c75e")
 set(_AROS_AHI_X86_64_PRODUCT_MANIFEST_SHA256
     "76ec82653cc7b2715eefbf8c7dab813acab99aece10b5772dd3f8a59f5687ca2")
 set(_AROS_AHI_ARM_PRODUCT_MANIFEST_SHA256
-    "f31153089969be62533164458861eaaa717a042da92323ea6de752203a29564b")
+    "dcbba66c6b84f7b581edbb28540d2c8523f8afe0a0c3c4ecb2f57db8b33cb2ce")
 set(_AROS_AHI_AARCH64_PRODUCT_MANIFEST_SHA256
-    "f31153089969be62533164458861eaaa717a042da92323ea6de752203a29564b")
+    "dcbba66c6b84f7b581edbb28540d2c8523f8afe0a0c3c4ecb2f57db8b33cb2ce")
 
 function(_aros_ahi_real_path path output)
     set(_candidate "${path}")
@@ -288,7 +288,7 @@ endif()
 list(LENGTH _product_relative _product_count)
 if((AHI_MODE STREQUAL "x86_64" AND NOT _product_count EQUAL 73) OR
    ((AHI_MODE STREQUAL "arm" OR AHI_MODE STREQUAL "aarch64") AND
-    NOT _product_count EQUAL 83))
+    NOT _product_count EQUAL 85))
     message(FATAL_ERROR "AHI runner product count differs from audited capability")
 endif()
 list(LENGTH _input_relative _input_count)

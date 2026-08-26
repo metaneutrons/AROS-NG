@@ -4,10 +4,14 @@ FILES :=    \
     bluetooth.library \
     objects \
     classes \
+    firmware \
+    aes128 \
     hwtask \
     hwconn \
     config \
     numtostr \
+    popupicon \
+    popup \
     debug
 
 #MM kernel-bluetooth-library-includes :                         \

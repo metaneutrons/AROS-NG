@@ -107,6 +107,26 @@ struct BtHandlerTask
     struct timerequest *bh_TimerIOReq;    /* Standard timer request */
 };
 
+/* PoPo-style popup GUI task, spawned on demand to show pairing requests
+   from inside the library, the way poseidon.library's PoPo does for USB. */
+struct BtPopupTask
+{
+    struct Task        *bp_Task;          /* the popup GUI task */
+    struct MsgPort     *bp_Port;          /* port for pairing popup requests */
+    LONG                bp_ReadySignal;
+    struct Task        *bp_ReadySigTask;
+    struct Library     *bp_MUIMasterBase; /* muimaster, opened by the task */
+};
+
+/* A pairing request handed to the popup task. */
+struct BtPopupMsg
+{
+    struct Message      bpm_Msg;
+    struct BtDevice    *bpm_Device;
+    ULONG               bpm_Type;         /* BPRT_xxx */
+    ULONG               bpm_Passkey;
+};
+
 struct BtWStringMap
 {
     WORD   bsm_ID;
@@ -142,6 +162,8 @@ struct BtBase
     struct timerequest  bt_TimerIOReq;    /* Standard timer request */
     struct List         bt_Hardware;      /* List of Hardware Interfaces in use */
     struct List         bt_Classes;       /* List of Classes loaded */
+    struct List         bt_FirmwareLoaders; /* List of struct BtFirmwareLoader (plugins) */
+    struct SignalSemaphore bt_FirmwareLock; /* Guards bt_FirmwareLoaders */
     struct List         bt_ErrorMsgs;     /* List of Error Msgs */
     struct List         bt_EventHooks;    /* List of EventHandlers */
     struct MsgPort      bt_EventReplyPort; /* Replyport for Events */
@@ -152,6 +174,7 @@ struct BtBase
     ULONG               bt_MemAllocated;  /* Bytes of memory allocated by stack */
     BOOL                bt_ConfigRead;    /* Has a config been loaded? */
     BOOL                bt_CheckConfigReq; /* Set to true, to check if config changed */
+    BOOL                bt_SaveConfigReq; /* device registration/bond changed: write the config to disk */
     ULONG               bt_ConfigHash;    /* Last config hash value */
     ULONG               bt_SavedConfigHash; /* Hash sum of last saved config */
     struct BtGlobalCfg *bt_GlobalCfg;     /* Global Config structure */
@@ -159,6 +182,7 @@ struct BtBase
     ULONG               bt_OSVersion;     /* Internal OS Version descriptor */
     BOOL                bt_StartedAsTask; /* Did we start in Task Mode before DOS was available? */
     struct BtHandlerTask bt_EventHandler; /* Event handler */
+    struct BtPopupTask   bt_Popup;        /* PoPo-style pairing popup task */
 };
 
 /* bt_Flags */
@@ -234,6 +258,8 @@ struct BtAppBinding
 #define BTHF_DISCOVERABLE   0x0008        /* inquiry scan on */
 #define BTHF_CONNECTABLE    0x0010        /* page scan on */
 #define BTHF_REMOVEME       0x0100        /* scheduled for removal */
+#define BTHF_FWLOADED       0x0200        /* firmware download done (or not needed) */
+#define BTHF_FWPENDING      0x0400        /* firmware load requested, awaiting a loader */
 
 #define BT_ADDRSTR_LEN      18            /* "xx:xx:xx:xx:xx:xx" + NUL */
 #define BT_NAME_MAX         248           /* HCI local/remote name */
@@ -268,6 +294,7 @@ struct BtHardware
     UWORD               bth_LMPSubversion;
     UWORD               bth_ManufacturerID;
     UBYTE               bth_Features[8];        /* LMP features page 0 */
+    UBYTE               bth_LEFeatures[8];      /* LE controller features (bit 6 of byte 0 = LE Secure Connections) */
     UWORD               bth_ACLMaxPktSize;
     UWORD               bth_ACLNumPkts;
     UWORD               bth_SCOMaxPktSize;
@@ -370,7 +397,14 @@ struct BtDevice
     struct BtPoPoCfg    bd_PoPoCfg;       /* Inhibit PopUp and Class scan Config */
     UBYTE               bd_AdvData[BT_ADVDATA_MAX];
     struct BtKeyCfg     bd_Keys;          /* bond keys */
-    struct BtHWConn    *bd_Conn;          /* link state (hwconn.c private) */
+    struct BtHWConn    *bd_Conns[2];      /* per-bearer link state: [0]=BR/EDR, [1]=LE (hwconn.c private) */
+    /* The address the peer is using right now when it differs from
+       bd_Address: a bonded LE peer advertising from a resolvable private
+       address that its IRK resolved to this device. Links are created to
+       and matched against this address while bd_CurAddrValid. */
+    UBYTE               bd_CurAddr[6];
+    UBYTE               bd_CurAddrType;
+    BOOL                bd_CurAddrValid;
 };
 
 struct BtService
@@ -379,6 +413,7 @@ struct BtService
     struct BtDevice    *bsv_Device;       /* Up linkage */
     APTR                bsv_SvcBinding;   /* Service Binding */
     struct BtClass     *bsv_ClsBinding;   /* Which class has the bond? */
+    BOOL                bsv_BindingInProgress; /* a class scan is binding this service; do not free it */
     UBYTE               bsv_UUID[16];     /* 128 bit UUID, big endian */
     UWORD               bsv_UUID16;       /* 16 bit UUID or 0 */
     UWORD               bsv_Protocol;     /* BSVP_xxx */
@@ -393,6 +428,8 @@ struct BtService
     STRPTR              bsv_Name;         /* Service name */
     STRPTR              bsv_IDString;     /* Service ID string */
     UWORD              *bsv_ServiceClassIDs; /* 0 terminated array of 16 bit ids */
+    UBYTE              *bsv_HidDescriptor; /* SDP HIDDescriptorList report descriptor (classic HID), or NULL */
+    UWORD               bsv_HidDescriptorLen;
     struct List         bsv_Endpoints;    /* List of endpoints */
 };
 
@@ -413,6 +450,12 @@ struct BtEndpoint
     UWORD               bep_UUID16;
     UWORD               bep_Properties;
     UWORD               bep_MaxPktSize;   /* MTU */
+    UWORD               bep_EndHandle;    /* GATT: last handle belonging to this characteristic */
+    UWORD               bep_CCCDHandle;   /* GATT: Client Characteristic Configuration descriptor (0 = unknown) */
+    UWORD               bep_RefHandle;    /* GATT: HID Report Reference descriptor (0 = none) */
+    UWORD               bep_ReportID;     /* HID report id from the Report Reference */
+    UWORD               bep_ReportType;   /* 1 input, 2 output, 3 feature */
+    UWORD               bep_DescDone;     /* descriptors have been looked at */
     UBYTE               bep_UUID[16];
     STRPTR              bep_Name;
     struct BtHWEndpoint *bep_Chan;        /* open channel state (hwconn.c private) */

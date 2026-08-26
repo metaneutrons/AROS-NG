@@ -100,9 +100,9 @@ struct bt_discovered_device *bt_device_registry_note_classic(struct bt_device_re
  */
 bool bt_le_addr_is_stable(const struct bt_addr *addr, uint8_t address_type)
 {
-    if (address_type == 0)
-        return true;                    /* public */
-    return (addr->b[BT_ADDR_LEN - 1u] & 0xc0u) == 0xc0u;
+    if (address_type == 0 || address_type >= 2)
+        return true;                    /* public, or an identity address resolved by the controller */
+    return (addr->b[BT_ADDR_LEN - 1u] & 0xc0u) == 0xc0u;   /* static random */
 }
 
 bool bt_cod_is_hid(uint32_t class_of_device)
@@ -137,6 +137,8 @@ void bt_le_adv_parse(const uint8_t *data, size_t length, struct bt_le_adv_info *
     out->name = NULL;
     out->name_len = 0;
     out->name_complete = false;
+    out->has_flags = false;
+    out->flags = 0;
     if (data == NULL)
         return;
 
@@ -157,6 +159,13 @@ void bt_le_adv_parse(const uint8_t *data, size_t length, struct bt_le_adv_info *
 
         switch (type)
         {
+        case 0x01u:                 /* flags: discoverable mode bits */
+            if (payload_len >= 1u)
+            {
+                out->has_flags = true;
+                out->flags = payload[0];
+            }
+            break;
         case 0x02u:                 /* incomplete list of 16-bit service UUIDs */
         case 0x03u:                 /* complete list */
         {

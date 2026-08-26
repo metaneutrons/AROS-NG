@@ -154,6 +154,7 @@
 #define BDA_PairingRequest   (BDA_Dummy + 0x2b) /* ULONG BPRT_xxx pending request */
 #define BDA_PairingPasskey   (BDA_Dummy + 0x2c) /* ULONG passkey to display/compare */
 #define BDA_LinkType         (BDA_Dummy + 0x2d) /* ULONG BDLT_xxx of the current link */
+#define BDA_BondFlags        (BDA_Dummy + 0x2e) /* ULONG BDKF_xxx: which keys are stored (never the keys themselves) */
 #define BDA_InhibitPopup     (BDA_Dummy + 0x40) /* BOOL (settable) */
 #define BDA_InhibitClassBind (BDA_Dummy + 0x41) /* BOOL (settable) */
 #define BDA_AutoConnect      (BDA_Dummy + 0x42) /* BOOL (settable): connect on I/O and reconnect */
@@ -164,6 +165,13 @@
 #define BDAT_RANDOM          1
 #define BDAT_PUBLIC_IDENTITY 2
 #define BDAT_RANDOM_IDENTITY 3
+
+/* BDA_BondFlags */
+#define BDKF_LINKKEY 0x01 /* BR/EDR link key */
+#define BDKF_LTK     0x02 /* LE long term key */
+#define BDKF_IRK     0x04 /* LE identity resolving key (peer uses private addresses) */
+#define BDKF_CSRK    0x08 /* LE signing key */
+#define BDKF_SC      0x10 /* LE Secure Connections key */
 
 /* BDA_Role */
 #define BDR_NONE             0
@@ -211,6 +219,8 @@
 #define BSVA_EndpointList    (BSVA_Dummy + 0x20) /* struct List * of BtEndpoint */
 #define BSVA_NumEndpoints    (BSVA_Dummy + 0x21) /* ULONG */
 #define BSVA_ServiceClassIDs (BSVA_Dummy + 0x22) /* UWORD * array of 16 bit service class ids, 0 terminated */
+#define BSVA_HIDDescriptor   (BSVA_Dummy + 0x23) /* UBYTE * HID report descriptor from SDP (classic HID), or NULL */
+#define BSVA_HIDDescriptorLen (BSVA_Dummy + 0x24) /* ULONG length of BSVA_HIDDescriptor */
 
 /* BSVA_Protocol */
 #define BSVP_UNKNOWN 0
@@ -238,6 +248,10 @@
 #define BEA_MaxPktSize       (BEA_Dummy + 0x19) /* ULONG MTU */
 #define BEA_IsOpen           (BEA_Dummy + 0x1a) /* BOOL channel currently open */
 #define BEA_Name             (BEA_Dummy + 0x1b) /* STRPTR */
+#define BEA_ReportID         (BEA_Dummy + 0x1c) /* ULONG HID Report Reference: report id (0 = none) */
+#define BEA_ReportType       (BEA_Dummy + 0x1d) /* ULONG HID Report Reference: 1 input, 2 output, 3 feature (0 = unknown) */
+#define BEA_CCCDHandle       (BEA_Dummy + 0x1e) /* ULONG GATT handle of the characteristic's CCCD (0 = unknown) */
+#define BEA_ReportRefHandle  (BEA_Dummy + 0x1f) /* ULONG GATT handle of the HID Report Reference descriptor (0 = none) */
 
 /* BEA_Type */
 #define BEPT_L2CAP        1 /* connection oriented L2CAP channel (PSM) */
@@ -443,6 +457,7 @@
 #define IFFCHNK_FORCEDBIND MAKE_ID('F','B','N','D')
 #define IFFCHNK_POPUP      MAKE_ID('P','O','P','O')
 #define IFFCHNK_REGDEVICE  MAKE_ID('D','R','E','G') /* struct BtRegDevCfg */
+#define IFFCHNK_DEVNAME    MAKE_ID('D','N','A','M') /* name the device reported (NAME = custom name) */
 #define IFFCHNK_KEYS       MAKE_ID('K','E','Y','S') /* bond keys (opaque, versioned) */
 
 /* Public definitions to Private interfaces */
@@ -576,5 +591,54 @@ struct BtRegDevCfg
 #if defined(__GNUC__)
 # pragma pack()
 #endif
+
+/* *** pluggable controller-firmware loaders ***
+ *
+ * Some radios (e.g. Realtek RTL8761/8852) answer HCI from a ROM bootloader but
+ * cannot transmit/receive until the host downloads a firmware patch. Support for
+ * a given family lives in a separate loadable module in DEVS:Bluetooth/FWLoaders/,
+ * NOT in bluetooth.library. BTStackLoader opens each module; the module registers
+ * a "struct BtFirmwareLoader" with btAddFirmwareLoader(). During a controller's
+ * bring-up the stack offers the controller to every registered loader (fwl_Match)
+ * and lets the best match run (fwl_Load), giving it a synchronous HCI channel and
+ * a log callback via "struct BtFirmwareContext". Firmware BLOBS are read from disk
+ * only (never the network).
+ *
+ * These are in-memory runtime structures (they hold function pointers), so they
+ * live OUTSIDE the on-disk pack(2) region above - their pointers must keep the
+ * platform's natural alignment. */
+
+struct BtFirmwareContext
+{
+    /* controller identity (filled in by the library) */
+    UWORD   fwc_Manufacturer;             /* Bluetooth SIG company id */
+    UWORD   fwc_HCIVersion;
+    UWORD   fwc_HCIRevision;
+    UWORD   fwc_LMPVersion;
+    UWORD   fwc_LMPSubversion;
+    /* send one HCI command and block until it completes. opcode is OGF<<10|OCF.
+     * status gets the HCI status byte; up to respmax bytes of return parameters
+     * (status byte first) are copied to resp with the count in *resplen.
+     * returns 0 on a completed, successful command, non-zero otherwise. Any of
+     * status/resp/resplen may be NULL. Provided by the library. */
+    LONG  (*fwc_HciCommand)(struct BtFirmwareContext *ctx, UWORD opcode,
+                            CONST_APTR params, UWORD plen,
+                            UBYTE *status, UBYTE *resp, UWORD *resplen, UWORD respmax);
+    /* append a line to the bluetooth message log (RETURN_OK/WARN/ERROR/FAIL) */
+    void  (*fwc_Log)(struct BtFirmwareContext *ctx, LONG level, CONST_STRPTR fmt, ...);
+    APTR    fwc_Private;                  /* library use only */
+};
+
+struct BtFirmwareLoader
+{
+    struct MinNode fwl_Node;              /* linked into the stack's loader list */
+    CONST_STRPTR   fwl_Name;              /* human-readable loader name */
+    /* return a non-zero priority if this loader handles the controller in ctx,
+     * else 0 (identity-only; must not issue HCI). Highest priority wins. */
+    ULONG        (*fwl_Match)(struct BtFirmwareLoader *self, struct BtFirmwareContext *ctx);
+    /* download/apply firmware; return 0 on success (or if nothing was needed). */
+    LONG         (*fwl_Load)(struct BtFirmwareLoader *self, struct BtFirmwareContext *ctx);
+    APTR           fwl_UserData;          /* loader's own use */
+};
 
 #endif /* LIBRARIES_BLUETOOTH_H */

@@ -71,6 +71,8 @@ static int GM_UNIQUENAME(libInit)(LIBBASETYPEPTR BluetoothBase)
 
         NewList(&BluetoothBase->bt_Hardware);
         NewList(&BluetoothBase->bt_Classes);
+        NewList(&BluetoothBase->bt_FirmwareLoaders);
+        InitSemaphore(&BluetoothBase->bt_FirmwareLock);
         NewList(&BluetoothBase->bt_ErrorMsgs);
         NewList(&BluetoothBase->bt_EventHooks);
         memset(&BluetoothBase->bt_EventReplyPort, 0, sizeof(BluetoothBase->bt_EventReplyPort));
@@ -207,6 +209,7 @@ int GM_UNIQUENAME(libExpunge)(LIBBASETYPEPTR BluetoothBase)
         pic = (struct BtIFFContext *) BluetoothBase->bt_ConfigRoot.lh_Head;
     }
 
+    bStopPopup(BluetoothBase);
     if(BluetoothBase->bt_EventHandler.bh_Task) {
         BluetoothBase->bt_EventHandler.bh_ReadySignal = SIGB_SINGLE;
         BluetoothBase->bt_EventHandler.bh_ReadySigTask = FindTask(NULL);
@@ -1286,6 +1289,7 @@ static const ULONG BtDevicePT[] = {
     PACK_ENTRY(BDA_Dummy, BDA_ConnHandle, BtDevice, bd_ConnHandle, PKCTRL_UWORD|PKCTRL_UNPACKONLY),
     PACK_ENTRY(BDA_Dummy, BDA_Role, BtDevice, bd_Role, PKCTRL_UBYTE|PKCTRL_UNPACKONLY),
     PACK_ENTRY(BDA_Dummy, BDA_LinkType, BtDevice, bd_LinkType, PKCTRL_UBYTE|PKCTRL_UNPACKONLY),
+    PACK_ENTRY(BDA_Dummy, BDA_BondFlags, BtDevice, bd_Keys.bkc_Flags, PKCTRL_UBYTE|PKCTRL_UNPACKONLY),
     PACK_ENTRY(BDA_Dummy, BDA_Hardware, BtDevice, bd_Hardware, PKCTRL_IPTR|PKCTRL_UNPACKONLY),
     PACK_ENTRY(BDA_Dummy, BDA_Binding, BtDevice, bd_DevBinding, PKCTRL_IPTR|PKCTRL_PACKUNPACK),
     PACK_ENTRY(BDA_Dummy, BDA_BindingClass, BtDevice, bd_ClsBinding, PKCTRL_IPTR|PKCTRL_PACKUNPACK),
@@ -1338,6 +1342,8 @@ static const ULONG BtServicePT[] = {
     PACK_ENTRY(BSVA_Dummy, BSVA_IDString, BtService, bsv_IDString, PKCTRL_IPTR|PKCTRL_UNPACKONLY),
     PACK_ENTRY(BSVA_Dummy, BSVA_NumEndpoints, BtService, bsv_NumEPs, PKCTRL_UWORD|PKCTRL_UNPACKONLY),
     PACK_ENTRY(BSVA_Dummy, BSVA_ServiceClassIDs, BtService, bsv_ServiceClassIDs, PKCTRL_IPTR|PKCTRL_UNPACKONLY),
+    PACK_ENTRY(BSVA_Dummy, BSVA_HIDDescriptor, BtService, bsv_HidDescriptor, PKCTRL_IPTR|PKCTRL_UNPACKONLY),
+    PACK_ENTRY(BSVA_Dummy, BSVA_HIDDescriptorLen, BtService, bsv_HidDescriptorLen, PKCTRL_UWORD|PKCTRL_UNPACKONLY),
     PACK_ENDTABLE
 };
 
@@ -1356,6 +1362,10 @@ static const ULONG BtEndpointPT[] = {
     PACK_ENTRY(BEA_Dummy, BEA_Properties, BtEndpoint, bep_Properties, PKCTRL_UWORD|PKCTRL_UNPACKONLY),
     PACK_ENTRY(BEA_Dummy, BEA_MaxPktSize, BtEndpoint, bep_MaxPktSize, PKCTRL_UWORD|PKCTRL_UNPACKONLY),
     PACK_ENTRY(BEA_Dummy, BEA_Name, BtEndpoint, bep_Name, PKCTRL_IPTR|PKCTRL_UNPACKONLY),
+    PACK_ENTRY(BEA_Dummy, BEA_ReportID, BtEndpoint, bep_ReportID, PKCTRL_UWORD|PKCTRL_UNPACKONLY),
+    PACK_ENTRY(BEA_Dummy, BEA_ReportType, BtEndpoint, bep_ReportType, PKCTRL_UWORD|PKCTRL_UNPACKONLY),
+    PACK_ENTRY(BEA_Dummy, BEA_CCCDHandle, BtEndpoint, bep_CCCDHandle, PKCTRL_UWORD|PKCTRL_UNPACKONLY),
+    PACK_ENTRY(BEA_Dummy, BEA_ReportRefHandle, BtEndpoint, bep_RefHandle, PKCTRL_UWORD|PKCTRL_UNPACKONLY),
     PACK_ENDTABLE
 };
 
@@ -1682,7 +1692,9 @@ AROS_LH3(LONG, btSetAttrsA,
         res = -1;
     }
     if(savepopocfg) {
-        bStoreDevConfig(BluetoothBase, (struct BtDevice *) btstruct);
+        /* per-device settings (name, popup/bind/connect policy): in memory
+           only, the prefs' Save/Use writes them - as Poseidon does */
+        bStoreDevConfig(BluetoothBase, (struct BtDevice *) btstruct, FALSE);
     }
     if(checkcfgupdate) {
         struct BtIFFContext *pic;

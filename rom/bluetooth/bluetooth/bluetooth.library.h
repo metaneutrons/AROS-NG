@@ -68,6 +68,10 @@ BOOL bHaveDOS(struct BtBase *BluetoothBase);
 void bGarbageCollectEvents(struct BtBase *BluetoothBase);
 BOOL bStartEventHandler(struct BtBase *BluetoothBase);
 
+/* PoPo-style pairing popup handled inside the library */
+void bShowPairingPopup(struct BtBase *BluetoothBase, struct BtDevice *bd, ULONG type, ULONG passkey);
+void bStopPopup(struct BtBase *BluetoothBase);
+
 void bStripString(struct BtBase *BluetoothBase, STRPTR str);
 struct Node * bFindName(struct BtBase *BluetoothBase, struct List *list, STRPTR name);
 struct BtHardware * bFindHardware(struct BtBase *BluetoothBase, STRPTR name, ULONG unit);
@@ -80,7 +84,11 @@ void bFreeEndpoint(struct BtBase *BluetoothBase, struct BtEndpoint *bep);
 struct BtEndpoint * bAllocEndpoint(struct BtBase *BluetoothBase, struct BtService *bsv);
 void bDeviceClassScan(struct BtBase *BluetoothBase, struct BtDevice *bd);
 void bApplyDevConfig(struct BtBase *BluetoothBase, struct BtDevice *bd);
-void bStoreDevConfig(struct BtBase *BluetoothBase, struct BtDevice *bd);
+/* persist: registration/bond state changed - also write the config to disk
+   (done by the event handler process, which has DOS) */
+void bStoreDevConfig(struct BtBase *BluetoothBase, struct BtDevice *bd, BOOL persist);
+ULONG bRestoreDevices(struct BtBase *BluetoothBase, struct BtHardware *bth);
+void bRekeyDevice(struct BtBase *BluetoothBase, struct BtDevice *bd, const UBYTE *addr, UBYTE addrtype);
 void bReplyChannel(struct BtBase *BluetoothBase, struct BtChannel *bch, LONG error, ULONG actual);
 BOOL bSubmitCtrl(struct BtBase *BluetoothBase, struct BtHardware *bth, struct BtDevice *bd,
                  UWORD request, UWORD val, UWORD idx, APTR data, ULONG len, LONG *error);
@@ -99,6 +107,7 @@ BOOL bAddStringChunk(struct BtBase *BluetoothBase, struct BtIFFContext *pic, ULO
 void bUpdateGlobalCfg(struct BtBase *BluetoothBase, struct BtIFFContext *pic);
 APTR bFindCfgChunk(struct BtBase *BluetoothBase, struct BtIFFContext *pic, ULONG chnkid);
 BOOL bCheckCfgChanged(struct BtBase *BluetoothBase);
+void bSyncStackCfg(struct BtBase *BluetoothBase);
 
 /* Protos (hwtask.c) */
 

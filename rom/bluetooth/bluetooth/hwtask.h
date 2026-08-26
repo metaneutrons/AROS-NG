@@ -23,6 +23,8 @@
 #include <btcore/sdp_client.h>
 #include <btcore/att.h>
 #include <btcore/gatt_client.h>
+#include <btcore/smp.h>
+#include <btcore/smp_manager.h>
 
 #define HC_NUMCMDREQS   2
 #define HC_NUMACLREADS  4
@@ -75,6 +77,10 @@
 #define HC_OP_LE_READ_LOCAL_FEATURES  HC_OP(0x08, 0x0003)
 #define HC_OP_LE_SET_SCAN_PARAMETERS  HC_OP(0x08, 0x000b)
 #define HC_OP_LE_SET_SCAN_ENABLE      HC_OP(0x08, 0x000c)
+#define HC_OP_LE_RAND                 HC_OP(0x08, 0x0018)
+#define HC_OP_LE_READ_LOCAL_P256      HC_OP(0x08, 0x0025)
+#define HC_OP_LE_GENERATE_DHKEY       HC_OP(0x08, 0x0026)
+
 #define HC_OP_LE_CREATE_CONNECTION    HC_OP(0x08, 0x000d)
 #define HC_OP_LE_CREATE_CONN_CANCEL   HC_OP(0x08, 0x000e)
 #define HC_OP_LE_START_ENCRYPTION     HC_OP(0x08, 0x0019)
@@ -91,6 +97,7 @@
 #define HC_EVT_AUTH_COMPLETE          0x06
 #define HC_EVT_REMOTE_NAME_COMPLETE   0x07
 #define HC_EVT_ENCRYPTION_CHANGE      0x08
+#define HC_EVT_ENCRYPTION_KEY_REFRESH 0x30
 #define HC_EVT_READ_REMOTE_VERSION    0x0c
 #define HC_EVT_HARDWARE_ERROR         0x10
 #define HC_EVT_NUM_COMPLETED_PACKETS  0x13
@@ -109,18 +116,22 @@
 #define HC_LE_SUB_CONN_COMPLETE       0x01
 #define HC_LE_SUB_ADV_REPORT          0x02
 #define HC_LE_SUB_LTK_REQUEST         0x05
+#define HC_LE_SUB_P256_COMPLETE       0x08
+#define HC_LE_SUB_DHKEY_COMPLETE      0x09
 #define HC_LE_SUB_ENH_CONN_COMPLETE   0x0a
 
 /* bring-up steps */
 enum {
     HCB_RESET = 0,
     HCB_READ_VERSION,
+    HCB_FIRMWARE,           /* offer the controller to the pluggable firmware loaders */
     HCB_READ_FEATURES,
     HCB_READ_BUFFER_SIZE,
     HCB_READ_BD_ADDR,
     HCB_SET_EVENT_MASK,
     HCB_LE_SET_EVENT_MASK,
     HCB_LE_READ_BUFFER_SIZE,
+    HCB_LE_READ_LOCAL_FEATURES,
     HCB_WRITE_LE_HOST_SUPPORT,
     HCB_WRITE_INQUIRY_MODE,
     HCB_WRITE_SIMPLE_PAIRING,
@@ -192,23 +203,61 @@ struct BtHWConn
     struct MinList      cn_WaitReqs;   /* BtChannel requests waiting for the link */
     /* service enumeration */
     UWORD               cn_EnumState;
+    BOOL                cn_Enumerated;  /* this bearer's services have been enumerated once */
     UWORD               cn_EnumIndex;
     UWORD               cn_EnumCount;
     ULONG               cn_EnumHandles[32];
     struct bt_gatt_service cn_Services[BT_GATT_CLIENT_MAX_SERVICES];
     struct BtChannel   *cn_EnumReq;    /* control request waiting for enumeration */
+    struct BtEndpoint  *cn_EnumEP;     /* GATT endpoint whose descriptors are being looked at */
+    BOOL                cn_CCCDBusy;     /* a CCCD write is in flight on the GATT client */
     /* control channel requests in flight on the SDP/GATT clients */
     struct BtChannel   *cn_CtrlReq;
     /* pairing */
     UWORD               cn_PairState;
     struct BtChannel   *cn_PairReq;
+    /* LE pairing: btcore Security Manager, driven over fixed CID 6 */
+    struct bt_smp_manager     cn_SMP;
+    struct bt_smp_cmac_aes128 cn_SMPCmac;
+    BOOL                cn_SMPActive;     /* manager initialised for a pairing in progress */
+    BOOL                cn_SMPChanOpen;   /* fixed SMP channel registered on this link */
+    BOOL                cn_EncryptPending;/* LE Start Encryption with the stored key in flight */
+    UBYTE               cn_SMPRandWait;   /* LE Rand completions to collect before starting */
+    UBYTE               cn_SMPKeySize;
+    UBYTE               cn_SMPLTK[16];    /* key handed to LE Start Encryption (HCI byte order) */
     ULONG               cn_LastActivity;
+    /* HCNS_CONNECTING without an HCI connect in flight: a class wants the
+       (bonded, sleeping) LE peer and the background scan connects as soon as
+       it advertises - no 10 s timeout, no controller time wasted paging. */
+    BOOL                cn_WaitAdv;
 };
 
 #define HCNS_FREE       0
 #define HCNS_CONNECTING 1
 #define HCNS_CONNECTED  2
 #define HCNS_DISCONNECTING 3
+
+#define HC_SCANDIAG_MAX 96
+struct BtScanDiag
+{
+    UBYTE  sd_Addr[6];
+    UBYTE  sd_AddrType;    /* HCI address type (0 public, 1 random, 2/3 identity); 0xfe = BR/EDR */
+    UBYTE  sd_Stable;      /* bt_le_addr_is_stable(): public or static random */
+    UBYTE  sd_IsLE;
+    UBYTE  sd_EvMask;      /* LE legacy: bit n = event_type n seen (0 ADV_IND 1 DIRECT 2 SCAN_IND 3 NONCONN 4 SCAN_RSP); classic: 0 std 1 rssi 2 eir */
+    UBYTE  sd_ExtMask;     /* LE extended report event_type bits OR'd (bit0 conn bit1 scan bit2 dir bit3 scanrsp bit4 legacy) */
+    UBYTE  sd_HasFlags;
+    UBYTE  sd_Flags;       /* AD Flags value */
+    UBYTE  sd_HID;
+    UBYTE  sd_Noted;       /* reports that reached the device list (capped) */
+    UBYTE  sd_Dropped;     /* reports discarded by the private-address rule (capped) */
+    UWORD  sd_Count;
+    UWORD  sd_Appearance;
+    ULONG  sd_ADTypes;     /* bitmask of AD types < 32 seen across all reports */
+    ULONG  sd_CoD;
+    LONG   sd_RSSI;        /* last non-127 */
+    char   sd_Name[32];
+};
 
 struct BtHWCore
 {
@@ -248,12 +297,51 @@ struct BtHWCore
     BOOL                hc_BringupFailed;
     BOOL                hc_Shutdown;
 
+    /* firmware-loader hook: HCB_FIRMWARE sets hc_FirmwarePending so the hwtask
+       main loop runs the (synchronous) loader outside event processing. */
+    BOOL                hc_FirmwarePending;
+    BOOL                hc_Reinit;        /* bring-up re-run after a late firmware load */
+    /* entropy for SMP: controller LE Rand output whitening a seeded PRNG */
+    ULONG               hc_RandState[4];
+    UBYTE               hc_RandPool[64];
+    UWORD               hc_RandAvail;
+    UWORD               hc_RandRequests;
+    /* one in-flight synchronous HCI command (bHciDoSync / firmware loaders) */
+    BOOL                hc_SyncDone;
+    BOOL                hc_SyncOK;        /* command completed (vs timeout/send error) */
+    UBYTE               hc_SyncStatus;    /* HCI status byte */
+    UBYTE              *hc_SyncResp;      /* caller's return-param buffer, or NULL */
+    UWORD               hc_SyncRespMax;
+    UWORD               hc_SyncRespLen;
+
     /* discovery */
     BOOL                hc_InqActive;
     BOOL                hc_LEScanActive;
     BOOL                hc_ResolveNames;
     BOOL                hc_DiscoveryPending; /* discovery requested, commands in flight */
     struct bt_timer     hc_DiscoveryTimer;
+
+    /* background LE scan: a low duty passive scan that runs whenever a
+       bonded LE device with auto-connect is not connected, so a keyboard
+       waking up (advertising) is reconnected without anyone asking. Off
+       during discovery and while an outgoing connect is in flight. */
+    BOOL                hc_BgScanActive;
+    struct bt_timer     hc_BgScanTimer;      /* re-arm hysteresis after link changes */
+    ULONG               hc_BgScanCheckTick;  /* periodic re-evaluation (hc_Tick based) */
+
+    /* scan diagnostics (conclusive "why is nothing found" instrumentation) */
+    ULONG               hc_DiagAdvLegacy;    /* LE advertising reports parsed (subevent 0x02) */
+    ULONG               hc_DiagAdvExt;       /* LE extended advertising reports parsed (0x0D) */
+    ULONG               hc_DiagAdvOther;     /* LE Meta events of some other subevent */
+    ULONG               hc_DiagInqResults;   /* classic inquiry results seen */
+    ULONG               hc_DiagLESubeventMask; /* bitmask of LE Meta subevent codes seen this run */
+    ULONG               hc_DiagScanRsp;      /* LE scan responses received (active scan working) */
+    ULONG               hc_DiagDropped;      /* reports discarded by the private-address rule */
+    /* per-address journal of everything the radio reported this run, dumped to
+       SYS:BluetoothScan.log when discovery finishes ("btdebug" boot argument only) */
+    struct BtScanDiag   hc_ScanDiag[HC_SCANDIAG_MAX];
+    UWORD               hc_ScanDiagCount;
+    ULONG               hc_ScanDiagOverflow; /* reports from addresses beyond the table */
 
     /* remote name requests */
     struct MinList      hc_NameChannels;   /* BtChannel queue (bch_QueueNode) */
@@ -280,11 +368,28 @@ uint64_t bNowUS(struct BtHWCore *hc);
 BOOL bSubmitCmd(struct BtHWCore *hc, UWORD opcode, const UBYTE *params, UBYTE len,
                 bt_cmdq_complete_fn cb, void *user);
 void bIgnoreCompletion(struct bt_cmdq_completion *completion, void *user_data);
+/* hwconn.c: ask the controller for LE Rand entropy; returns commands submitted */
+ULONG bConnRequestEntropy(struct BtHWCore *hc, ULONG count);
+/* synchronous HCI command used by firmware loaders (hwtask.c) */
+LONG bHciDoSync(struct BtHWCore *hc, UWORD opcode, CONST_APTR params, UWORD plen,
+                UBYTE *status, UBYTE *resp, UWORD *resplen, UWORD respmax);
+/* firmware.c: offer the controller to the registered firmware loaders;
+   TRUE if a loader downloaded firmware (the controller restarted on it) */
+BOOL bDoFirmware(struct BtHWCore *hc);
 struct BtDevice * bFindDeviceByAddr(struct BtHWCore *hc, const UBYTE *addr);
+LONG bStopDiscovery(struct BtHWCore *hc);
 void bReplyChannel(struct BtBase *BluetoothBase, struct BtChannel *bch, LONG error, ULONG actual);
 void bStartACLWrite(struct BtHWCore *hc);
+/* background LE scan (hwtask.c): stop it before an LE connect/scan command,
+   re-evaluate (now / after a short delay) when links or registrations change */
+void bBgScanStop(struct BtHWCore *hc);
+void bBgScanUpdate(struct BtHWCore *hc);
+void bBgScanSchedule(struct BtHWCore *hc);
 
 /* hwconn.c */
+/* a bonded/registered LE device is advertising: connect to it when a class
+   is waiting for it or its auto-connect policy says so */
+void bConnAdvertising(struct BtHWCore *hc, struct BtDevice *bd);
 void bConnInit(struct BtHWCore *hc);
 void bConnShutdown(struct BtHWCore *hc);
 BOOL bConnHandleEvent(struct BtHWCore *hc, UBYTE code, const UBYTE *params, ULONG len);
