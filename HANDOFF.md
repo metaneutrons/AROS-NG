@@ -1,5 +1,34 @@
 # Handoff
 
+## Update 26 August 2026 — relocatable release collector
+
+Commits `15091fbe91`, `07f7d4080b`, `41f511764a`, and `ead40df509` integrate
+the Rust `aros-collect` driver into every deterministic toolchain release.
+Relative `collect-aros` aliases resolve only sibling LLVM tools and the
+explicit Developer `--sysroot`; the PC profile adds `collect-aros32` for
+`lib32`. The driver ports the complete two-pass AROS final-link contract,
+including symbol sets, library requirements,
+conditional pure-virtual/pthread inputs, undefined auditing, AROS ELF ABI
+marking and atomic publication. The classic C collector remains available to
+the normal upstream-compatible build. Upstream configure's initial
+library-free compiler probe is allowed before it discovers and applies the
+sysroot; links that need a collector-owned target input still require it.
+
+Focused Rust, producer, release-CMake, crosstools-release, poisoned-environment
+and real x86-64/i386 link checks pass. Two independent canonical macOS builds
+of the Rust collector are byte-identical. The producer now remaps and rejects
+absolute Cargo source-cache paths as well as checkout/build/install paths.
+Diagnostic packages with the final contract pass complete macOS and Linux
+AROS-NG, vanilla-upstream and poisoned-`PATH` x86-64/i386 paths. Formal
+collector-inclusive `pc-x86_64` builds from exact commit `ead40df509`, Git tree
+`beb1b7dd…`, and recipe `b89bf41c…` now pass on both available hosts. The
+macOS ARM64 archive is `f283b9aa…` with payload tree `fd78489f…`; the Linux
+x86-64 archive is `752697c0…` with payload tree `fdf72fcb…`. Both pass package
+verification, two-root relocation, AROS-NG configure, vanilla upstream
+`includes`/`linklibs` at `6e196552…`, and poisoned-`PATH` x86-64/i386 final
+links. These are one clean A-build per host, not the complete A/B release
+matrix; ARM and AArch64 profiles remain to be built twice on all four hosts.
+
 ## Update 26 August 2026 — deterministic toolchain release candidate
 
 The fail-closed producer and consumer path is implemented through

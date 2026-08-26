@@ -87,29 +87,42 @@ copy of what the three call sites had, except that `compiler/atomic` and
 `compiler/libinit` now also name `includes-copy`, which `includes` already
 implied through `includes-generate-deps`.
 
-### 4. WORK — the collector is not releasable
+### 4. RESOLVED — the release collector is relocatable
 
-Untouched from `toolchains/HANDOFF.md`. The four-item design there still
-stands, and the diagnosis is confirmed:
+Commits `15091fbe91`, `07f7d4080b`, `41f511764a`, and `ead40df509`
+deliberately leave the classic C collector in the upstream build path and ship
+a release-facing Rust implementation instead. `collect-aros` and the PC
+profile's `collect-aros32` are relative aliases of sibling `aros-collect`; the
+driver resolves only sibling `ld.lld` and `llvm-strip`, and takes libraries
+exclusively from the caller's absolute Developer `--sysroot` (`lib32` for the
+32-bit alias). It
+never uses `PATH`, `COMPILER_PATH`, or a compiled-in producer prefix. The one
+intentional no-sysroot case is upstream configure's initial library-free
+compiler probe; a collector-discovered target input still requires the
+absolute Developer root and reports that requirement directly.
 
-- `tools/collect-aros/env.h.in` `_CROSS_` bakes in absolute producer paths:
-  `LD_NAME "@aros_toolchain_ld@"`, `STRIP_NAME`/`NM_NAME`/`OBJDUMP_NAME` as
-  `@AROS_CROSSTOOLSDIR@/@aros_target_cpu@-aros-*`. The `_STANDALONE_` branch
-  uses bare names, so PATH resolution.
-- `OBJLIBDIR` is compiled in via `-DOBJLIBDIR="$(AROS_LIB)"`
-  (`tools/collect-aros/mmakefile:24` and `:34`), used at
-  `backend-generic.c:139,140,154,155` and `backend-bfd.c:130,131,144,145`.
-- `misc.c:52` `set_compiler_path()` prepends `COMPILER_PATH` to `PATH`.
-- No runtime self-location anywhere: no `/proc/self/exe`, no
-  `_NSGetExecutablePath`.
-- `producer.py` never mentions `collect-aros`, so no collector is packaged,
-  which is consistent with the intent. `cmake/AROS.cmake:246` documents the
-  deliberate bypass.
+The package and lock contracts require the aliases. The direct Clang/Clang++
+compatibility probe poisons `PATH`, checks the symbol-set and C++ initializer
+structure plus AROS OSABI, and tests both x86-64 and i386 in the PC profile.
+The remaining boundary is explicit rather than hidden: the toolchain release
+does not contain a Developer SDK/sysroot. A future application workflow must
+obtain that as a separately versioned artifact.
 
-Until this is done, the release prefix promises the locked CMake partial-link
-contract and not arbitrary standalone linking through `clang`/`clang++`.
+The Rust binary initially retained absolute source locations for dependencies
+compiled from Cargo's verified vendor cache. Linux's prefix scan caught this
+because its cache name shared the checkout prefix; macOS's differently named
+cache proved that this was not a sufficient invariant. `ead40df509` remaps the
+entire source cache to `/usr/src/aros-sources` and scans that cache path
+explicitly during packaging, independent of directory naming.
 
 ### 5. WORK — complete the reproducibility matrix after the first local lane
+
+The collector-inclusive `pc-x86_64` candidate at `ead40df509` now has one
+clean, fully compatible formal archive from macOS ARM64 and one from Linux
+x86-64. This proves the producer and consumer path on both local host families,
+but not same-host reproducibility: each lane still needs a second independent
+archive with the same SHA-256. The `arm-raspi` and `rpi-aarch64` profiles also
+remain unbuilt in this collector run.
 
 The first real `pc-x86_64` producer completed once on macOS ARM64 at
 `f376c5582e`: packaging and the build-prefix scan passed. Its independent B
@@ -128,8 +141,10 @@ package and two-root relocation verification, a fresh AROS-NG configure, and
 exact upstream `includes` plus `linklibs` at `6e196552834e...`.
 
 The complete v1 publication matrix remains four hosts by three profiles, with
-each host/profile pair built twice and byte-compared. The current local proof
-therefore closes the first profile on two hosts, not the release gate. The
+each host/profile pair built twice and byte-compared. The `9f84f550c0`
+pre-collector proof closed the first profile on two hosts; the current
+collector-inclusive candidate has only its first copy on each host. Neither
+closes the release gate. The
 workflow initializes recursive submodules as of `db674e3040`, because the
 clean compatibility checkout proved that AHI and other generated inputs depend
 on their recorded submodule contents.
@@ -712,7 +727,7 @@ The lesson for the audit: its number is a build measure, and the boot needs the
 *intersection* of that number with the loaded packages. Both are worth having,
 and they are not the same list.
 
-### 34. WORK — collect-aros adds inputs the first pass turns out to need
+### 34. RESOLVED — the release collector adds first-pass-discovered inputs
 
 `collect_extra` (`tools/collect-aros/backend-generic.c:117`) reads the first
 pass's symbols and adds `OBJLIBDIR`-relative inputs to the second: the C++
@@ -720,9 +735,12 @@ pure-virtual object when `__cxa_pure_virtual` is left weak, and `libpthread.a`
 when a `pthread_*` symbol is left undefined -- libgcc's emulated TLS pulls those
 in and they are in no auto-linked set, so they never reach the command line.
 
-Not ported with point 32. Whether it matters here is measurable rather than
-arguable: the symbol audit already lists what our links leave undefined, so the
-question is whether `__cxa_pure_virtual` or a `pthread_*` is among them.
+The Rust collector now performs the same measurement after its first pass.
+When `__cxa_pure_virtual` remains weak undefined it adds the sysroot's C++
+pure-virtual object; when a global undefined `pthread_*` remains it adds
+`libpthread.a`. Both are resupplied with the other sysroot libraries for the
+scripted second pass, and the following undefined-symbol audit fails closed.
+Unit tests cover both detections and their absence.
 
 ### 35. WORK — `aros/config.h` is hand-authored, and 15 of its 20 values are absent
 
@@ -832,7 +850,9 @@ gone; the trap handlers install, so a fault is reported by `core_IRQHandle`
 instead of triple-faulting, which confirms the missing IDT gate was the same
 cause. The boot now reaches `ictl_Initialize`, which is point 27i.
 
-Two of collect-aros's other jobs are not ported: points 33 and 34.
+The release-facing Rust collector now also covers the extra-input job recorded
+in point 34. Point 33's library-requirement publication was already part of
+this second pass.
 
 ### 22. WORK — ACPICA is a fetched Port that kernel-kernel needs
 
