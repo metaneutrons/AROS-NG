@@ -1,5 +1,31 @@
 # Handoff
 
+## Update 26 August 2026 — enterprise transpiler diagnostics and publication
+
+`aros-transpiler` now carries structured fatal diagnostics with stable
+`AT0001`–`AT0007` codes, typed stage/severity, source context and hints. Use
+`--diagnostic-format json` for the versioned `aros-tool-diagnostics-v1`
+document; its stderr stream is kept free of progress bars and tracing.
+Capability failures are classified at the owning parser branch rather than by
+matching words in rendered messages.
+
+Every coverage report is indexed in
+`generated_targets.coverage.json` (`aros-transpiler-coverage-v1`) with stable
+`AT1001`–`AT1032` codes and explicit info/warning severity. Zero-count entries
+remain visible. These are live observations, not accepted-count pins.
+
+The generated CMake graph, source inventory, spec-switch manifest, coverage
+index and all reports now publish through one staged, rollback-capable
+transaction. The graph is replaced last as the commit marker. Report write and
+removal failures are fatal. Tests cover pre-commit failure, injected
+mid-commit rollback and stale-report deletion. The embedded fingerprint
+registry is validated without panic before the source walk.
+
+Verified so far in this change: 293 transpiler library tests, six binary/CLI
+tests, and direct x86_64, ARM hard-float and AArch64 profile runs are green.
+The complete workspace and CMake sweeps still need to be rerun after the final
+documentation edit.
+
 ## Update 26 August 2026 — no hidden transpiler package pins
 
 On `integration/upstream-20260826`, the transpiler package/archive pins were
@@ -18,10 +44,10 @@ does not require a digest edit. The fixed GRUB 2.12 archive SHA remains once in
 source directly. Toolchain release locks are a separate reproducibility
 contract.
 
-Core error handling now aggregates and fails on filesystem traversal, fetch
-discovery, parsing and recognised capability drift. It is not yet fully
-enterprise-grade; `OPEN-POINTS.md` point 52 lists the remaining atomic-output,
-typed-diagnostic and report-I/O work.
+Core error handling aggregates and fails on filesystem traversal, fetch
+discovery, parsing and recognised capability drift. The typed-diagnostic,
+machine-readable output and transactional report/publication work is completed
+in the update above; `OPEN-POINTS.md` point 52 records the closed gates.
 
 Verified in this change: all 291 transpiler unit tests and all integration
 tests pass; the affected CMake fixtures pass, including real AHI and GRUB

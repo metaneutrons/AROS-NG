@@ -1739,7 +1739,7 @@ whether it is still needed is unchecked.
 
 ## Quality gates
 
-### 52. WORK — transpiler error handling is fail-closed at the core, not yet enterprise-complete
+### 52. RESOLVED — transpiler diagnostics and output publication fail closed
 
 The worst failure mode is closed: directory-walk, fetch-discovery and parse
 errors are no longer discarded through `.ok()`, and recognised capability
@@ -1747,20 +1747,30 @@ drift no longer survives only in `unmodelled-declarations.txt`. Parallel
 failures are aggregated, sorted and deduplicated, and capability fingerprints
 name the expected and observed value plus the required transpiler update.
 
-Five pieces remain before calling the CLI enterprise-grade:
+All five gates are implemented:
 
-1. diagnostics need stable error codes, typed categories and source spans
-   rather than mostly formatted strings;
-2. generated CMake and every sidecar/report need a single atomic publication
-   transaction, so a late write failure cannot leave a mixed generation;
-3. report removal/write errors must be fatal rather than logged and ignored;
-4. automation needs a machine-readable diagnostic mode in addition to the
-   human CLI rendering;
-5. embedded fingerprint lookup and similar internal invariants should return
-   structured internal errors instead of panicking.
+1. fatal diagnostics use typed stages/severity, optional file/line/column
+   locations and stable `AT0001`–`AT0007` codes;
+2. the graph and every sidecar/report are staged first and committed through a
+   rollback-capable publication, with the CMake graph replaced last;
+3. report writes and stale-report removals are part of that transaction and a
+   failure is fatal;
+4. `--diagnostic-format json` emits the versioned
+   `aros-tool-diagnostics-v1` schema without progress/tracing contamination;
+5. the embedded capability-fingerprint registry is completely validated by a
+   non-panicking API before scanning starts.
 
-Until those five are gated by tests, “enterprise grade” would overstate the
-implementation.
+Coverage reports now have their own versioned
+`aros-transpiler-coverage-v1` index. `AT1001`–`AT1032` identify the current
+categories with `info` or `warning` severity and zero-count entries remain in
+the index. There is no accepted-count baseline or suppression list. Adding an
+unregistered report category is an internal error and stops publication.
+
+The regression gates cover stable human/JSON rendering, checkout-independent
+paths, text-independent capability classification, registry validation,
+staging failure, injected mid-commit rollback, stale report removal and the
+coverage schema. Direct x86_64, ARM hard-float and AArch64 runs pass with the
+new error model.
 
 ### 47. WORK — `parse_mmakefile_impl` is the last thing in the way
 
