@@ -23,6 +23,11 @@ file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/late.c" "int late(void) { return 0; }\n"
 # Reproduce generated_targets.cmake's lexical declaration order: the consumer
 # is configured before the archive target named in its resolved LIBS lane.
 add_library(consumer STATIC "${CMAKE_CURRENT_BINARY_DIR}/consumer.c")
+set(_consumer_own_include
+    "${CMAKE_CURRENT_BINARY_DIR}/consumer-own-include")
+file(MAKE_DIRECTORY "${_consumer_own_include}")
+target_include_directories(consumer BEFORE PRIVATE
+    "${_consumer_own_include}")
 aros_link_libraries(consumer debug provider vanished)
 
 add_library(provider STATIC "${CMAKE_CURRENT_BINARY_DIR}/provider.c")
@@ -44,6 +49,14 @@ get_target_property(_consumer_includes consumer INCLUDE_DIRECTORIES)
 if(NOT _provider_include IN_LIST _consumer_includes)
     message(FATAL_ERROR
         "forward provider client include was not propagated: ${_consumer_includes}")
+endif()
+list(FIND _consumer_includes "${_consumer_own_include}" _consumer_own_at)
+list(FIND _consumer_includes "${_provider_include}" _provider_at)
+if(_consumer_own_at LESS 0 OR _provider_at LESS 0 OR
+   _provider_at LESS _consumer_own_at)
+    message(FATAL_ERROR
+        "provider client include outranked consumer's own include:\n"
+        "${_consumer_includes}")
 endif()
 
 # Calls made after the generated finalizer retain the immediate fast path.
