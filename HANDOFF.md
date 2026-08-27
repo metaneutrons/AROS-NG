@@ -1,5 +1,40 @@
 # Handoff
 
+## Update 28 August 2026 — C++ runtime-header contract closed on all profiles
+
+Point 24 is closed. The old full-build diagnosis that libc++ headers were not
+published came from a direct-CMake build using the host AppleClang rather than
+the release toolchain selected by `aros build`. The verified release archives
+already contain libc++; the product path now also fails closed unless its
+representative `algorithm`, `cerrno`, `cinttypes`, `cstddef`, `cstdint`,
+`deque`, `memory`, `string`, `system_error` and `vector` headers are present.
+The producer index, CMake toolchain and legacy local-prefix discovery enforce
+the same contract.
+
+The first real locked C++ compile exposed two AROS header interoperability
+defects instead. `max_align_t` now cooperates with the GCC and Clang resource
+guards, uses their ABI-compatible two-field layout in either include order and
+does not redefine an existing `offsetof`. POSIXC now publishes NetBSD-compatible
+`EOWNERDEAD` 97 and `ENOTRECOVERABLE` 98, including `strerror()` text, so
+libc++'s `std::errc` model can consume the AROS errno namespace.
+
+The same real `datatypes-heic-linklibs-de265` archive builds with the exact
+verified macOS ARM64 release artifacts for `pc-x86_64` (506 steps),
+`arm-raspi` (852 steps) and `rpi-aarch64` (606 steps). Cross-compiler probes
+also prove identical `max_align_t` size and alignment on all three profiles.
+A fresh unqualified x86_64 build reaches step 13,652 of 19,732 with none of the
+former `cstdint`, `cinttypes`, `cstddef`, `deque`, `memory`, `algorithm` or
+`string` failures. Its remaining clusters are independent point-25 work:
+fetched/private headers such as `GL/gl.h`, `lzma/version.h`, `dbus/dbus.h` and
+`src/webp/config.h`, missing C++17 mode for consumers of `optional`/`variant`,
+and the LLVM-11-incompatible bootstrap `--ld-path` spelling.
+
+The complete Rust format/Clippy/workspace gate, toolchain producer contracts
+and all 26 CMake fixtures are green. The GRUB fixture initially exposed that
+`ftp.gnu.org` was unreachable from this host; its content-locked source URL now
+uses the official `ftpmirror.gnu.org` redirect, and the real BIOS/EFI64/EFI32
+host build passes without changing the audited archive SHA-256.
+
 ## Update 27 August 2026 — POSIXC include-order closure confirmed
 
 Point 23 is closed. The old 179-object POSIXC failure cluster came from
@@ -545,8 +580,8 @@ the final macOS evidence was written to
 `/tmp/aros-ng-evidence-macos-pc-x86_64-smbios-final`.
 
 Presets are `pc-x86_64`, `rpi-aarch64`, `rpi4-aarch64-debug`, and
-`arm-raspi`. A full unqualified `ninja` still stops in third-party C++ Ports
-because target libc++ headers such as `cstdint` do not reach all consumers
+`arm-raspi`. A full unqualified `ninja` still stops in third-party Ports due to
+their private/generated header publication and C++ language-level contracts
 (point 25); named boot targets avoid that unrelated lane.
 
 ## Verification gate
