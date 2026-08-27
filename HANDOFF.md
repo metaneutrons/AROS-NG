@@ -1,5 +1,36 @@
 # Handoff
 
+## Update 27 August 2026 — one collector engine and three-profile build gate
+
+The direct CMake form and the released `collect-aros`/`collect-aros32` aliases
+now feed one collection engine. Staging, ELF inspection, set and library
+requirement discovery, script generation, the second link, cleanup,
+diagnostics, local logging, and atomic publication no longer have two
+implementations. Explicit front-end policy retains the intentional alias-only
+sysroot extras, library resupply, undefined audit, AROS ABI marking and output
+permissions; direct links retain their empty-second-pass optimisation and
+report/retained-script interface. A failed direct second pass can no longer
+replace an existing good output.
+
+The focused gate passes 35 collector unit tests, four CLI integration tests,
+warning-free collector Clippy, and the complete Rust workspace. Forced-clean
+package/kernel builds pass for `pc-x86_64`, `arm-raspi`, and `rpi-aarch64`;
+immediate repeats are no-ops. A controlled replay of the collector phase from
+the real x86_64 `kernel-kernel.o` rule, using identical inputs, produced
+byte-identical output with the pre-refactor collector from `HEAD` and the
+shared engine (`a88e56bbd78201a3...` for both).
+
+Do not overread that result: hashes of several final AROS package/ROM outputs
+changed between the preceding incremental baseline and the forced-clean
+rebuild, although unchanged controls such as the PC bootstrap and ARM base
+package remained identical. The controlled comparison proves that this
+collector refactor preserves bytes for identical inputs; it is not yet a
+proof that the complete AROS build is byte-reproducible across clean rebuilds.
+That broader observation should be isolated separately rather than folded
+into the collector work. The next planned refactoring unit is the AHI runner;
+start from its existing exact-contract integration tests and preserve its
+current generated products before changing orchestration.
+
 ## Update 27 August 2026 — complete deterministic toolchain matrix
 
 The collector-inclusive v1 toolchain matrix is now byte-reproducible on all
