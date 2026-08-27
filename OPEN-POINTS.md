@@ -1785,6 +1785,27 @@ whether it is still needed is unchecked.
 
 ## Quality gates
 
+### 53. RESOLVED — the closed AHI lane cannot bypass `aros-collect`
+
+The generated AHI compiler adapter previously sent final links straight to
+`ld.lld`, despite the top-level invariant that AROS links pass through the
+collector. It now invokes `aros-collect --ld <audited-ld.lld> -- <arguments>`.
+Compile-only and probe calls still use Clang. The collector is an explicit,
+validated member of the CMake/runner contract and a dependency of the AHI
+build edge; omission fails closed during configuration.
+
+The fixture executes a mock collector in all three architecture modes and has
+a dedicated missing-collector failure case. Real rebuilds of
+`workbench-devs-AHI-subsystem` pass for `pc-x86_64`, `arm-raspi` and
+`rpi-aarch64`; the following builds are no-ops. Product counts remain exactly
+73, 85 and 85. Only the 13, 19 and 19 ELF outputs differ from the direct-link
+baseline, while all other products are byte-identical. All of those ELF files
+contain `.aros.sets` and none contains an uncollected `.aros.set.*` section.
+
+This resolves the link-path defect, not the larger AHI-runner refactor. The
+next unit may replace the script orchestration with a typed Rust runner, but
+must preserve this product, section, failure and no-op evidence.
+
 ### 52. RESOLVED — transpiler diagnostics and output publication fail closed
 
 The worst failure mode is closed: directory-walk, fetch-discovery and parse

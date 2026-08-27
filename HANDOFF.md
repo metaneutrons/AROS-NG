@@ -1,5 +1,31 @@
 # Handoff
 
+## Update 27 August 2026 — AHI final links use the shared collector
+
+The closed AHI capability no longer invokes `ld.lld` directly. Its generated
+compiler adapter now sends every final link through `aros-collect` and passes
+the audited `ld.lld` as the explicit backend. Compile-only and compiler-probe
+invocations remain on Clang. `AROS_COLLECT_BIN` is an explicit, absolute,
+executable member of both the configure-time and runner contracts; a missing
+collector fails configuration with a direct diagnostic. The build edge also
+depends on the collector binary, so replacing it invalidates the AHI product
+stamp.
+
+The focused fixture proves the contract and actual collector invocation for
+x86_64, ARM hard-float and AArch64, including a missing-collector failure. The
+transpiler's three AHI contract tests, shell syntax and patch hygiene pass.
+Real `workbench-devs-AHI-subsystem` rebuilds pass for `pc-x86_64`, `arm-raspi`
+and `rpi-aarch64`, and immediate repeats are true Ninja no-ops. All 73, 85 and
+85 declared products remain present. Against the pre-change baseline, only
+the 13, 19 and 19 ELF link products changed; every non-ELF product remained
+byte-identical. Every changed ELF contains the collected `.aros.sets` section
+and none retains a raw `.aros.set.*` section.
+
+This closes the collector-bypass defect in the current AHI path. It does not
+yet replace the CMake-script/Make orchestration with the planned typed Rust
+AHI runner; that remains the next bounded refactoring unit. Preserve the
+three-profile product and no-op gates when doing it.
+
 ## Update 27 August 2026 — one collector engine and three-profile build gate
 
 The direct CMake form and the released `collect-aros`/`collect-aros32` aliases
