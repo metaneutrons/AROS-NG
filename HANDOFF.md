@@ -1,5 +1,36 @@
 # Handoff
 
+## Update 27 August 2026 — V3D generated-source closure is green
+
+The realised `linklibs-gallium_v3d` target now has a complete, fail-closed
+generator graph on `pc-x86_64`, `arm-raspi` and `rpi-aarch64`. The transpiler
+owns all twelve V3DX translation units (six Mesa sources compiled for V3D 3.3
+and 4.1) and the three V3D 3.3/4.1/4.2 CLE packet headers. Their build-tree
+paths match the handwritten MetaMake rules, every generated product is attached
+to the archive consumer, and the wrapper contents use a source basename rather
+than embedding a checkout-dependent absolute path.
+
+The entire V3D recipe and target contract are admitted together. Recipe drift,
+an unsupported target profile, a changed source/flag/include/output contract or
+a missing Mesa fetch declaration removes the partial target and emits a typed
+update-required capability error. The compile contract now carries undefines
+explicitly, preserving V3D's `-UHAVE_VALGRIND`; mismatch diagnostics name the
+individual contract fields instead of returning one opaque comparison error.
+
+The first complete archive build exposed one real Mesa 20 portability defect:
+`src/broadcom/qpu/qpu_pack.c` called `ffs` without a visible declaration. The
+existing, visible AROS Mesa patch now includes Mesa's own `util/bitscan.h` in
+that file. This is a source patch tracked by the fetch refresh mechanism, not a
+package checksum or hidden pin.
+
+All three real `libgallium_v3d.a` archives build successfully and their
+immediate repeats are Ninja no-ops. No V3D/V3DX/CLE entry remains in the
+missing-source, partial-source or unmodelled generated-file reports. Formatting,
+strict workspace Clippy, the complete Rust workspace, all 25 CMake fixtures,
+fresh three-profile 27-product golden capture/replay and `ninja verify` are
+green. This proves V3D source/build closure, not byte identity with an upstream
+MetaMake archive; point 12 remains the limit on the broader parity claim.
+
 ## Update 27 August 2026 — full architecture target parity is green
 
 Point 10 and its point-29 policy dependency are closed. `ninja verify` now
@@ -24,9 +55,9 @@ compiler `-include` option for a Make include. This restores all fetched V3D
 source stems and makes `linklibs-gallium_v3d` a realised CMake target.
 
 Do not overstate this gate: it proves declaration, shape and CMake-target
-realisation parity, not byte-identical outputs. The twelve handwritten V3DX
-wrapper source rules are still listed by the wider missing-source diagnostics
-and should be modelled before claiming the V3D archive itself complete.
+realisation parity, not byte-identical outputs. The newer update above closes
+the formerly missing V3DX/CLE source generation and real V3D archive build,
+but does not compare that archive byte-for-byte with a MetaMake build.
 
 The completion gate includes formatting, strict workspace-wide Clippy, the
 complete Rust workspace tests, all 25 CMake fixtures, three fresh 27-product
@@ -499,14 +530,12 @@ are not committed.
 1. Boot the ARM and AArch64 packages on the intended Raspberry Pi hardware and
    capture UART evidence; the ROM packaging gate is clean, but runtime is not
    yet proved.
-2. Model the twelve V3DX wrapper generation rules so the now-realised V3D
-   archive also has a complete generated-source set.
-3. Continue point 25 so an unqualified full build can pass; the clean result is
+2. Continue point 25 so an unqualified full build can pass; the clean result is
    for the architecture's complete BSP package targets, not every unrelated
    third-party application target.
-4. Cut and review a new deterministic toolchain release tag; the manual matrix
+3. Cut and review a new deterministic toolchain release tag; the manual matrix
    proof is complete, but no release should reuse the stale exploratory tag.
-5. Add later boot milestones if Workbench/Shell readiness must be asserted
+4. Add later boot milestones if Workbench/Shell readiness must be asserted
    automatically rather than inferred from the serial log.
 
 ## Working agreements

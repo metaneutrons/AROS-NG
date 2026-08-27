@@ -2486,9 +2486,15 @@ Fresh full gates are green on all current release profiles:
 | `rpi-aarch64` | 1,075/1,075 | 1,075/1,075 | 8 | 0 |
 
 This closes declaration/target/realisation parity, not output-byte parity.
-Point 12 remains the explicit limit on that claim, and the generated V3DX
-wrapper sources still appear in the broader missing-source diagnostics until
-their handwritten generation rules are modelled.
+Point 12 remains the explicit limit on that claim. The follow-up V3D closure
+now models all twelve V3DX wrapper sources and all three CLE packet headers as
+output-tracked, fail-closed generator jobs for every current profile. The real
+`libgallium_v3d.a` builds pass on x86_64, ARM and AArch64, immediate repeats are
+Ninja no-ops, and the V3D entries have disappeared from the missing-source,
+partial-source and unmodelled generated-file reports. Mesa's `qpu_pack.c` also
+receives its missing `ffs` declaration through the visible AROS Mesa patch and
+Mesa's own `util/bitscan.h`. None of this is a byte comparison with an upstream
+MetaMake archive, so it does not change point 12's broader warning.
 
 ### 11. WORK — two mmakefiles genmf cannot expand
 
