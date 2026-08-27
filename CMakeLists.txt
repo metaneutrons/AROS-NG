@@ -688,10 +688,9 @@ include("${CMAKE_SOURCE_DIR}/cmake/RootTargets.cmake")
 #    transpiled target graph.
 include("${CMAKE_SOURCE_DIR}/cmake/RaspberryPi.cmake")
 
-# Our genmodule's libdefs are what a compile reaches, because LC_LIBDEFS_FILE is
-# a quoted include. Report where they disagree with the reference generator's
-# rather than let a wrong FUNCTIONS_COUNT surface as a page fault.
-# OPEN-POINTS 50.
-_aros_report_disagreeing_libdefs()
+# Compare every concrete declaration against a freshly generated upstream
+# libdefs header. This is a build target rather than a configure-time glob: in
+# an incremental tree the old reference files may exist but be stale.
+aros_add_libdefs_audit_target()
 
 message(STATUS "✅ AROS-NG (v0.1.0) Configuration Complete.")

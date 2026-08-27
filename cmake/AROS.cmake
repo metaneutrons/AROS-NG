@@ -8,6 +8,7 @@ include("${CMAKE_CURRENT_LIST_DIR}/GenmoduleHeaders.cmake")
 include("${CMAKE_CURRENT_LIST_DIR}/PythonGenerators.cmake")
 include("${CMAKE_CURRENT_LIST_DIR}/TransitiveHeaderBindings.cmake")
 include("${CMAKE_CURRENT_LIST_DIR}/SourceInventory.cmake")
+include("${CMAKE_CURRENT_LIST_DIR}/LibdefsAudit.cmake")
 # aros_add_program calls aros_standalone_link_wanted, so the module that
 # defines it belongs here rather than only in the top-level CMakeLists: a
 # fixture that includes AROS.cmake on its own got "Unknown CMake command"
@@ -992,87 +993,6 @@ function(_aros_materialize_deferred_header hash)
     add_dependencies("${_TARGET}" "${_copy_target}")
     set_property(GLOBAL PROPERTY
         "AROS_DEFERRED_HEADER_${hash}_MATERIALIZED" TRUE)
-endfunction()
-
-# _aros_report_disagreeing_libdefs()
-#
-# Compares the `FUNCTIONS_COUNT` our Rust genmodule writes under
-# `${CMAKE_BINARY_DIR}/gen` against the one `hosttools/genmodule` writes under
-# `genmodule/`, and reports every module where the two disagree.
-#
-# Both files exist for most modules, and both are current: ours is written during
-# configure, the reference one by a Ninja rule. They are not interchangeable
-# though, and ours is the one a compile reaches, because `LC_LIBDEFS_FILE` is a
-# quoted include and gen/ can sit on the -iquote path ahead of the genmodule
-# directories -- aros_bind_flexcat_source_consumers() puts it there with BEFORE,
-# for the sound reason that a generated header has to beat a same-named SDK one.
-#
-# FUNCTIONS_COUNT is singled out because of what it does: it sizes the jump table
-# below a library base, and the generated start code allocates from it while
-# MakeFunctions fills the table to its own terminator. Too small a count and
-# MakeFunctions writes below the allocation. That is not a hypothetical -- with
-# kernel.resource sized from 59 instead of 71 it wrote over the ROM MemHeader in
-# SysBase->MemList, and FindMem walked into the wreckage. OPEN-POINTS 27g and 50.
-#
-# A disagreement means one of the two generators is wrong about a module, and the
-# build silently takes ours. Reporting it here puts that in front of whoever
-# configures, instead of leaving it to be found from a page fault.
-function(_aros_report_disagreeing_libdefs)
-    file(GLOB_RECURSE _ours "${CMAKE_BINARY_DIR}/gen/*_libdefs.h")
-    if(NOT _ours)
-        return()
-    endif()
-    file(GLOB_RECURSE _reference "${CMAKE_BINARY_DIR}/genmodule/*_libdefs.h")
-    if(NOT _reference)
-        return()
-    endif()
-
-    # Index the reference files by name; a name occurs once per module.
-    set(_reference_names "")
-    foreach(_file IN LISTS _reference)
-        get_filename_component(_name "${_file}" NAME)
-        list(APPEND _reference_names "${_name}")
-        set(_reference_path_${_name} "${_file}")
-    endforeach()
-
-    set(_disagreeing "")
-    set(_compared 0)
-    foreach(_file IN LISTS _ours)
-        get_filename_component(_name "${_file}" NAME)
-        if(NOT _name IN_LIST _reference_names)
-            continue()
-        endif()
-        math(EXPR _compared "${_compared} + 1")
-        _aros_libdefs_functions_count("${_file}" _mine)
-        _aros_libdefs_functions_count("${_reference_path_${_name}}" _theirs)
-        if(NOT "${_mine}" STREQUAL "${_theirs}")
-            list(APPEND _disagreeing "${_name} (ours ${_mine}, reference ${_theirs})")
-        endif()
-    endforeach()
-
-    list(LENGTH _disagreeing _count)
-    if(_count GREATER 0)
-        string(REPLACE ";" "\n    " _detail "${_disagreeing}")
-        message(WARNING
-            "${_count} of ${_compared} modules disagree on FUNCTIONS_COUNT "
-            "between our genmodule and the reference. The build compiles "
-            "against ours, and the value sizes a library base's jump table, so "
-            "a value below the reference's means MakeFunctions writes past the "
-            "allocation. OPEN-POINTS 50.\n    ${_detail}")
-    endif()
-endfunction()
-
-# Reads `#define FUNCTIONS_COUNT <n>` out of a libdefs header.
-function(_aros_libdefs_functions_count file out_var)
-    set(${out_var} "" PARENT_SCOPE)
-    if(NOT EXISTS "${file}")
-        return()
-    endif()
-    file(STRINGS "${file}" _line REGEX "^#define[ \t]+FUNCTIONS_COUNT[ \t]+[0-9]+" LIMIT_COUNT 1)
-    if(_line)
-        string(REGEX REPLACE "^#define[ \t]+FUNCTIONS_COUNT[ \t]+([0-9]+).*$" "\\1" _value "${_line}")
-        set(${out_var} "${_value}" PARENT_SCOPE)
-    endif()
 endfunction()
 
 # _aros_add_genmodule_quote_dirs(<target> <dir>...)
@@ -3438,6 +3358,29 @@ function(_aros_generate_module_support out_prefix)
         DEPENDS "${AROS_HOST_GENMODULE}" "${_conf}"
         COMMENT "Generating exact ${GM_TARGET}.${GM_MODTYPE} libdefs"
         VERBATIM)
+    # Only an existing Rust header with the same module name can shadow this
+    # declaration's exact reference header. Most explicit conffile users have
+    # no such broad output and therefore resolve directly to the reference.
+    # Check both the declaration directory and the config directory: MetaMake
+    # permits those to differ, and the broad scanner owns the latter.
+    aros_arch_path_matches(_audit_arch_ok "${_module_dir}")
+    if(_audit_arch_ok)
+        get_filename_component(_conf_dir "${_conf}" DIRECTORY)
+        file(RELATIVE_PATH _conf_rel "${CMAKE_SOURCE_DIR}" "${_conf_dir}")
+        set(_rust_candidates
+            "${AROS_GEN_DIR}/${_module_rel}/${GM_TARGET}_libdefs.h"
+            "${AROS_GEN_DIR}/${_conf_rel}/${GM_TARGET}_libdefs.h")
+        list(REMOVE_DUPLICATES _rust_candidates)
+        set(_candidate_index 0)
+        foreach(_rust_libdefs IN LISTS _rust_candidates)
+            if(EXISTS "${_rust_libdefs}" AND NOT IS_DIRECTORY "${_rust_libdefs}")
+                math(EXPR _candidate_index "${_candidate_index} + 1")
+                aros_register_libdefs_audit(
+                    "${GM_MMAKE_ID}#${_candidate_index}"
+                    "${_rust_libdefs}" "${_libdefs}")
+            endif()
+        endforeach()
+    endif()
 
     set(_start "${_gen_dir}/${GM_TARGET}_start.c")
     set(_end "${_gen_dir}/${GM_TARGET}_end.c")
