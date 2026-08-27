@@ -1785,6 +1785,46 @@ whether it is still needed is unchecked.
 
 ## Quality gates
 
+### 55. RESOLVED — the complete Rust workspace is warning-free under Clippy
+
+`cargo clippy --workspace --all-targets -- -D warnings` passes on Rust 1.96.
+All findings in `aros-genmodule`, `aros-transpiler` and `aros-cli` were fixed
+without crate-wide or workspace-wide lint suppressions. Formatting and the
+complete workspace test suite pass.
+
+The release generator and transpiler were rebuilt before exercising the real
+AHI target for `pc-x86_64`, `arm-raspi` and `rpi-aarch64`. All three builds
+pass, their immediate repeats are Ninja no-ops, and all 73/85/85 declared
+products remain byte-identical to the pre-change baseline.
+
+### 54. RESOLVED — the AHI contract has one typed native executor
+
+The closed AHI lane no longer evaluates a generated contract as arbitrary
+CMake or carries a second implementation of its staging/configure/make logic.
+The checkout-local Rust `aros-ahi-runner` parses exactly 44 allowlisted literal
+assignments into typed architecture, product, path, hash and flag values. It
+rejects missing, duplicate and unknown fields; validates the complete
+filesystem and input identity before mutation; executes child tools with a
+cleared, explicit environment; validates installed products including ELF
+class/machine; and re-hashes all source inputs after the build. The former
+622-line `cmake/RunAhiBuild.cmake` has been deleted.
+
+Failures use stable `AH0001`–`AH0901` codes and the shared
+`aros-tool-diagnostics-v1` human/JSON schema. Opt-in local logs have a separate
+stable `aros-ahi-runner-log-v1` human/JSONL contract and contain no ambient
+timestamps, hostnames or CI metadata. Process diagnostics are bounded. The
+runner is part of `aros hosttools build/check`, not a tool a user must discover
+and build separately after configuration.
+
+The focused fixture executes all three modes under a hostile environment and
+covers collector dispatch, missing tools, no-op/repair behaviour, whitespace,
+source immutability and symlink rejection. The typed contract and CLI tests,
+strict workspace-wide Clippy and full Rust workspace pass. Real native AHI
+rebuilds pass for `pc-x86_64`, `arm-raspi` and `rpi-aarch64`, followed by true
+Ninja no-ops.
+All 73, 85 and 85 declared products are byte-identical to the pre-runner
+baseline. No upstream AHI source is changed.
+
 ### 53. RESOLVED — the closed AHI lane cannot bypass `aros-collect`
 
 The generated AHI compiler adapter previously sent final links straight to
@@ -1802,9 +1842,9 @@ a dedicated missing-collector failure case. Real rebuilds of
 baseline, while all other products are byte-identical. All of those ELF files
 contain `.aros.sets` and none contains an uncollected `.aros.set.*` section.
 
-This resolves the link-path defect, not the larger AHI-runner refactor. The
-next unit may replace the script orchestration with a typed Rust runner, but
-must preserve this product, section, failure and no-op evidence.
+This resolves the link-path defect. Point 54 records the subsequent typed Rust
+runner refactor, which preserves this product, section, failure and no-op
+evidence.
 
 ### 52. RESOLVED — transpiler diagnostics and output publication fail closed
 
@@ -2112,8 +2152,9 @@ ninja: error: 'liblinklibs-amiga.a', needed by 'SYS/Prefs/AHI',
        missing and no known rule to make it
 ```
 
-`cmake/AhiBuild.cmake:479` and `cmake/RunAhiBuild.cmake:329` both pin three
-archive paths literally, as an audited contract compared on each side:
+The then-current `cmake/AhiBuild.cmake` and former
+`cmake/RunAhiBuild.cmake` both pinned three archive paths literally, as an
+audited contract compared on each side:
 
 ```
 <build root>/liblinklibs-amiga.a
@@ -2154,9 +2195,9 @@ audit and drops only the assumption that broke.
 Done that way. Two things about the scope are worth recording, because the phrase
 "audited contract" made it sound heavier than it was.
 
-Every file involved is ours: `cmake/AhiBuild.cmake`, `cmake/RunAhiBuild.cmake`
-and the transpiler's emission point, all created on this branch in
-`e1cb119e39`. No AROS content is touched -- the AHI sources and their
+Every file involved was ours: `cmake/AhiBuild.cmake`, the since-deleted
+`cmake/RunAhiBuild.cmake`, and the transpiler's emission point, all created on
+this branch in `e1cb119e39`. No AROS content is touched -- the AHI sources and their
 `mmakefile.src` are upstream and unchanged, and the only thing our branch ever
 added under `workbench/devs/AHI/` is the sha256 input manifest we generate
 ourselves. So this was not a relaxation of anything upstream relies on; it was a

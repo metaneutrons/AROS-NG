@@ -1,5 +1,54 @@
 # Handoff
 
+## Update 27 August 2026 — workspace-wide Rust lint gate is clean
+
+The complete Rust workspace now passes
+`cargo clippy --workspace --all-targets -- -D warnings` on Rust 1.96. The
+remaining findings in `aros-genmodule`, `aros-transpiler` and `aros-cli` were
+fixed without crate-wide or workspace-wide lint suppressions. The changes are
+semantic-preserving cleanups: output construction, option handling, typed
+configuration state, path parsing, checked integer conversion and removal of
+stale code.
+
+The complete workspace test suite and formatting gate pass. Because the
+generator and transpiler are configure-time host tools, their release binaries
+were rebuilt and the real AHI target was rebuilt for `pc-x86_64`, `arm-raspi`
+and `rpi-aarch64`. Immediate repeats are Ninja no-ops, and all 73/85/85
+declared products remain byte-identical to the pre-change baseline.
+
+## Update 27 August 2026 — typed native AHI runner
+
+The closed AHI lane now executes through the checkout-local Rust
+`aros-ahi-runner`; the former 622-line `cmake/RunAhiBuild.cmake` interpreter
+has been deleted. CMake only generates the contract and invokes the runner.
+`aros hosttools build/check` treats the runner as a required release host tool,
+so a fresh checkout cannot configure an AHI build edge whose executor is
+missing.
+
+The runner accepts exactly 44 generated fields in the literal
+`set(NAME [==[value]==])` form. Missing, duplicate, unknown or executable CMake
+content is rejected rather than evaluated. Typed validation closes the three
+audited architecture identities, their 73/85/85 product sets, manifests,
+source snapshots, derived paths, tools, feature headers, link libraries and
+ELF class/machine values before any mutable staging begins. Configure and GNU
+make run with a cleared environment and an explicit tool/flag contract. The
+runner then validates every installed product and re-audits every checkout
+source input.
+
+Fatal diagnostics use the shared `aros-tool-diagnostics-v1` human/JSON model
+and stable `AH0001`–`AH0901` codes. Optional human or
+`aros-ahi-runner-log-v1` JSONL logs are disabled by default and require an
+explicit local file; they contain no ambient timestamp, hostname or runner
+metadata. Child-process output in a failure is bounded to 64 KiB per stream.
+
+The focused fixture passes all three modes under a hostile environment and
+covers actual collector execution, no-op and repair behaviour, missing tools,
+path whitespace, source immutability and symlink rejection. Real native
+rebuilds of `workbench-devs-AHI-subsystem` pass for `pc-x86_64`, `arm-raspi`
+and `rpi-aarch64`; immediate repeats are Ninja no-ops. All 73, 85 and 85
+declared products are byte-identical to the pre-runner baseline. This changes
+only AROS-NG orchestration; upstream AHI source remains unchanged.
+
 ## Update 27 August 2026 — AHI final links use the shared collector
 
 The closed AHI capability no longer invokes `ld.lld` directly. Its generated
@@ -21,10 +70,9 @@ the 13, 19 and 19 ELF link products changed; every non-ELF product remained
 byte-identical. Every changed ELF contains the collected `.aros.sets` section
 and none retains a raw `.aros.set.*` section.
 
-This closes the collector-bypass defect in the current AHI path. It does not
-yet replace the CMake-script/Make orchestration with the planned typed Rust
-AHI runner; that remains the next bounded refactoring unit. Preserve the
-three-profile product and no-op gates when doing it.
+This closes the collector-bypass defect in the current AHI path. The typed
+Rust runner described in the update above subsequently replaced the
+CMake-script orchestration while preserving these three-profile gates.
 
 ## Update 27 August 2026 — one collector engine and three-profile build gate
 
@@ -53,9 +101,8 @@ package remained identical. The controlled comparison proves that this
 collector refactor preserves bytes for identical inputs; it is not yet a
 proof that the complete AROS build is byte-reproducible across clean rebuilds.
 That broader observation should be isolated separately rather than folded
-into the collector work. The next planned refactoring unit is the AHI runner;
-start from its existing exact-contract integration tests and preserve its
-current generated products before changing orchestration.
+into the collector work. The typed AHI-runner refactor described in the update
+above subsequently preserved its exact contracts and generated products.
 
 ## Update 27 August 2026 — complete deterministic toolchain matrix
 
@@ -161,9 +208,10 @@ capability-fingerprint registry is validated without panic before the source
 walk.
 
 Verified in the final local gate: 293 transpiler library tests, six binary/CLI
-tests, the complete Rust workspace, Clippy with the documented pre-existing
-warnings, all 24 CMake fixtures, and direct x86_64, ARM hard-float and AArch64
-profile runs are green.
+tests, the complete Rust workspace, all 24 CMake fixtures, and direct x86_64,
+ARM hard-float and AArch64 profile runs are green. The later workspace-wide
+lint cleanup recorded at the top of this file also makes the strict
+all-targets Clippy gate warning-free.
 
 ## Update 26 August 2026 — no hidden transpiler package pins
 
@@ -352,13 +400,12 @@ From `tools/aros-tools`:
 
 ```bash
 cargo fmt --all --check
-cargo clippy --workspace --all-targets
+cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 ```
 
-Clippy passes with existing non-fatal warnings. The stricter `-D warnings` gate
-is not clean because of pre-existing `must_use` and other warnings outside this
-change.
+The strict Clippy gate is clean on Rust 1.96 without workspace-wide or
+crate-wide lint suppressions.
 
 From the repository root:
 
