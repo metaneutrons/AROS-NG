@@ -17,6 +17,22 @@ foreach(_index RANGE 0 ${_last})
             "configure preset ${_name} must pin AROS_TOOLCHAIN=llvm; "
             "otherwise GCC and Clang hosts generate different MetaMake graphs")
     endif()
+    string(JSON _platform GET "${_presets}"
+        configurePresets ${_index} cacheVariables AROS_TARGET_PLATFORM)
+    string(JSON _bootloader ERROR_VARIABLE _error
+        GET "${_presets}" configurePresets ${_index}
+        cacheVariables AROS_TARGET_BOOTLOADER)
+    if(_platform STREQUAL "pc")
+        set(_expected_bootloader "grub2gfx")
+    else()
+        set(_expected_bootloader "")
+    endif()
+    if(_error OR NOT "${_bootloader}" STREQUAL "${_expected_bootloader}")
+        message(FATAL_ERROR
+            "configure preset ${_name} must pin "
+            "AROS_TARGET_BOOTLOADER=${_expected_bootloader}; target coverage "
+            "must not infer which legacy bootloader lane is active")
+    endif()
     set(_compilers CMAKE_C_COMPILER CMAKE_CXX_COMPILER CMAKE_ASM_COMPILER)
     set(_expected clang clang++ clang)
     foreach(_compiler _want IN ZIP_LISTS _compilers _expected)
@@ -30,4 +46,4 @@ foreach(_index RANGE 0 ${_last})
     endforeach()
 endforeach()
 
-message(STATUS "configure presets pin Clang and the target toolchain independently of the host")
+message(STATUS "configure presets pin Clang, target toolchain and bootloader independently of the host")

@@ -88,6 +88,14 @@ endif()
 set(AROS_TOOLCHAIN "${_aros_default_toolchain}" CACHE STRING
     "MetaMake target toolchain family")
 set_property(CACHE AROS_TOOLCHAIN PROPERTY STRINGS llvm gnu)
+if(AROS_TARGET_PLATFORM STREQUAL "pc")
+    set(_aros_default_bootloader "grub2gfx")
+else()
+    set(_aros_default_bootloader "")
+endif()
+set(AROS_TARGET_BOOTLOADER "${_aros_default_bootloader}" CACHE STRING
+    "MetaMake target bootloader lane")
+set_property(CACHE AROS_TARGET_BOOTLOADER PROPERTY STRINGS "" grub grub2 grub2gfx)
 option(AROS_ENABLE_MMU "Include the MetaMake MMU kernel sources" ON)
 set(GCC_CONFIG_FLOAT_ABI "" CACHE STRING
     "MetaMake ARM floating-point ABI (for example hard or soft)")
@@ -644,6 +652,8 @@ if(AROS_PYTHON3 AND EXISTS "${AROS_VERIFY_BIN}")
                 --build-dir "${CMAKE_BINARY_DIR}"
                 --cpu "${AROS_TARGET_CPU}"
                 --platform "${AROS_TARGET_PLATFORM}"
+                --toolchain "${AROS_TOOLCHAIN}"
+                --bootloader "${AROS_TARGET_BOOTLOADER}"
         COMMENT "Comparing transpiled targets against the genmf expansion"
         USES_TERMINAL
         VERBATIM)
@@ -655,6 +665,8 @@ if(AROS_PYTHON3 AND EXISTS "${AROS_VERIFY_BIN}")
                 --build-dir "${CMAKE_BINARY_DIR}"
                 --cpu "${AROS_TARGET_CPU}"
                 --platform "${AROS_TARGET_PLATFORM}"
+                --toolchain "${AROS_TOOLCHAIN}"
+                --bootloader "${AROS_TARGET_BOOTLOADER}"
                 --no-gate
         COMMENT "Same comparison, reporting only"
         USES_TERMINAL

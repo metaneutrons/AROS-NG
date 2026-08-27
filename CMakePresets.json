@@ -16,6 +16,7 @@
         "AROS_TARGET_CPU": "x86_64",
         "AROS_TARGET_PLATFORM": "pc",
         "AROS_TOOLCHAIN": "llvm",
+        "AROS_TARGET_BOOTLOADER": "grub2gfx",
         "CMAKE_BUILD_TYPE": "Release",
         "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
       }
@@ -35,6 +36,7 @@
         "AROS_TARGET_CPU": "aarch64",
         "AROS_TARGET_PLATFORM": "raspi",
         "AROS_TOOLCHAIN": "llvm",
+        "AROS_TARGET_BOOTLOADER": "",
         "CMAKE_BUILD_TYPE": "Release",
         "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
       }
@@ -54,6 +56,7 @@
         "AROS_TARGET_CPU": "aarch64",
         "AROS_TARGET_PLATFORM": "raspi",
         "AROS_TOOLCHAIN": "llvm",
+        "AROS_TARGET_BOOTLOADER": "",
         "CMAKE_BUILD_TYPE": "Debug",
         "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
       }
@@ -73,6 +76,7 @@
         "AROS_TARGET_CPU": "arm",
         "AROS_TARGET_PLATFORM": "raspi",
         "AROS_TOOLCHAIN": "llvm",
+        "AROS_TARGET_BOOTLOADER": "",
         "GCC_CONFIG_FLOAT_ABI": "hard",
         "CMAKE_BUILD_TYPE": "Release",
         "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
