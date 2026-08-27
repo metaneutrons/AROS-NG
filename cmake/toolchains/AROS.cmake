@@ -138,6 +138,15 @@ foreach(_aros_tool IN LISTS _aros_required_tools)
 endforeach()
 
 set(_aros_required_runtime
+    "include/c++/v1/algorithm"
+    "include/c++/v1/cerrno"
+    "include/c++/v1/cinttypes"
+    "include/c++/v1/cstddef"
+    "include/c++/v1/cstdint"
+    "include/c++/v1/deque"
+    "include/c++/v1/memory"
+    "include/c++/v1/string"
+    "include/c++/v1/system_error"
     "include/c++/v1/vector"
     "lib/libc++.a"
     "lib/libc++abi.a"
