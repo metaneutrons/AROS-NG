@@ -217,7 +217,7 @@ Failed build steps 1083 -> 1078, generated-file rules 21 -> 20, missing sources
 94 -> 93, `aros-base.pkg` built with all 26 members. The boot then moved on to
 the next dangling symbol, which is point 38.
 
-### 50. WORK — two generators write libdefs, and ours is the one that counts
+### 50. RESOLVED — exact build-time libdefs parity replaces the invalid configure audit
 
 Most modules have two `<mod>_libdefs.h`. Ours goes to `${CMAKE_BINARY_DIR}/gen`
 during configure, from the Rust genmodule's `--scan-dir` pass; the reference one
@@ -256,32 +256,48 @@ Three changes:
    BEFORE, which it does for a good reason and which no ordering here can
    outrank.
 
-`_aros_report_disagreeing_libdefs()` now compares the two FUNCTIONS_COUNT values
-at configure time and names every module where they differ. It reports 25 of 366.
-That is the point of it: the disagreement is stated where someone will see it,
-instead of surfacing as a page fault weeks later.
+The later configure-time counts of 25, 29 and 30 were not a valid parity
+measurement. `_aros_report_disagreeing_libdefs()` indexed reference headers by
+basename, so same-named modules such as the architecture-specific serial,
+Bluetooth and PNG variants could be paired with a different declaration. It
+also compared configure-time Rust output against reference output that Ninja
+had not necessarily rebuilt. Some apparent defects disappeared as soon as the
+right reference edge was run; stale Rust private headers could distort the
+other side too.
 
-**The 25 that remain.** They go both ways, so not all of them are ours to fix:
+The replacement is an exact build-time gate:
+
+* every concrete upstream genmodule output is registered by declaration
+  identity and full path, never by basename;
+* only an existing Rust header that can actually shadow that exact reference
+  header is compared;
+* the audit depends on the upstream genmodule output, so the reference side is
+  rebuilt before comparison;
+* missing counters, under-allocation and over-allocation all fail closed and
+  are written to a stable `aros-functions-count-audit-v1` report;
+* `functions-count-audit` is attached to the normal `verify` target.
+
+The Rust scanner now models all declarations bound to a shared configuration,
+not just the first one. It understands explicit `conffile` and
+`confoverride` bindings, merges an override with its base configuration, and
+accepts both `functionlist` and `cfunctionlist` with upstream-compatible
+section-marker whitespace. It also removes only stale, unowned private
+`*_libdefs.h` outputs and fails closed if pruning cannot be completed.
+
+Fresh reports for every shadow-capable header pair after complete package
+rebuilds are clean:
 
 ```
-hpet          ours 0    reference 4
-parallel      ours 4    reference 6      device is 7, so firstlvo-1 is 6
-serial        ours 4    reference 6
-bz2           ours 4    reference 37     we see no function list at all
-expat         ours 4    reference 88
-freetype2     ours 4    reference 173
-popupmenu     ours 4    reference 25
-bluetooth     ours 85   reference 7
-debug         ours 12   reference 0
-arosx         ours 7    reference 6
+pc-x86_64    compared=370  missing=0  under=0  over=0  mismatches=0
+arm-raspi    compared=375  missing=0  under=0  over=0  mismatches=0
+rpi-aarch64  compared=376  missing=0  under=0  over=0  mismatches=0
 ```
 
-Two shapes. Where ours is 4 against a large reference value, our scan is not
-finding the module's function list -- most of these live in directories holding
-several modules, so the likely cause is the config-to-module binding rather than
-the counting. Where ours is larger, the base is over-allocated, which wastes
-space but cannot corrupt anything. Only the first shape can under-allocate, and
-`parallel` and `serial` are the clearest: both are devices, where `firstlvo` is 7.
+The fixture separately proves equal same-basename pairs and failure/reporting
+for missing, under-sized and over-sized headers. All 25 CMake fixtures, the
+complete Rust workspace tests, strict workspace Clippy, three 27-product golden
+replays, the real AHI targets and all complete PC/ARM/AArch64 BSP package lanes
+pass. Immediate repetitions of all real build targets are Ninja no-ops.
 
 ### 49. RESOLVED — the load model was one pointer width out
 
@@ -2088,11 +2104,11 @@ package lanes now compile, link and package without an error:
 
 ```text
 arm-raspi:
-  aros-arm-bsp.rom       55 modules, 2,982,740 payload bytes
-  aros-arm-bcm2708.rom   10 modules,   334,664 payload bytes
+  aros-arm-bsp.rom       55 modules, 3,002,864 payload bytes
+  aros-arm-bcm2708.rom   10 modules,   353,288 payload bytes
 
 rpi-aarch64:
-  aros-aarch64-bsp.rom   60 modules, 3.8 MiB on disk
+  aros-aarch64-bsp.rom   60 modules, 4,052,872 payload bytes
 ```
 
 The second invocation of both named build commands reports `no work to do`.
@@ -2115,6 +2131,10 @@ source workarounds:
 This closes the named BSP build/package obligation. It does **not** close point
 25's unqualified build of every third-party application, nor does it assert a
 hardware boot; Pi/UART runtime evidence is the next architecture gate.
+
+The payload figures above were refreshed on 27 August after point 50 forced a
+consistent rebuild from exact private ABI headers. The earlier smaller figures
+were produced from a build tree containing stale generated headers.
 
 #### Earlier baseline (superseded)
 
@@ -2403,18 +2423,20 @@ binaries (`17e475d2` before, `6b003710` after) produce the same 3 153 981
 bytes, sha256
 `75d280ed88f4cf7b0dc01386f61706f529d1f8d55b63c4e48286c845ac9320c3`.
 
-42 warn-level lints remain, three of which point 9 records as false positives.
-`cargo fmt` also had nine files to reformat (`e42e0fc3d0`), all of them written
-today in this branch's own commits, so `cargo fmt --check` is not part of what
-we run before committing either.
+This earlier intermediate state is superseded by point 9: formatting and the
+complete strict workspace lint are now part of the verified gate.
 
-### 9. WORK — three clippy warnings are false positives
+### 9. RESOLVED — the complete Rust workspace is Clippy-clean
 
-`suspicious_operation_groupings` at `parser.rs:3870`, `:4051` and `:5040`
-suggests `expected_flags.include_dirs`. The field really is `includes`
-(`parser.rs:3296`), so the suggestion would not compile. These need an
-`#[allow]` with a reason, and any task worded "resolve all clippy warnings"
-has to say so, because the code sits in comparisons the parity tests use.
+`32950fcafd` resolves the remaining findings across `aros-genmodule`,
+`aros-transpiler` and `aros-cli` without crate-wide or workspace-wide lint
+suppressions. The three `suspicious_operation_groupings` findings in
+`parser.rs` were removed by making the intended grouping explicit rather than
+accepting Clippy's non-compiling field-name suggestion.
+
+On Rust 1.96, both `cargo fmt --all -- --check` and
+`cargo clippy --workspace --all-targets -- -D warnings` pass, followed by the
+complete workspace test suite.
 
 ---
 
@@ -2422,12 +2444,18 @@ has to say so, because the code sits in comparisons the parity tests use.
 
 ### 10. DECIDE — should the toolchain's own build be transpiled?
 
-Whole-tree coverage is 1178/1195, architecture-scoped 1067/1076. Of the nine
-missing in the x86_64-pc scope, seven are `crosstools-*` from
-`tools/crosstools/llvm/mmakefile.src` and the other two are `grub` and
-`tools-crosstools-gcc-libatomic`. The producer covers that ground by a
-different route, so whether these should become CMake targets at all is an
-open question, and it has to be answered before "zero missing targets" can be
+Rechecked on 27 August 2026 after point 50. Architecture-scoped x86_64 coverage
+is 1,077/1,083 declarations with 1,077/1,078 emitted targets realised. ARM and
+AArch64 are each 1,074/1,078 with 1,074/1,075 emitted targets realised. The
+missing x86_64 declarations are four `crosstools-*` LLVM runtime lanes,
+`grub`, and `tools-crosstools-gcc-libatomic`; ARM and AArch64 omit the three
+applicable LLVM lanes and the GCC libatomic lane. In all profiles,
+`linklibs-hiddstubs` is emitted without an upstream declaration and
+`linklibs-gallium_v3d` is emitted but not materialised as a CMake target.
+
+The producer covers the toolchain ground by a different route, so whether
+those declarations should become CMake targets at all is an open question, and
+it has to be answered before "zero missing targets" can be
 a gate.
 
 ### 11. WORK — two mmakefiles genmf cannot expand

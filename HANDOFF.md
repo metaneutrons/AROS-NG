@@ -1,5 +1,45 @@
 # Handoff
 
+## Update 27 August 2026 — FUNCTIONS_COUNT parity is a build-time invariant
+
+Point 50 is closed. The old configure-time warning was not a canonical
+measurement: it paired duplicate basenames from different module directories
+and could compare fresh Rust output with reference genmodule headers that Ninja
+had not rebuilt. Its reported 25/29/30 disagreements must not be used as a
+baseline.
+
+The replacement `functions-count-audit` target registers exact declaration and
+path pairs, depends on the corresponding upstream genmodule output, and checks
+only Rust headers that can actually shadow that reference header. Missing,
+under-sized and over-sized `FUNCTIONS_COUNT` values fail closed and publish a
+stable report. The target is also part of `verify`.
+
+`aros-genmodule` now discovers every module bound to a shared configuration,
+handles explicit `conffile` and merged `confoverride` declarations, accepts
+`cfunctionlist` and spaced section markers, and safely prunes only stale
+unowned private libdefs headers. Fresh shadow-capable pair results are:
+
+```text
+pc-x86_64    compared=370  missing=0  under=0  over=0  mismatches=0
+arm-raspi    compared=375  missing=0  under=0  over=0  mismatches=0
+rpi-aarch64  compared=376  missing=0  under=0  over=0  mismatches=0
+```
+
+Point-50 verification is complete: formatting, strict workspace Clippy, the
+complete Rust workspace tests, all 25 CMake fixtures, and three 27-product
+golden replays pass. Real AHI and complete BSP/package targets were rebuilt for
+all three profiles; their immediate repeats are Ninja no-ops. The fresh Pi
+packages contain 55 ARM modules with 3,002,864 payload bytes, 10 BCM2708 modules
+with 353,288 bytes, and 60 AArch64 modules with 4,052,872 bytes.
+
+The audit portion of `ninja verify` passes in all three profiles. The complete
+verify target then remains red on the pre-existing point-10 coverage decision:
+x86_64 realises 1,077/1,078 emitted targets and misses 6 of 1,083 declared
+targets; ARM and AArch64 each realise 1,074/1,075 and miss 4 of 1,078. The
+missing declarations are the intentionally separate LLVM/GCC toolchain lanes,
+plus GRUB on x86_64; `linklibs-hiddstubs` remains undeclared and
+`linklibs-gallium_v3d` unrealised. This is not a point-50 regression.
+
 ## Update 27 August 2026 — workspace-wide Rust lint gate is clean
 
 The complete Rust workspace now passes
@@ -277,9 +317,9 @@ BCM2708 supplement, and a 60-module AArch64 BSP; an immediate second build is a
 true Ninja no-op:
 
 ```text
-build/arm-raspi/SYS/aros-arm-bsp.rom          55 modules, 2,982,740 payload bytes
-build/arm-raspi/SYS/aros-arm-bcm2708.rom      10 modules,   334,664 payload bytes
-build/rpi-aarch64/SYS/aros-aarch64-bsp.rom    60 modules, 3.8 MiB on disk
+build/arm-raspi/SYS/aros-arm-bsp.rom          55 modules, 3,002,864 payload bytes
+build/arm-raspi/SYS/aros-arm-bcm2708.rom      10 modules,   353,288 payload bytes
+build/rpi-aarch64/SYS/aros-aarch64-bsp.rom    60 modules, 4,052,872 payload bytes
 ```
 
 These are compile/link/package results, not Raspberry Pi boot claims. Hardware
@@ -337,8 +377,8 @@ versions matters; macOS/QEMU 11.1.0 had masked the defect.
   foreign-architecture header from the old unfiltered staging implementation.
 - `usb2otg` includes the standard declaration for the `memset` calls it already
   makes; the complete device now compiles for both ARM and AArch64.
-- The configure step still reports 29 `FUNCTIONS_COUNT` disagreements;
-  point 50 remains open.
+- Exact build-time `FUNCTIONS_COUNT` parity is enforced for every private Rust
+  header that can shadow an upstream genmodule header; point 50 is closed.
 
 ## Build and boot
 
@@ -430,7 +470,8 @@ are not committed.
 1. Boot the ARM and AArch64 packages on the intended Raspberry Pi hardware and
    capture UART evidence; the ROM packaging gate is clean, but runtime is not
    yet proved.
-2. Resolve the 29 current `FUNCTIONS_COUNT` disagreements in point 50.
+2. Decide point 10's toolchain-lane policy and close the remaining full
+   `ninja verify` coverage gaps.
 3. Continue point 25 so an unqualified full build can pass; the clean result is
    for the architecture's complete BSP package targets, not every unrelated
    third-party application target.
