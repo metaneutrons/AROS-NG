@@ -1,5 +1,31 @@
 # Handoff
 
+## Update 27 August 2026 — complete deterministic toolchain matrix
+
+The collector-inclusive v1 toolchain matrix is now byte-reproducible on all
+four release hosts and all three profiles. GitHub producer run
+[`33020916404`](https://github.com/metaneutrons/AROS-NG/actions/runs/33020916404)
+used commit `a7add2698cca2611...`, tree `9b9188ca2360fc25...`, and recipe
+`38a7e453b46659db...`: all 24 independent A/B producers and all 12 formal
+byte-comparison jobs passed. This includes `arm-raspi` and `rpi-aarch64` on
+Linux x86-64/AArch64 and macOS x86-64/AArch64 as well as `pc-x86_64`.
+
+The run closed two genuine nondeterminism sources: pointer-address ordering in
+Clang 11 TableGen output and volatile GitHub runner observations embedded in
+the compared manifest. Observed compiler/runner details remain preserved in
+separate evidence artifacts. Compatibility replay
+[`33033043062`](https://github.com/metaneutrons/AROS-NG/actions/runs/33033043062)
+at `30fe824af7` proved the consumer-only fixes against the unchanged verified
+archives; all 12 jobs passed. This separation prevents a probe repair from
+silently changing the proven producer output. The complete immutable identity,
+12 archive SHA-256 values, compatibility scope and promotion boundary are in
+`toolchains/HANDOFF.md`; `OPEN-POINTS.md` point 5 records the resolved matrix.
+
+This is a complete manual proof matrix, not a published release. The next
+release must use a new tag and pass the fail-closed draft/index/provenance/SBOM
+workflow. The older exploratory tag `toolchain-v1-20260826-rc1` predates this
+matrix and must not be moved or promoted.
+
 ## Update 26 August 2026 — relocatable release collector
 
 Commits `15091fbe91`, `07f7d4080b`, `41f511764a`, and `ead40df509` integrate
@@ -26,8 +52,8 @@ macOS ARM64 archive is `f283b9aa…` with payload tree `fd78489f…`; the Linux
 x86-64 archive is `752697c0…` with payload tree `fdf72fcb…`. Both pass package
 verification, two-root relocation, AROS-NG configure, vanilla upstream
 `includes`/`linklibs` at `6e196552…`, and poisoned-`PATH` x86-64/i386 final
-links. These are one clean A-build per host, not the complete A/B release
-matrix; ARM and AArch64 profiles remain to be built twice on all four hosts.
+links. At that commit these were one clean A-build per host; the 27 August
+matrix above supersedes that interim limitation and closes all profiles.
 
 ## Update 26 August 2026 — deterministic toolchain release candidate
 
@@ -51,10 +77,9 @@ probe. Exact evidence paths and the no-overclaim completion gate are in
 the clean CI consumer has the same complete source topology used by the local
 probes.
 
-This closes `pc-x86_64` on the two locally available hosts, not the complete
-publish matrix. The four GitHub hosts times three target profiles still have
-to produce and byte-compare two archives each before a release index may be
-published.
+This was the first two-host `pc-x86_64` proof. The 27 August matrix above
+subsequently produced and byte-compared all four hosts times three target
+profiles. Publication itself still requires a new reviewed tag run.
 
 ## Update 26 August 2026 — enterprise transpiler diagnostics and publication
 
@@ -153,9 +178,8 @@ build/rpi-aarch64/SYS/aros-aarch64-bsp.rom    60 modules, 3.8 MiB on disk
 ```
 
 These are compile/link/package results, not Raspberry Pi boot claims. Hardware
-boot verification remains to be run. The Linux PC result is for the direct
-CMake build; the separate deterministic toolchain producer's
-Linux/reproducibility matrix in `OPEN-POINTS.md` point 5 remains open.
+boot verification remains to be run. The separate deterministic toolchain
+producer matrix is complete as recorded in the 27 August update above.
 
 ## What fixed the packaged boot
 
@@ -306,8 +330,8 @@ are not committed.
 3. Continue point 25 so an unqualified full build can pass; the clean result is
    for the architecture's complete BSP package targets, not every unrelated
    third-party application target.
-4. Complete the deterministic toolchain producer's Linux and byte-comparison
-   matrix (point 5); the clean direct Linux build does not close that work.
+4. Cut and review a new deterministic toolchain release tag; the manual matrix
+   proof is complete, but no release should reuse the stale exploratory tag.
 5. Add later boot milestones if Workbench/Shell readiness must be asserted
    automatically rather than inferred from the serial log.
 

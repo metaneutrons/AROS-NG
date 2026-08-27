@@ -1,6 +1,6 @@
 # Open points
 
-Status date: 2026-08-26. Open entries are undecided or unfinished; resolved and
+Status date: 2026-08-27. Open entries are undecided or unfinished; resolved and
 superseded entries retain the evidence so it does not have to be rediscovered.
 
 Marker meaning:
@@ -115,43 +115,40 @@ cache proved that this was not a sufficient invariant. `ead40df509` remaps the
 entire source cache to `/usr/src/aros-sources` and scans that cache path
 explicitly during packaging, independent of directory naming.
 
-### 5. WORK — complete the reproducibility matrix after the first local lane
+### 5. RESOLVED — the complete four-host release matrix is reproducible
 
-The collector-inclusive `pc-x86_64` candidate at `ead40df509` now has one
-clean, fully compatible formal archive from macOS ARM64 and one from Linux
-x86-64. This proves the producer and consumer path on both local host families,
-but not same-host reproducibility: each lane still needs a second independent
-archive with the same SHA-256. The `arm-raspi` and `rpi-aarch64` profiles also
-remain unbuilt in this collector run.
+Producer run
+[`33020916404`](https://github.com/metaneutrons/AROS-NG/actions/runs/33020916404)
+built the collector-inclusive release from exact commit `a7add2698cca2611...`,
+tree `9b9188ca2360fc25...`, recipe `38a7e453b46659db...`, and source epoch
+`1787784543`. All 24 independent producers completed: A and B for every
+combination of Linux x86-64/AArch64 and macOS x86-64/AArch64 with
+`pc-x86_64`, `arm-raspi`, and `rpi-aarch64`. All 12 formal comparison jobs
+accepted the resulting archives as byte-identical.
 
-The first real `pc-x86_64` producer completed once on macOS ARM64 at
-`f376c5582e`: packaging and the build-prefix scan passed. Its independent B
-copy exposed point 2's `genmodule` race, so that pair is diagnostic and cannot
-be published. The same archive passed package/two-root verification, a fresh
-AROS-NG CMake configure, and exact upstream `includes` plus `linklibs` after
-the compatibility probe itself was repaired.
+The run found and closed two real reproducibility defects before reaching that
+result. Clang 11 TableGen used pointer order for generated attribute switches;
+the local LLVM patch now orders records by name. GitHub runner `ImageVersion`
+also varied between independent Linux ARM64 jobs; actual runner observations
+remain preserved as separate evidence artifacts, while the archive records the
+stable host contract. The payload and archive are therefore deterministic
+without pretending the two runner instances were identical.
 
-Fresh A/B copies for macOS ARM64 and Linux x86_64 use exact commit
-`9f84f550c0`, tree `9bad0804...`, recipe `2e8be353...`; evidence paths and
-commands for the remaining lanes are recorded in `toolchains/HANDOFF.md`.
-Both local host pairs are complete. The macOS archives and formal compare
-output have SHA-256
-`d7d7e735...`; Linux has SHA-256 `dd9935e8...`. Both compared archives pass
-package and two-root relocation verification, a fresh AROS-NG configure, and
-exact upstream `includes` plus `linklibs` at `6e196552834e...`.
+The first compatibility pass exposed consumer-harness defects only after the
+archives had compared successfully: incomplete audited macOS GRUB
+prerequisites, the wrong upstream output-directory spelling for ARM, unwind
+metadata in a deliberately library-free smoke link, and Bash 3's empty-array
+behaviour. Replay workflow `toolchain-compatibility-replay.yml` consumed the
+exact verified artifacts from the producer run at fix commit `30fe824af7`;
+replay run
+[`33033043062`](https://github.com/metaneutrons/AROS-NG/actions/runs/33033043062)
+passed all 12 lanes. It did not rebuild or silently replace an archive. The
+complete SHA-256 table and immutable identity are in `toolchains/HANDOFF.md`.
 
-The complete v1 publication matrix remains four hosts by three profiles, with
-each host/profile pair built twice and byte-compared. The `9f84f550c0`
-pre-collector proof closed the first profile on two hosts; the current
-collector-inclusive candidate has only its first copy on each host. Neither
-closes the release gate. The
-workflow initializes recursive submodules as of `db674e3040`, because the
-clean compatibility checkout proved that AHI and other generated inputs depend
-on their recorded submodule contents.
-
-This is the deterministic **toolchain producer** lane. Point 51's clean direct
-CMake build and packaged boot on Linux do not build the release prefix twice
-and therefore do not close this point.
+The manual matrix proof closes reproducibility, not publication. A reviewed
+new tag run must still generate the draft release, provenance, SBOMs and final
+index. The old exploratory `toolchain-v1-20260826-rc1` tag predates this proof
+and must not be moved or promoted.
 
 ### 6. DECIDE — job count for the byte-comparison
 
