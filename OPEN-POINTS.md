@@ -877,44 +877,42 @@ without it. Same class of problem as Boost in point 1, and the same three
 routes apply. This is now the only thing between the three boot fixes and a
 building kernel.
 
-### 23. WORK — compiler-posixc, 179 failed steps from one cause, location unfound
+### 23. DONE — compiler-posixc include order
 
-All of them come from include order, not from missing headers. The 28 posixc
-headers are staged correctly. The problem is that
-`SDK/include/aros/stdc` precedes `SDK/include/aros/posixc` on the include path,
-so a bare `<limits.h>`, `<errno.h>` or `<sys/types.h>` resolves to the C99
-variant and the POSIX superset is shadowed. That is why `PASS_MAX`, `PATH_MAX`,
-`off_t`, `__off64_t`, `EBADF`, `EISDIR` and `locale_t` all read as undeclared.
+The 179-object failure cluster was one include-precedence defect, not missing
+headers. `compiler-posixc` links the `stdc_rel` client archive. Its
+`AROS_CLIENT_NAMESPACE_INCLUDES` property was propagated by
+`_aros_bind_link_libraries()` with `BEFORE`, after the target had already
+prepended its own POSIX namespace. CMake therefore moved `aros/stdc` ahead of
+`aros/posixc`; bare `<limits.h>`, `<errno.h>` and `<sys/types.h>` selected the
+C99 subset rather than the POSIX superset.
 
-`aros/posixc/limits.h` opens with `#include <aros/stdc/limits.h>` and adds the
-POSIX names, so the chain works from the SDK root alone and `aros/stdc` does
-not need to be on the search path at all.
+Commit `841884dd1ad` fixed the provider at its source: propagated client
+namespaces append to the target's established include order. The global LLVM
+contract remains the upstream compiler-spec order `aros/posixc`, `aros/stdc`,
+then the common SDK root. The deferred-link fixture now also asserts that a
+provider namespace cannot outrank a consumer's own include directory.
 
-Verified by taking one `-I` off one command:
+Fresh measurement on 27 August 2026:
 
-    the command from compile_commands.json for compiler/crt/posixc/__fseeko.c
-    minus -I<build>/SDK/include/aros/stdc      ->  0 errors
-    unchanged                                  ->  3 errors
+    compiler-posixc target            2,837/2,837 steps, exit 0
+    complete pc-x86_64 build         14,052/14,295 steps attempted
+    POSIXC missing-name failures                       0
 
-What has not been found is what puts it there, and the search so far excludes
-the obvious places. Removing all five code sites in `cmake/AROS.cmake` that
-name `aros/stdc` leaves it first on the path; the transpiled declaration for
-`compiler-posixc` does not mention it; `AhiBuild.cmake`, `ConfigureBuild.cmake`
-and `BootstrapSDK.cmake` name it only for their own subsystems. The remaining
-candidate is an INTERFACE include directory arriving through
-`USELIBS stdc_rel stdcio_rel`, which is untested.
+The unqualified build now advances to unrelated Port/SDK boundaries. Its
+largest current diagnostics are `lzma/version.h` (330), `dbus/dbus.h` (223),
+C++ standard headers (255 across the observed header names) and
+`src/webp/config.h` (72). These belong to points 24 and 25, not POSIXC.
 
-The AROS.cmake edits were reverted because they changed nothing measurable.
-
-### 23b. WORK — three original guesses at the posixc cause, for the record
+### 23b. DONE — original posixc symptom groups, for the record
 
     __posixc_intbase.h:55:21   undeclared identifier 'PASS_MAX'     65
     __stdio.h:38:37            unknown type name 'off_t'            24
     aros/posixc/dirent.h:52:20 undeclared identifier 'PATH_MAX'     11
 
 Plus single instances of `EBADF`, `locale_t` and an implicit `wcwidth`. The
-shape says a small number of missing header sets rather than 179 problems.
-posixc is a core link library, so this is on the boot path.
+shape correctly indicated one shared include-order problem. All are absent
+from the fresh targeted and unqualified builds.
 
 ### 24. WORK — the C++ standard headers are not in the SDK
 

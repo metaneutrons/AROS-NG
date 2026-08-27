@@ -1,5 +1,29 @@
 # Handoff
 
+## Update 27 August 2026 — POSIXC include-order closure confirmed
+
+Point 23 is closed. The old 179-object POSIXC failure cluster came from
+`AROS_CLIENT_NAMESPACE_INCLUDES` propagation with `BEFORE`: the `stdc_rel`
+provider was bound after the consumer had established its own includes, then
+was moved ahead of them. Commit `841884dd1ad` already corrected the central
+binding helper to append provider namespaces; the stale open-point text had
+not been updated.
+
+A fresh `compiler-posixc` build completes all 2,837 steps and produces
+`SYS/Libs/posixc.library`. A fresh unqualified pc-x86_64 build reaches step
+14,052 of 14,295 with no POSIXC missing-name failures, including its consumer
+tests. The deferred-link fixture now explicitly prevents a provider namespace
+from outranking a consumer's own include directory.
+
+All 25 CMake fixtures, including the real AHI and GRUB builds, pass.
+
+The remaining full-build frontier is unrelated: the dominant diagnostics are
+`lzma/version.h` (330), `dbus/dbus.h` (223), missing C++ standard headers (255
+across the observed header names), and `src/webp/config.h` (72). Continue with
+point 24 (SDK publication of libc++ headers) or point 25 (fetched-Port private
+include/config publication); POSIXC should no longer be reopened unless this
+regression fails.
+
 ## Update 27 August 2026 — `aros` CLI diagnostics match the shared tool contract
 
 The user-facing `aros` orchestrator now has the same versioned diagnostic and
