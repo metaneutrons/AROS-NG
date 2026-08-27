@@ -1810,6 +1810,36 @@ whether it is still needed is unchecked.
 
 ## Quality gates
 
+### 56. RESOLVED — `aros` has one enterprise diagnostic and logging boundary
+
+`aros` no longer relies on Miette's implicit `main -> Result` renderer or a
+direct process exit. Stable `AR0001`–`AR0999` families and typed stages cover
+the complete top-level command surface; each failure has an actionable hint
+and deterministic command context. Human output and the versioned
+`aros-tool-diagnostics-v1` JSON document are selected globally or through the
+`AROS_DIAGNOSTIC_FORMAT` environment variable.
+
+The policy-neutral renderer and logger now live in `aros-common`. Collector,
+AHI runner and CLI policies select their own code, stage, hint and log schema
+without maintaining three implementations. CLI logs use
+`aros-cli-log-v1`, are disabled by default, require an explicit local file, and
+never add timestamps, hostnames or CI metadata.
+
+Child exit codes and signals survive as structured context. JSON mode captures
+non-interactive child streams into temporary files, includes at most 64 KiB of
+each failed stream in the diagnostic, and does not emit raw child errors ahead
+of the JSON document. Successful output is replayed. Integration coverage
+proves invocation, observability, repository and command boundaries, separate
+JSONL logging, child stderr isolation/status context, help outside a checkout,
+and fail-closed clean-preset validation.
+
+The audit found real silent failures rather than only presentation debt:
+`sync` ignored both Git statuses, `ccache` ignored every cache-tool status, and
+`clean --preset` formed its deletion path without the existing preset
+validator. All three now fail closed. Formatting, strict workspace Clippy and
+the complete Rust workspace pass, as do all 25 CMake fixtures including the
+real GRUB and native AHI builds.
+
 ### 55. RESOLVED — the complete Rust workspace is warning-free under Clippy
 
 `cargo clippy --workspace --all-targets -- -D warnings` passes on Rust 1.96.

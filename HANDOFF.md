@@ -1,5 +1,36 @@
 # Handoff
 
+## Update 27 August 2026 — `aros` CLI diagnostics match the shared tool contract
+
+The user-facing `aros` orchestrator now has the same versioned diagnostic and
+opt-in logging boundary as the transpiler, collector and AHI runner. Every
+fatal path exits through one renderer and `ExitCode`; stable `AR0001`–`AR0999`
+families distinguish invocation, observability, repository, configuration,
+tool, toolchain, network, configure, build, boot, Pi, removable-media,
+publication and internal failures. Human output remains the default;
+`--diagnostic-format json` and the `AROS_DIAGNOSTIC_FORMAT` equivalent emit an
+`aros-tool-diagnostics-v1` document with stage, hint and deterministic command
+context.
+
+`--log-level`, `--log-format` and `--log-file` add explicit local human or
+`aros-cli-log-v1` JSONL logs. Logging remains off without a selected file and
+contains no ambient timestamps, hostnames or CI metadata. The former Collector
+and AHI copies of the renderer/logger now use one policy-driven implementation
+in `aros-common`; their existing schemas and diagnostic tests remain green.
+
+Non-interactive child failures preserve tool, exit code and signal. In JSON
+mode their stdout/stderr cannot contaminate the diagnostic stream: output is
+file-buffered, bounded to 64 KiB per stream on failure, and replayed unchanged
+on success. The external serial terminal remains deliberately interactive.
+The migration also closed two actual error-handling defects: `sync` and
+`ccache` no longer ignore failed child statuses, and `clean --preset` validates
+the preset before resolving or deleting a directory.
+
+The shared strict Clippy gate, complete Rust workspace, dedicated CLI
+integration tests and all 25 CMake fixtures including the real GRUB and native
+AHI builds are green. The code and environment-variable contract is documented
+in `tools/aros-tools/crates/aros-cli/README.md`.
+
 ## Update 27 August 2026 — V3D generated-source closure is green
 
 The realised `linklibs-gallium_v3d` target now has a complete, fail-closed
@@ -514,7 +545,8 @@ for t in cmake/tests/*Test.cmake; do cmake -P "$t" || exit 1; done
 git diff --check
 ```
 
-The CMake sweep takes roughly five minutes, mostly in `GrubBuildTest.cmake`.
+The CMake sweep takes roughly ten minutes on the current macOS host, mostly in
+`GrubBuildTest.cmake`.
 The Rust workspace, every CMake fixture including the real GRUB host build and
 the new source-inventory, preset-toolchain and SMBIOS-validation fixtures, and
 both packaged PC boots are green as of this handoff. The thematic commit IDs
