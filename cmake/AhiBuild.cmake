@@ -377,6 +377,10 @@ function(aros_build_ahi)
         _aros_ahi_require_executable("${_tool}" "${${_tool}}" _tool_value)
         set(_${_tool} "${_tool_value}")
     endforeach()
+    if(NOT AROS_COLLECT_BIN)
+        message(FATAL_ERROR "AHI: AROS_COLLECT_BIN must be configured explicitly")
+    endif()
+    _aros_ahi_require_executable("AROS_COLLECT_BIN" "${AROS_COLLECT_BIN}" _collect)
     if(NOT AROS_LLD_BIN)
         message(FATAL_ERROR "AHI: AROS_LLD_BIN must be configured explicitly")
     endif()
@@ -526,7 +530,8 @@ function(aros_build_ahi)
     set(_target_asflags ${_isa})
     set(_linkdir "${_binary_dir}/linklibs")
     # Homebrew's Clang driver delegates final links to the macOS driver.  The
-    # generated adapter calls this checked LLVM linker directly instead.
+    # generated adapter calls the checked AROS collector with this checked LLVM
+    # linker as its backend instead.
     set(_target_ldflags ${_isa} -Wl,-r "-L${_linkdir}")
     _aros_ahi_host_triplet(_build_triplet)
     set(_stage_source "${_binary_dir}/source")
@@ -549,6 +554,7 @@ function(aros_build_ahi)
     endif()
     file(MAKE_DIRECTORY "${_binary_dir}")
     _aros_ahi_shell_quote("${_CMAKE_C_COMPILER}" AROS_AHI_WRAPPER_COMPILER_QUOTED)
+    _aros_ahi_shell_quote("${_collect}" AROS_AHI_WRAPPER_COLLECTOR_QUOTED)
     _aros_ahi_shell_quote("${_lld}" AROS_AHI_WRAPPER_LINKER_QUOTED)
     _aros_ahi_shell_quote("${_lld_emulation}" AROS_AHI_WRAPPER_EMULATION_QUOTED)
     configure_file("${_cc_wrapper_template}" "${_cc_wrapper}" @ONLY)
@@ -614,6 +620,7 @@ function(aros_build_ahi)
     set(AHI_FLEXCAT "${_flexcat_wrapper}")
     set(AHI_MAKE "${_make}")
     set(AHI_CC "${_cc_wrapper}")
+    set(AHI_COLLECT "${_collect}")
     set(AHI_AS "${_CMAKE_C_COMPILER}")
     set(AHI_AR "${_ar_wrapper}")
     set(AHI_RANLIB "${_CMAKE_RANLIB}")
@@ -645,7 +652,8 @@ function(aros_build_ahi)
             AHI_PRODUCT_MANIFEST AHI_PRODUCT_MANIFEST_SHA256 AHI_BINARY_DIR
             AHI_STAGE_SOURCE AHI_STAGE_BUILD AHI_STAGE_LINKLIBS AHI_INSTALL_PREFIX
             AHI_HOST_SFDC AHI_HOST_PERL AHI_HOST_FLEXCAT AHI_FLEXCAT AHI_MAKE
-            AHI_CC AHI_AS AHI_AR AHI_RANLIB AHI_OBJCOPY AHI_STRIP AHI_LLD AHI_SDK_INCLUDE
+            AHI_CC AHI_COLLECT AHI_AS AHI_AR AHI_RANLIB AHI_OBJCOPY AHI_STRIP
+            AHI_LLD AHI_SDK_INCLUDE
             AHI_GEN_INCLUDE AHI_FEATURE_HEADERS
             AHI_BUILD_TRIPLET AHI_TARGET_TRIPLE AHI_ELF_CLASS AHI_ELF_MACHINE_HEX
             AHI_TARGET_CFLAGS AHI_TARGET_CPPFLAGS AHI_TARGET_ASFLAGS AHI_TARGET_LDFLAGS
@@ -670,7 +678,7 @@ function(aros_build_ahi)
             "${_product_manifest_lexical}" "${_HOST_SFDC_lexical}" "${_flexcat_lexical}"
             "${_cc_wrapper}" "${_cc_wrapper_template}"
             "${_ar_wrapper}" "${_ar_wrapper_template}"
-            "${_flexcat_wrapper}" "${_flexcat_wrapper_template}" "${_lld}"
+            "${_flexcat_wrapper}" "${_flexcat_wrapper_template}" "${_collect}" "${_lld}"
             ${_dependency_lexical} ${_feature_header_lexical} ${_input_dependencies}
         COMMENT "Building closed AHI ${AB_MODE} capability"
         VERBATIM

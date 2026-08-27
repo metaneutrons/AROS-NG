@@ -5,6 +5,7 @@
 set -eu
 
 compiler=@AROS_AHI_WRAPPER_COMPILER_QUOTED@
+collector=@AROS_AHI_WRAPPER_COLLECTOR_QUOTED@
 linker=@AROS_AHI_WRAPPER_LINKER_QUOTED@
 emulation=@AROS_AHI_WRAPPER_EMULATION_QUOTED@
 
@@ -182,4 +183,4 @@ set --
 while IFS= read -r argument || [ -n "$argument" ]; do
     set -- "$@" "$argument"
 done < "$link_args"
-"$linker" "$@"
+"$collector" --ld "$linker" -- "$@"

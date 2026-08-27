@@ -47,6 +47,15 @@ foreach(_mode IN ITEMS x86_64 arm aarch64)
         message(FATAL_ERROR "AHI ${_mode} fixture did not generate its runner contract")
     endif()
     file(READ "${_contract}" _contract_content)
+    if(NOT _contract_content MATCHES "set\\(AHI_COLLECT ")
+        message(FATAL_ERROR "AHI ${_mode} contract omitted the collector")
+    endif()
+    file(READ "${_build}/gen/configure/workbench/devs/AHI/${_mode}/ahi-cc"
+        _wrapper_content)
+    if(NOT _wrapper_content MATCHES
+            "\\\"\\$collector\\\" --ld \\\"\\$linker\\\" -- \\\"\\$@\\\"")
+        message(FATAL_ERROR "AHI ${_mode} wrapper bypasses the collector")
+    endif()
     string(REGEX MATCHALL "-mfloat-abi=hard" _hard_float_flags "${_contract_content}")
     list(LENGTH _hard_float_flags _hard_float_count)
     if(_mode STREQUAL "arm")
@@ -60,6 +69,7 @@ foreach(_mode IN ITEMS x86_64 arm aarch64)
     set(_target workbench-devs-AHI-subsystem)
     set(_hostile "/tmp/aros-ahi-inherited-path-must-not-be-used")
     set(_closed_environment
+        "AHI_FIXTURE_COLLECT_LOG=${_build}/collector.log"
         "CPATH=${_hostile}" "C_INCLUDE_PATH=${_hostile}"
         "CPLUS_INCLUDE_PATH=${_hostile}" "LIBRARY_PATH=${_hostile}"
         "SDKROOT=${_hostile}" "PKG_CONFIG_PATH=${_hostile}"
@@ -78,6 +88,9 @@ foreach(_mode IN ITEMS x86_64 arm aarch64)
         RESULT_VARIABLE _result OUTPUT_VARIABLE _stdout ERROR_VARIABLE _stderr)
     if(NOT _result EQUAL 0)
         message(FATAL_ERROR "AHI ${_mode} fixture build failed\n${_stdout}${_stderr}")
+    endif()
+    if(NOT EXISTS "${_build}/collector.log")
+        message(FATAL_ERROR "AHI ${_mode} fixture did not execute the collector")
     endif()
     set(_repair "${_build}/SYS/Devs/AudioModes")
     if(_mode STREQUAL "x86_64")
@@ -139,6 +152,8 @@ endforeach()
 
 _ahi_configure("x86_64" "symlink-binary" FALSE "audited paths escape their owning tree")
 _ahi_configure("x86_64" "relative-perl" FALSE "PERL must be an absolute path")
+_ahi_configure("x86_64" "missing-collector" FALSE
+    "AROS_COLLECT_BIN is not an executable regular file")
 _ahi_configure("x86_64" "whitespace-build" FALSE
     "_build_root_raw cannot contain whitespace for configure/Make")
 file(SHA256 "${_repo}/workbench/devs/AHI/configure" _configure_after)

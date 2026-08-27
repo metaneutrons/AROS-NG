@@ -19,7 +19,7 @@ file(MAKE_DIRECTORY "${_tools}" "${CMAKE_BINARY_DIR}/hosttools"
     "${CMAKE_BINARY_DIR}/SDK/include/aros/posixc"
     "${CMAKE_BINARY_DIR}/SDK/include/aros/stdc"
     "${CMAKE_BINARY_DIR}/GENINCDIR/libraries")
-foreach(_name IN ITEMS mock-cc.sh mock-flexcat.sh mock-gmake.sh)
+foreach(_name IN ITEMS mock-cc.sh mock-collect.sh mock-flexcat.sh mock-gmake.sh)
     file(COPY_FILE "${CMAKE_CURRENT_LIST_DIR}/${_name}" "${_tools}/${_name}"
         ONLY_IF_DIFFERENT)
     file(CHMOD "${_tools}/${_name}" PERMISSIONS
@@ -71,6 +71,11 @@ set(CMAKE_AR "${_tools}/mock-cc.sh")
 set(CMAKE_RANLIB "${_tools}/mock-cc.sh")
 set(CMAKE_OBJCOPY "${_tools}/mock-cc.sh")
 set(CMAKE_STRIP "${_tools}/mock-cc.sh")
+if(AHI_FIXTURE_CASE STREQUAL "missing-collector")
+    set(AROS_COLLECT_BIN "${_tools}/missing-aros-collect")
+else()
+    set(AROS_COLLECT_BIN "${_tools}/mock-collect.sh")
+endif()
 set(AROS_LLD_BIN "${_tools}/ld.lld")
 set(AROS_AHI_MAKE "${_tools}/mock-gmake.sh")
 set(AROS_AHI_FLEXCAT "${CMAKE_BINARY_DIR}/hosttools/flexcat")
