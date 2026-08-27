@@ -1768,7 +1768,7 @@ in 27c through 27g were taken. Two of its choices are worth knowing:
     boot is a black screen and nothing else.
   * only the kickstart is passed as a module, for the reason in 27h.
 
-### 29. WORK — the release producers count as target obligations
+### 29. RESOLVED — release producers share the toolchain provisioning boundary
 
 `fc2aac81b2` declares `crosstools-libunwind-release`,
 `crosstools-compiler-rt-release` and `crosstools-compiler-rt32-release` beside
@@ -1777,9 +1777,18 @@ consumes, but only the three originals are in
 `LLVM_PROVISIONING_DECLARATIONS`, so the three `-release` ones are counted in
 the target inventory as things the target tree owes.
 
-Either they belong in the provisioning list, which is a statement that the
-release lane is part of the same boundary, or the inventory is right and the
-boundary is narrower than the lane. A decision, not a defect.
+The release and ordinary runtime declarations have the same source roots,
+host compiler, `CROSSTOOLSDIR` prefix and CMake option owners. The release
+variants add only their producer package names and the explicit temporary SDK
+dependencies. They therefore belong to the same external toolchain
+provisioning boundary and are now classified by exact declaration contracts.
+
+The GCC `tools-crosstools-gcc-libatomic` lane is included for the same reason:
+although it compiles target code, its source and object roots live below the
+host-side GCC producer and its output provisions that compiler installation;
+it is not a product of the AROS target tree. Structural source checks plus the
+exact declaration make both classifications fail closed. Any relevant drift
+returns the declaration to the ordinary missing-target gate.
 
 ### 28. WRONG — the four `fix/*` branches held fixes this branch needed
 
@@ -2442,21 +2451,44 @@ complete workspace test suite.
 
 ## Transpiler and parity
 
-### 10. DECIDE — should the toolchain's own build be transpiled?
+### 10. RESOLVED — target parity excludes explicit producers and inactive lanes
 
-Rechecked on 27 August 2026 after point 50. Architecture-scoped x86_64 coverage
-is 1,077/1,083 declarations with 1,077/1,078 emitted targets realised. ARM and
-AArch64 are each 1,074/1,078 with 1,074/1,075 emitted targets realised. The
-missing x86_64 declarations are four `crosstools-*` LLVM runtime lanes,
-`grub`, and `tools-crosstools-gcc-libatomic`; ARM and AArch64 omit the three
-applicable LLVM lanes and the GCC libatomic lane. In all profiles,
-`linklibs-hiddstubs` is emitted without an upstream declaration and
-`linklibs-gallium_v3d` is emitted but not materialised as a CMake target.
+The toolchain's own build is an external input boundary, not part of the AROS
+target graph. `aros-verify` keeps every applicable LLVM runtime/toolchain lane
+and GCC libatomic in a visible `toolchain-provisioning-targets.txt` inventory,
+but excludes them from target coverage only while their structural context and
+complete declaration arguments match the audited producer contract. This
+includes the release variants resolved in point 29; there is no digest of the
+complete files and unrelated edits do not require a pin update.
 
-The producer covers the toolchain ground by a different route, so whether
-those declarations should become CMake targets at all is an open question, and
-it has to be answered before "zero missing targets" can be
-a gate.
+Bootloader selection is equally explicit. Every preset now pins
+`AROS_TARGET_BOOTLOADER`; PC selects upstream's `grub2gfx` default and the Pi
+profiles select none. The legacy GRUB 0.97 configure declaration is recorded
+in `inactive-profile-targets.txt` for a non-`grub` profile. Selecting `grub`, or
+changing that exact declaration, immediately makes it an ordinary target
+obligation again.
+
+`compiler/libhiddstubs` is not a `%build_*` declaration at all: it is a
+handwritten `#MM` archive over the six `%make_hidd_stubs` producers. The
+verifier now admits that one manual target through its exact upstream archive
+contract, so the generated `linklibs-hiddstubs` is independently declared.
+The transpiler's safe local-fragment handling also reads the literal shared
+Mesa configuration without mistaking an indented compiler `-include` option
+for a Make include. This restores the fetched V3D sources and materialises
+`linklibs-gallium_v3d` as a real CMake target.
+
+Fresh full gates are green on all current release profiles:
+
+| profile | target coverage | emitted realised | provisioning | inactive |
+|---|---:|---:|---:|---:|
+| `pc-x86_64` | 1,078/1,078 | 1,078/1,078 | 10 | 1 legacy GRUB lane |
+| `arm-raspi` | 1,075/1,075 | 1,075/1,075 | 8 | 0 |
+| `rpi-aarch64` | 1,075/1,075 | 1,075/1,075 | 8 | 0 |
+
+This closes declaration/target/realisation parity, not output-byte parity.
+Point 12 remains the explicit limit on that claim, and the generated V3DX
+wrapper sources still appear in the broader missing-source diagnostics until
+their handwritten generation rules are modelled.
 
 ### 11. WORK — two mmakefiles genmf cannot expand
 

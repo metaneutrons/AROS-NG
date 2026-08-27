@@ -1,5 +1,38 @@
 # Handoff
 
+## Update 27 August 2026 — full architecture target parity is green
+
+Point 10 and its point-29 policy dependency are closed. `ninja verify` now
+passes completely for `pc-x86_64`, `arm-raspi` and `rpi-aarch64`, including
+the point-50 `FUNCTIONS_COUNT` audit. Fresh target results are 1,078/1,078
+declared/emitted/realised on PC and 1,075/1,075 on both Pi profiles.
+
+The denominator is explicit rather than reduced invisibly. Ten applicable PC
+and eight applicable Pi toolchain producer declarations are written to
+`toolchain-provisioning-targets.txt`: the ordinary and release LLVM lanes plus
+GCC libatomic. Exact declaration arguments and structural source checks make
+the boundary fail closed. PC's preset explicitly selects `grub2gfx`, so the
+distinct legacy GRUB 0.97 declaration is visible in
+`inactive-profile-targets.txt`; selecting `grub` returns it to the required
+target set. Every preset pins both its toolchain and bootloader.
+
+The verifier now recognises the exact handwritten upstream
+`linklibs-hiddstubs` archive contract rather than treating its synthesized
+CMake target as undeclared. The transpiler also safely adopts literal shared
+`.cfg` fragments such as Mesa's `mesa.cfg` and no longer mistakes an indented C
+compiler `-include` option for a Make include. This restores all fetched V3D
+source stems and makes `linklibs-gallium_v3d` a realised CMake target.
+
+Do not overstate this gate: it proves declaration, shape and CMake-target
+realisation parity, not byte-identical outputs. The twelve handwritten V3DX
+wrapper source rules are still listed by the wider missing-source diagnostics
+and should be modelled before claiming the V3D archive itself complete.
+
+The completion gate includes formatting, strict workspace-wide Clippy, the
+complete Rust workspace tests, all 25 CMake fixtures, three fresh 27-product
+golden captures plus replays, and fresh `ninja verify` runs for all three
+release profiles.
+
 ## Update 27 August 2026 — FUNCTIONS_COUNT parity is a build-time invariant
 
 Point 50 is closed. The old configure-time warning was not a canonical
@@ -32,13 +65,8 @@ all three profiles; their immediate repeats are Ninja no-ops. The fresh Pi
 packages contain 55 ARM modules with 3,002,864 payload bytes, 10 BCM2708 modules
 with 353,288 bytes, and 60 AArch64 modules with 4,052,872 bytes.
 
-The audit portion of `ninja verify` passes in all three profiles. The complete
-verify target then remains red on the pre-existing point-10 coverage decision:
-x86_64 realises 1,077/1,078 emitted targets and misses 6 of 1,083 declared
-targets; ARM and AArch64 each realise 1,074/1,075 and miss 4 of 1,078. The
-missing declarations are the intentionally separate LLVM/GCC toolchain lanes,
-plus GRUB on x86_64; `linklibs-hiddstubs` remains undeclared and
-`linklibs-gallium_v3d` unrealised. This is not a point-50 regression.
+The audit portion and the complete `ninja verify` target now pass in all three
+profiles; the newer update above records the policy and final counts.
 
 ## Update 27 August 2026 — workspace-wide Rust lint gate is clean
 
@@ -273,9 +301,10 @@ contract.
 
 The unrelated broad `aros-verify` fingerprints of the complete LLVM
 MetaMake/config/CMake inputs have also been removed. The verifier now checks
-only the structural facts that make five legacy host-tool declarations
-provisioning rather than target obligations; relevant drift still fails closed,
-while unrelated upstream edits do not require a hash refresh.
+only the structural facts and exact declaration contracts that make the
+applicable LLVM and GCC producer lanes provisioning rather than target
+obligations; relevant drift still fails closed, while unrelated upstream edits
+do not require a hash refresh.
 
 Core error handling aggregates and fails on filesystem traversal, fetch
 discovery, parsing and recognised capability drift. The typed-diagnostic,
@@ -470,8 +499,8 @@ are not committed.
 1. Boot the ARM and AArch64 packages on the intended Raspberry Pi hardware and
    capture UART evidence; the ROM packaging gate is clean, but runtime is not
    yet proved.
-2. Decide point 10's toolchain-lane policy and close the remaining full
-   `ninja verify` coverage gaps.
+2. Model the twelve V3DX wrapper generation rules so the now-realised V3D
+   archive also has a complete generated-source set.
 3. Continue point 25 so an unqualified full build can pass; the clean result is
    for the architecture's complete BSP package targets, not every unrelated
    third-party application target.
