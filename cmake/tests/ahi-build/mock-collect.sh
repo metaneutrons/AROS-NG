@@ -1,9 +1,7 @@
 #!/bin/sh
 set -eu
 
-if [ -n "${AHI_FIXTURE_COLLECT_LOG-}" ]; then
-    printf '%s\n' "$*" >> "$AHI_FIXTURE_COLLECT_LOG"
-fi
+printf '%s\n' "$*" >> "${0%/*}/../collector.log"
 
 if [ "${1-}" != --ld ] || [ -z "${2-}" ]; then
     echo "mock collector requires --ld BACKEND" >&2

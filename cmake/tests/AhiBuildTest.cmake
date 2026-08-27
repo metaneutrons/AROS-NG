@@ -6,6 +6,18 @@ set(_perl "/usr/bin/perl")
 if(NOT EXISTS "${_perl}")
     message(FATAL_ERROR "AHI runner test requires /usr/bin/perl")
 endif()
+if(DEFINED ENV{AROS_AHI_RUNNER_BIN} AND
+   NOT "$ENV{AROS_AHI_RUNNER_BIN}" STREQUAL "")
+    set(_ahi_runner "$ENV{AROS_AHI_RUNNER_BIN}")
+elseif(EXISTS "${_repo}/tools/aros-tools/target/debug/aros-ahi-runner")
+    set(_ahi_runner "${_repo}/tools/aros-tools/target/debug/aros-ahi-runner")
+else()
+    set(_ahi_runner "${_repo}/tools/aros-tools/target/release/aros-ahi-runner")
+endif()
+if(NOT EXISTS "${_ahi_runner}" OR IS_DIRECTORY "${_ahi_runner}" OR
+   NOT IS_EXECUTABLE "${_ahi_runner}")
+    message(FATAL_ERROR "AHI runner test requires executable ${_ahi_runner}")
+endif()
 string(RANDOM LENGTH 10 ALPHABET 0123456789abcdef _suffix)
 set(_root "/tmp/aros-ahi-build-${_suffix}")
 file(REMOVE_RECURSE "${_root}")
@@ -19,6 +31,7 @@ function(_ahi_configure mode case expect_success expected)
     execute_process(
         COMMAND "${CMAKE_COMMAND}" -S "${_fixture}" -B "${_build}" -G Ninja
             "-DAROS_REPO_ROOT=${_repo}" "-DHOST_PERL=${_perl}"
+            "-DAROS_AHI_RUNNER_BIN=${_ahi_runner}"
             "-DAHI_FIXTURE_MODE=${mode}" "-DAHI_FIXTURE_CASE=${case}"
         RESULT_VARIABLE _result OUTPUT_VARIABLE _stdout ERROR_VARIABLE _stderr)
     set(_log "${_stdout}${_stderr}")
@@ -69,7 +82,6 @@ foreach(_mode IN ITEMS x86_64 arm aarch64)
     set(_target workbench-devs-AHI-subsystem)
     set(_hostile "/tmp/aros-ahi-inherited-path-must-not-be-used")
     set(_closed_environment
-        "AHI_FIXTURE_COLLECT_LOG=${_build}/collector.log"
         "CPATH=${_hostile}" "C_INCLUDE_PATH=${_hostile}"
         "CPLUS_INCLUDE_PATH=${_hostile}" "LIBRARY_PATH=${_hostile}"
         "SDKROOT=${_hostile}" "PKG_CONFIG_PATH=${_hostile}"
@@ -154,6 +166,8 @@ _ahi_configure("x86_64" "symlink-binary" FALSE "audited paths escape their ownin
 _ahi_configure("x86_64" "relative-perl" FALSE "PERL must be an absolute path")
 _ahi_configure("x86_64" "missing-collector" FALSE
     "AROS_COLLECT_BIN is not an executable regular file")
+_ahi_configure("x86_64" "missing-runner" FALSE
+    "AROS_AHI_RUNNER_BIN is not an executable regular file")
 _ahi_configure("x86_64" "whitespace-build" FALSE
     "_build_root_raw cannot contain whitespace for configure/Make")
 file(SHA256 "${_repo}/workbench/devs/AHI/configure" _configure_after)

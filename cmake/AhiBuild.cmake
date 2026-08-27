@@ -381,6 +381,11 @@ function(aros_build_ahi)
         message(FATAL_ERROR "AHI: AROS_COLLECT_BIN must be configured explicitly")
     endif()
     _aros_ahi_require_executable("AROS_COLLECT_BIN" "${AROS_COLLECT_BIN}" _collect)
+    if(NOT AROS_AHI_RUNNER_BIN)
+        message(FATAL_ERROR "AHI: AROS_AHI_RUNNER_BIN must be configured explicitly")
+    endif()
+    _aros_ahi_require_executable(
+        "AROS_AHI_RUNNER_BIN" "${AROS_AHI_RUNNER_BIN}" _ahi_runner)
     if(NOT AROS_LLD_BIN)
         message(FATAL_ERROR "AHI: AROS_LLD_BIN must be configured explicitly")
     endif()
@@ -670,11 +675,10 @@ function(aros_build_ahi)
     endforeach()
     file(GENERATE OUTPUT "${_contract}" CONTENT "${_content}")
 
-    set(_runner "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/RunAhiBuild.cmake")
     add_custom_command(
         OUTPUT ${_install_outputs_lexical}
-        COMMAND "${CMAKE_COMMAND}" "-DCONTRACT=${_contract}" -P "${_runner}"
-        DEPENDS "${_runner}" "${_contract}" "${_source_manifest_lexical}"
+        COMMAND "${_ahi_runner}" --contract "${_contract}"
+        DEPENDS "${_ahi_runner}" "${_contract}" "${_source_manifest_lexical}"
             "${_product_manifest_lexical}" "${_HOST_SFDC_lexical}" "${_flexcat_lexical}"
             "${_cc_wrapper}" "${_cc_wrapper_template}"
             "${_ar_wrapper}" "${_ar_wrapper_template}"

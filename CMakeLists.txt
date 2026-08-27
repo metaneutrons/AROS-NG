@@ -29,6 +29,8 @@ set(AROS_TRANSPILER_BIN "${AROS_RUST_TOOLS_DIR}/aros-transpiler"
 # symbol-set arrays the code reads. See cmake/AROS.cmake's linker rules.
 set(AROS_COLLECT_BIN "${AROS_RUST_TOOLS_DIR}/aros-collect"
     CACHE FILEPATH "Rust aros-collect executable used to link and collect symbol sets")
+set(AROS_AHI_RUNNER_BIN "${AROS_RUST_TOOLS_DIR}/aros-ahi-runner"
+    CACHE FILEPATH "Typed Rust runner for the closed AHI build contract")
 
 include("${CMAKE_SOURCE_DIR}/cmake/ToolchainIdentity.cmake")
 aros_lock_build_tree_toolchain()
@@ -153,7 +155,7 @@ if(NOT EXISTS "${TRANSPILER_BIN}" OR IS_DIRECTORY "${TRANSPILER_BIN}" OR
     message(FATAL_ERROR
         "AROS-NG requires the executable Rust transpiler at ${TRANSPILER_BIN}. "
         "Build it with `cargo build --release -p aros-transpiler -p aros-genmodule "
-        "-p aros-collect` "
+        "-p aros-collect -p aros-ahi-runner` "
         "in tools/aros-tools, or set AROS_RUST_TOOLS_DIR / AROS_TRANSPILER_BIN.")
 endif()
 
