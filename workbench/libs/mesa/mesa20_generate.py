@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Closed, source-immutable adapter for Mesa 20.0.8 generators.
 
-The transpiler pins this file by SHA-256 and supplies only audited modes and
-arguments.  Every named-file generator works in a private build-tree staging
-directory; fetched source trees are never output locations.
+The transpiler supplies only capability-audited modes and arguments. Every
+named-file generator works in a private build-tree staging directory; fetched
+source trees are never output locations.
 """
 
 from __future__ import annotations
@@ -175,6 +175,16 @@ def main() -> None:
             if arguments:
                 fail("mesa-git-sha1 mode accepts no arguments")
             data = b'#define MESA_GIT_SHA1 ""\n'
+
+        elif mode == "v3dx-wrapper":
+            if len(arguments) != 1 or arguments[0] not in {"33", "41"}:
+                fail("v3dx-wrapper mode requires exactly version 33 or 41")
+            if not generator.name.startswith("v3dx_") or generator.suffix != ".c":
+                fail(f"v3dx-wrapper input is not a v3dx C source: {generator.name}")
+            version = arguments[0]
+            data = (
+                f'#define V3D_VERSION {version}\n#include "{generator.name}"\n'
+            ).encode("ascii")
 
         else:
             fail(f"unsupported generator mode: {mode!r}")

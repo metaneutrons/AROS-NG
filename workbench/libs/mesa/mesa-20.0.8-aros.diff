@@ -1370,3 +1370,10 @@ diff -ruN mesa-20.0.8/src/mesa/state_tracker/st_glsl_to_tgsi_temprename.cpp mesa
 @@ -1355 +1355 @@
 -   std::qsort(reg_access, used_temps, sizeof(register_merge_record),
 +   qsort(reg_access, used_temps, sizeof(register_merge_record),
+diff -ruN mesa-20.0.8/src/broadcom/qpu/qpu_pack.c mesa-20.0.8.aros/src/broadcom/qpu/qpu_pack.c
+--- mesa-20.0.8/src/broadcom/qpu/qpu_pack.c	2020-06-12 01:21:17.000000000 +0000
++++ mesa-20.0.8.aros/src/broadcom/qpu/qpu_pack.c	2026-08-27 16:30:00.000000000 +0000
+@@ -24,2 +24,3 @@
+ #include <string.h>
++#include "util/bitscan.h"
+ #include "util/macros.h"
