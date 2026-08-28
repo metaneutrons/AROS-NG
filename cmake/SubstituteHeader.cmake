@@ -1,3 +1,5 @@
+cmake_minimum_required(VERSION 3.22)
+
 if(NOT DEFINED INPUT OR NOT DEFINED OUTPUT OR NOT DEFINED SUBSTITUTIONS)
     message(FATAL_ERROR
         "SubstituteHeader.cmake requires INPUT, OUTPUT and SUBSTITUTIONS")

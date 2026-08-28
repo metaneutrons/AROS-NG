@@ -1,5 +1,48 @@
 # Handoff
 
+## Update 28 August 2026 — macOS/Linux three-profile matrix is green
+
+The three currently published LLVM 11 release-toolchain profiles now complete
+real product builds on both macOS ARM64 and Linux ARM64. The archives came
+from producer run `33020916404`; their documented SHA-256 values were checked
+before extraction and `aros toolchain verify` confirmed the embedded compiler
+triple and collector binaries on each host.
+
+Fresh macOS builds completed for `pc-x86_64` (14,156 Ninja steps, 452 s),
+`arm-raspi` (12,809 steps, 337 s) and `rpi-aarch64` (12,722 steps, 358 s).
+The isolated Debian ARM64/Lima builds also completed for all three profiles.
+Linux x86_64 and ARM began from clean trees, exposed the policy defects below,
+then resumed the same trees after the fixes; Linux AArch64 completed from clean
+configuration without interruption (253 s). No physical disk, network service
+or board was changed.
+
+The Linux runs found a genuine CMake-version portability defect hidden by
+macOS CMake 4.4. Standalone scripts invoked with `cmake -P` do not inherit the
+top-level project's policy scope. CMake 3.31 therefore skipped
+`while(TRUE)` in the FreeType writer and rejected `IN_LIST` in the literal
+defines writer. Every runtime `Run*`, `Write*`, `Verify*` and explicitly named
+standalone helper now declares the supported CMake 3.22 baseline. A static
+fixture covers all 21 entry points. All CMake fixtures pass on macOS,
+including the real GRUB BIOS/EFI host build; the affected writer fixtures and
+the new policy fixture also pass under Linux CMake 3.31. The architecture gate
+and patch-hygiene check pass.
+
+For repeatable Lima builds, use the repository's Linux CI package list plus
+`unzip`, include the populated AROS submodules, and build on the VM's native
+filesystem. The macOS VirtioFS share cannot reliably materialise Mesa's
+archive symlinks, and Lima's `/tmp` is a 4 GiB tmpfs; neither is suitable for
+the multi-profile product matrix.
+
+Remaining claims must stay narrow. These are generic target-profile product
+builds, not physical Pi 3/Pi 5/Milk-V boot evidence. No deterministic
+`opensbi-riscv64` release archive exists yet, and only the macOS ARM64 and
+Linux ARM64 host columns were replayed locally. The four-host release matrix,
+current ARM/AArch64/RISC-V legacy KOBJ triplets and physical UART boot proofs
+remain external work. Also, `aros build --offline` currently disables
+toolchain acquisition only; legacy `%fetch` port sources can still use the
+network. Optional explicit SHA-256 declarations for those downloads are a
+sensible follow-up, but no hash must be inferred or hidden in generated CMake.
+
 ## Update 28 August 2026 — Pi 3, Pi 5 and Milk-V Titan board contracts
 
 `aros board` now uses strict local schema version 2 with explicit

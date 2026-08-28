@@ -1,3 +1,5 @@
+cmake_minimum_required(VERSION 3.22)
+
 # Materialises one declared `%copy_includes` wildcard after its owning fetched
 # source tree exists.  The caller has already tied this script to the fetch
 # completion stamp; keeping that dependency outside this script makes a cold

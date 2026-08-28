@@ -1,3 +1,5 @@
+cmake_minimum_required(VERSION 3.22)
+
 # Execute ilbmtoc without shell redirection and publish the output atomically.
 
 foreach(_required TOOL INPUT OUTPUT BINARY_ROOT)

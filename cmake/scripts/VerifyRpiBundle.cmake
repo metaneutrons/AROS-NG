@@ -1,3 +1,5 @@
+cmake_minimum_required(VERSION 3.22)
+
 # Verify (and optionally manifest) an AROS Raspberry Pi debug payload.
 #
 # Called from RaspberryPi.cmake after staging, so it deliberately performs no

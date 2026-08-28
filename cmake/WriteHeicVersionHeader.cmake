@@ -1,3 +1,5 @@
+cmake_minimum_required(VERSION 3.22)
+
 # Implements the two exact version-header substitutions in
 # workbench/classes/datatypes/heic/mmakefile.src.  These headers are private
 # to the fetched ports, so their values deliberately remain tied to the

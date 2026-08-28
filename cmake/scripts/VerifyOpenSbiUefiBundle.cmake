@@ -1,3 +1,5 @@
+cmake_minimum_required(VERSION 3.22)
+
 # Verify and manifest an AROS OpenSBI/UEFI removable-media payload.
 
 if(NOT DEFINED BUNDLE_DIR OR BUNDLE_DIR STREQUAL "")

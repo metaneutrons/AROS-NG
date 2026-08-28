@@ -1,3 +1,5 @@
+cmake_minimum_required(VERSION 3.22)
+
 if(NOT DEFINED BINARY_ROOT OR NOT DEFINED INPUT OR NOT DEFINED OUTPUT)
     message(FATAL_ERROR
         "WritePngLibconf.cmake requires BINARY_ROOT, INPUT and OUTPUT")

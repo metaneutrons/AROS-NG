@@ -4,6 +4,12 @@
 # append a newline in the replacement.  Retaining that detail makes the output
 # match the historic rule rather than merely enabling a similar set of macros.
 
+# This file runs through `cmake -P`, so it does not inherit the policy scope
+# established by the top-level project.  Declare the supported baseline here;
+# otherwise older CMake releases evaluate `while(TRUE)` using CMP0012's legacy
+# behaviour and silently skip every replacement.
+cmake_minimum_required(VERSION 3.22)
+
 foreach(_required IN ITEMS
         AROS_FREETYPE_OPTIONS_INPUT
         AROS_FREETYPE_OPTIONS_OUTPUT)

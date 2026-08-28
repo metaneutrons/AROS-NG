@@ -1,3 +1,5 @@
+cmake_minimum_required(VERSION 3.22)
+
 # Run one FlexCat catalog conversion while preserving the legacy warning
 # contract. FlexCat returns values below 10 for non-fatal warnings; MetaMake's
 # `%build_catalogs` accepts those and fails only on 10 or above.

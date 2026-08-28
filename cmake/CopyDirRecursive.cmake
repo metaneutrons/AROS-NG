@@ -1,3 +1,5 @@
+cmake_minimum_required(VERSION 3.22)
+
 # Build-time implementation of MetaMake's %copy_dir_recursive primitive.
 #
 # The legacy cpy-dir-rec.py script overlays rather than cleans destinations,
