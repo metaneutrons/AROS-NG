@@ -163,6 +163,12 @@ function(aros_bootstrap_sdk_includes)
         )
     endif()
 
+    if(EXISTS "${CMAKE_SOURCE_DIR}/arch/riscv64-all/include/aros/")
+        file(COPY "${CMAKE_SOURCE_DIR}/arch/riscv64-all/include/aros/"
+             DESTINATION "${SDK_INC}/aros/riscv64"
+        )
+    endif()
+
     # IRQ types header
     if(AROS_TARGET_CPU STREQUAL "x86_64" OR AROS_TARGET_CPU STREQUAL "i386")
         if(EXISTS "${CMAKE_SOURCE_DIR}/arch/i386-all/include/irqtypes.h")
@@ -184,7 +190,8 @@ function(aros_bootstrap_sdk_includes)
     #
     # The flavour follows the target, as configure derives it from the platform
     # case: `pc)` at configure:10727 sets aros_flavour="standalone" for both
-    # i386 and x86_64, and `r*pi)` at :11213 sets it for arm and aarch64.
+    # i386 and x86_64, `r*pi)` at :11213 sets it for arm and aarch64, and
+    # `opensbi)` at :11305 selects the same standalone flavour for RISC-V.
     # AROS_FLAVOUR_NATIVE, which this file used to state for every target, is
     # what configure picks for classic Amiga-like ports, and it is wrong for all
     # three presets here.
@@ -198,13 +205,16 @@ function(aros_bootstrap_sdk_includes)
     # the XSAVE/AVX context path for the same reason.
     #
     # A platform this does not know must not inherit a flavour by accident.
-    if(AROS_TARGET_PLATFORM STREQUAL "pc" OR AROS_TARGET_PLATFORM STREQUAL "raspi")
+    if(AROS_TARGET_PLATFORM STREQUAL "pc" OR
+       AROS_TARGET_PLATFORM STREQUAL "raspi" OR
+       AROS_TARGET_PLATFORM STREQUAL "opensbi")
         set(_aros_flavour "AROS_FLAVOUR_STANDALONE")
     else()
         message(FATAL_ERROR
             "No AROS_FLAVOUR is known for platform '${AROS_TARGET_PLATFORM}'. "
-            "configure derives it per platform case (see configure:10727 for pc "
-            "and :11213 for raspi); add this one rather than letting it default.")
+            "configure derives it per platform case (see configure:10727 for pc, "
+            ":11213 for raspi, and :11305 for opensbi); add this one rather than "
+            "letting it default.")
     endif()
 
     # 15 of the 20 values config/config.h.in substitutes are still missing from

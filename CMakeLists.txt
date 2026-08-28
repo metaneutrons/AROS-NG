@@ -749,6 +749,9 @@ include("${CMAKE_SOURCE_DIR}/cmake/RootTargets.cmake")
 #    transpiled target graph.
 include("${CMAKE_SOURCE_DIR}/cmake/RaspberryPi.cmake")
 
+# 10. OpenSBI/UEFI removable-media payload for reviewed RISC-V boards.
+include("${CMAKE_SOURCE_DIR}/cmake/OpenSbiUefi.cmake")
+
 # Compare every concrete declaration against a freshly generated upstream
 # libdefs header. This is a build target rather than a configure-time glob: in
 # an incremental tree the old reference files may exist but be stale.

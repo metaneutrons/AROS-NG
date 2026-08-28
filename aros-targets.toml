@@ -38,3 +38,10 @@ platform = "raspi"
 bsp = "bcm2835"
 features = ["pwm-audio", "sdhost"]
 float_abi = "hard"
+
+[[targets]]
+name = "opensbi-riscv64"
+arch = "riscv64"
+platform = "opensbi"
+bsp = "uefi-opensbi"
+features = ["smp", "uefi", "acpi", "pci", "nvme", "xhci"]

@@ -1,4 +1,4 @@
-# Verify (and optionally manifest) an AROS Raspberry Pi 4 debug payload.
+# Verify (and optionally manifest) an AROS Raspberry Pi debug payload.
 #
 # Called from RaspberryPi.cmake after staging, so it deliberately performs no
 # firmware discovery and makes no network request.
@@ -6,15 +6,37 @@
 if(NOT DEFINED BUNDLE_DIR OR BUNDLE_DIR STREQUAL "")
     message(FATAL_ERROR "VerifyRpiBundle.cmake requires -DBUNDLE_DIR=<directory>")
 endif()
+foreach(_argument IN ITEMS MODEL CPU DTB_NAME BOOT_IMAGE_NAME BOOT_ELF_NAME
+        BOOT_MAP_NAME BSP_NAME KERNEL_ADDRESS ARM_64BIT)
+    if(NOT DEFINED ${_argument} OR "${${_argument}}" STREQUAL "")
+        message(FATAL_ERROR "VerifyRpiBundle.cmake requires -D${_argument}=<value>")
+    endif()
+endforeach()
+
+if(MODEL STREQUAL "rpi3")
+    if(NOT CPU STREQUAL "arm" OR NOT DTB_NAME STREQUAL "bcm2710-rpi-3-b-plus.dtb")
+        message(FATAL_ERROR "rpi3 requires the ARM32 and bcm2710-rpi-3-b-plus.dtb contract")
+    endif()
+elseif(MODEL STREQUAL "rpi4")
+    if(NOT CPU STREQUAL "aarch64" OR NOT DTB_NAME STREQUAL "bcm2711-rpi-4-b.dtb")
+        message(FATAL_ERROR "rpi4 requires the AArch64 and bcm2711-rpi-4-b.dtb contract")
+    endif()
+elseif(MODEL STREQUAL "rpi5")
+    if(NOT CPU STREQUAL "aarch64" OR NOT DTB_NAME STREQUAL "bcm2712-rpi-5-b.dtb")
+        message(FATAL_ERROR "rpi5 requires the AArch64 and bcm2712-rpi-5-b.dtb contract")
+    endif()
+else()
+    message(FATAL_ERROR "Unsupported Raspberry Pi model '${MODEL}'")
+endif()
 
 set(_required_files
-    aros-aarch64-raspi.img
-    aros-aarch64-raspi.debug.elf
-    aros-aarch64-raspi.map
+    "${BOOT_IMAGE_NAME}"
+    "${BOOT_ELF_NAME}"
+    "${BOOT_MAP_NAME}"
     core.debug.elf
     core.map
-    aros-aarch64-bsp.rom
-    bcm2711-rpi-4-b.dtb
+    "${BSP_NAME}"
+    "${DTB_NAME}"
     config.txt)
 
 foreach(_name IN LISTS _required_files)
@@ -36,25 +58,29 @@ function(_rpi_require_elf name)
     endif()
 endfunction()
 
-_rpi_require_elf("aros-aarch64-raspi.debug.elf")
+_rpi_require_elf("${BOOT_ELF_NAME}")
 _rpi_require_elf("core.debug.elf")
 
-file(READ "${BUNDLE_DIR}/bcm2711-rpi-4-b.dtb" _dtb_magic OFFSET 0 LIMIT 4 HEX)
+file(READ "${BUNDLE_DIR}/${DTB_NAME}" _dtb_magic OFFSET 0 LIMIT 4 HEX)
 string(TOLOWER "${_dtb_magic}" _dtb_magic)
 if(NOT _dtb_magic STREQUAL "d00dfeed")
     message(FATAL_ERROR
-        "bcm2711-rpi-4-b.dtb does not have the flattened-device-tree magic "
+        "${DTB_NAME} does not have the flattened-device-tree magic "
         "d00dfeed (got ${_dtb_magic})")
 endif()
 
 file(READ "${BUNDLE_DIR}/config.txt" _config)
 set(_config_lines
-    "kernel=aros-aarch64-raspi.img"
-    "kernel_address=0x80000"
-    "initramfs aros-aarch64-bsp.rom 0x00800000"
-    "enable_uart=1"
-    "arm_64bit=1"
+    "kernel=${BOOT_IMAGE_NAME}"
+    "kernel_address=${KERNEL_ADDRESS}"
+    "initramfs ${BSP_NAME} 0x00800000"
+    "arm_64bit=${ARM_64BIT}"
     "gpu_mem=128")
+if(MODEL STREQUAL "rpi3")
+    list(APPEND _config_lines "hdmi_drive=2")
+else()
+    list(APPEND _config_lines "enable_uart=1")
+endif()
 foreach(_line IN LISTS _config_lines)
     string(FIND "${_config}" "${_line}" _found)
     if(_found LESS 0)
@@ -62,7 +88,7 @@ foreach(_line IN LISTS _config_lines)
     endif()
 endforeach()
 
-set(_manifest "# AROS-NG Raspberry Pi 4 debug payload SHA-256\n")
+set(_manifest "# AROS-NG Raspberry Pi ${MODEL} debug payload SHA-256\n")
 foreach(_name IN LISTS _required_files)
     file(SHA256 "${BUNDLE_DIR}/${_name}" _sha256)
     string(APPEND _manifest "${_sha256}  ${_name}\n")
@@ -82,4 +108,4 @@ else()
     endif()
 endif()
 
-message(STATUS "Raspberry Pi 4 debug payload verified: ${BUNDLE_DIR}")
+message(STATUS "Raspberry Pi debug payload verified: ${BUNDLE_DIR}")

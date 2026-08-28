@@ -15,7 +15,8 @@ set(_tools clang clang++ ld.lld llvm-ar llvm-ranlib llvm-nm llvm-strip
 set(_profiles
     "x86_64|pc|pc-x86_64|x86_64-unknown-aros|x86_64|i386"
     "arm|raspi|arm-raspi|arm-unknown-aros|armhf|none"
-    "aarch64|raspi|rpi-aarch64|aarch64-unknown-aros|aarch64|none")
+    "aarch64|raspi|rpi-aarch64|aarch64-unknown-aros|aarch64|none"
+    "riscv64|opensbi|opensbi-riscv64|riscv64-unknown-aros|riscv64|none")
 
 foreach(_profile IN LISTS _profiles)
     string(REPLACE "|" ";" _fields "${_profile}")
