@@ -12,6 +12,68 @@ Marker meaning:
 
 ---
 
+## Board verification blockers
+
+### 57. WORK — current ARM, AArch64 and RISC-V core KOBJ triplets are not produced
+
+The model-specific CMake bridges are configured and validate the exact input
+contract, but this checkout does not contain current-revision copies of
+`kernel_resource.o`, `exec_library.o` and `task_resource.o` for all three
+board architectures. A completed configure is therefore evidence for the
+graph and its fail-closed prerequisite handling, not evidence for a linked or
+bootable board image.
+
+This point is closed only when separate legacy builds from the same committed
+source revision and matching AROS toolchain have produced:
+
+- ARM ET_REL objects through `kernel-raspi-arm`;
+- AArch64 ET_REL objects through `kernel-raspi-aarch64`; and
+- RISC-V 64 ET_REL objects through `kernel-opensbi-riscv64`.
+
+For each triplet, preserve its source commit, toolchain identity and SHA-256
+inventory. `aros board doctor` must accept the ELF class, little-endian
+encoding, relocatable type and machine id, and the corresponding CMake
+artifact target must complete. Historical or differently built KOBJs do not
+close this point.
+
+### 58. WORK — the four-host deterministic `opensbi-riscv64` toolchain release is unpublished
+
+The lock file has explicit disabled slots for macOS ARM64, macOS x86-64,
+Linux ARM64 and Linux x86-64. Their zero digests and `enabled = false` values
+are intentional sentinels. `aros build` currently refuses the profile with a
+clear unpublished-toolchain diagnostic; a successful direct configuration
+with a local Homebrew LLVM proves only that the source graph is representable.
+
+This point is closed only by a current committed producer run that builds two
+independent copies for every host, proves each pair byte-identical, passes the
+producer verifier and target compatibility probes, and publishes immutable
+GitHub release assets plus provenance/SBOM and the release index. Only then may
+the four lock entries receive their real archive SHA-256 and tree SHA-256
+values and be enabled. A local compiler path or an unindexed archive is not a
+substitute.
+
+### 59. WORK — Pi 3B+, Pi 5 and Milk-V Titan have no captured physical UART boot proof
+
+The current evidence covers schema validation, transpiler/CMake generation,
+model-specific artifact contracts and verified SD/ESP staging. It does not
+show firmware executing an AROS image on any of these three physical models.
+Until that evidence exists, documentation must say "software integration" or
+"physical boot pending", never "hardware-supported" or "boot-validated".
+
+Close this point separately for Pi 3B+, Pi 5 and Milk-V Titan by preserving:
+
+- the exact board revision, source commit, toolchain release, KOBJ/DTB and
+  boot-manifest hashes;
+- an uninterrupted timestamped UART log covering firmware/UEFI hand-off,
+  AROS kernel entry and the intended stable boot milestone; and
+- the reproducible `aros board` commands and local-profile shape, with local
+  device identities and secrets removed.
+
+A transport smoke test, an emulator boot or a log from another board model
+does not close a physical-board entry.
+
+---
+
 ## Toolchain producer
 
 ### 1. DECIDE — boost is a hard dependency of the shipped SDK headers

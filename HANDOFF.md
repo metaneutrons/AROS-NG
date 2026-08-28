@@ -1,5 +1,52 @@
 # Handoff
 
+## Update 28 August 2026 — Pi 3, Pi 5 and Milk-V Titan board contracts
+
+`aros board` now uses strict local schema version 2 with explicit
+`raspberry-pi` and `opensbi-uefi` backends and typed `rpi3`, `rpi4`, `rpi5`
+and `milk-v-titan` models. Backend-specific inputs live only in their nested
+tables; incompatible model/backend/transport combinations fail during profile
+validation. There are no compatibility aliases because the CLI is unreleased.
+
+The Raspberry Pi CMake bridge is model-specific. Pi 3 uses the upstream ARM32
+bootstrap contract, exact `bcm2710-rpi-3-b-plus.dtb`, ARM relocatable KOBJs
+and the legacy-compatible firmware config. Pi 4 and Pi 5 use AArch64 with
+their exact BCM2711/BCM2712 DTBs. Pi 4 alone retains the reviewed optional
+`uboot-usb-ecm` path; Pi 3 and Pi 5 use `native-tftp`. Fresh Pi 3 and Pi 5
+configurations complete and defer their artifact targets with explicit DTB
+and KOBJ prerequisites rather than fabricating payloads.
+
+Milk-V Titan is the first non-Pi board profile. It reuses the upstream
+`riscv64-opensbi` kernel and its hybrid Linux Image/PE-COFF UEFI header,
+creates the standard `EFI/BOOT/BOOTRISCV64.EFI` removable-media layout and
+uses the common verified SD pipeline. The producer checks MZ, PE signature,
+RISC-V machine id, byte-identical `Image` content and every manifest hash.
+Network deploy/serve rejects `uefi-esp`. The RISC-V transpiler graph now
+configures with 913 concrete targets; unsupported AHI remains an explicit
+zero-lane profile decision rather than a guessed implementation.
+
+`opensbi-riscv64` now has a generic target/CMake preset plus four disabled
+release slots (macOS/Linux × ARM64/x86-64). They intentionally remain
+unavailable until deterministic current-revision archives are published with
+real SHA-256/tree digests. A direct Homebrew LLVM configuration proves the
+software graph; the normal `aros build`/`aros board build` path still refuses
+an unpublished locked toolchain.
+
+The formerly Pi-named SD artifact protocol is now board-generic:
+`aros-board-boot.img`, `aros-board-sd-image` and
+`aros-board-sd-partition-v1`. The Titan bundle has an end-to-end Rust staging
+test with nested ESP paths. Formatting, the architecture gate, strict
+all-target/all-feature Clippy and the complete all-feature Rust workspace test
+suite pass. The release-toolchain CMake contract, Pi 3/Pi 5 configure paths,
+Titan manifest verifier and Titan missing-KOBJ diagnostic are also verified.
+
+Remaining evidence is external and must not be overstated: build the legacy
+architecture-correct KOBJ triplets, publish the deterministic RISC-V
+toolchain matrix, then capture physical UART boot evidence on Pi 3B+, Pi 5 and
+Milk-V Titan. No physical disk, network service or board was changed in this
+run. The implementation is currently uncommitted and should be reviewed and
+committed as functional groups before hardware work.
+
 ## Update 28 August 2026 — physical-board engine extracted; `aros board` is canonical
 
 The unreleased Raspberry Pi CLI surface has been replaced completely by
@@ -25,8 +72,8 @@ separate physical-device registry: it binds a local name to a concrete model,
 build/toolchain presets, transport, stable USB/MAC identity, serial device and
 host-local deployment paths. This permits several physical devices and future
 non-Pi backends without duplicating build targets or committing machine-local
-identity. The current backend-specific fields are explicitly Raspberry Pi 4
-inputs. Because the CLI is unreleased, the board schema carries no legacy
+identity. Backend-specific inputs are isolated in their explicit nested
+tables. Because the CLI is unreleased, the board schema carries no legacy
 `target`, `artifact_directory` or transient-interface aliases; its canonical
 keys are `preset`, `artifact_dir` and stable `usb_ecm.identity`.
 
