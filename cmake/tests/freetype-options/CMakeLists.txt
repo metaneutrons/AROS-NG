@@ -26,11 +26,14 @@ file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/consumer.c"
 add_library(freetype-consumer STATIC
     "${CMAKE_CURRENT_BINARY_DIR}/consumer.c")
 target_include_directories(freetype-consumer PRIVATE "${AROS_SDK_INCLUDE_DIR}")
+add_library(freetype-demo-consumer STATIC
+    "${CMAKE_CURRENT_BINARY_DIR}/consumer.c")
+target_include_directories(freetype-demo-consumer PRIVATE "${AROS_SDK_INCLUDE_DIR}")
 
 aros_stage_freetype_options(
     NAME freetype-options
     FETCH_TARGET freetype-fetch
     OWNER freetype-options-owner
-    CONSUMERS freetype-consumer
+    CONSUMERS freetype-consumer freetype-demo-consumer
     INPUT "${_input}"
     OUTPUT "${AROS_SDK_INCLUDE_DIR}/freetype/config/ftoption.h")

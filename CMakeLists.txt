@@ -427,11 +427,19 @@ if(TARGET "freetype2-fetch" OR TARGET "workbench-libs-freetype-genincludes")
             "FreeType option staging requires both generated targets")
     endif()
     include("${CMAKE_SOURCE_DIR}/cmake/FreetypeOptions.cmake")
+    # The ordinary and module FreeType link libraries compile the configured
+    # FreeType sources directly.  The demos' ftcommon library independently
+    # includes freetype/freetype.h before either final demo program exists.
+    # Bind every direct compiler consumer, rather than relying on the
+    # aggregate `includes`/`linklibs` siblings to happen to finish first.
     aros_stage_freetype_options(
         NAME workbench-libs-freetype-genincludes-ftoption
         FETCH_TARGET freetype2-fetch
         OWNER workbench-libs-freetype-genincludes
-        CONSUMERS workbench-libs-freetype-module-linklib
+        CONSUMERS
+            workbench-libs-freetype-linklib
+            workbench-libs-freetype-module-linklib
+            test-freetype-lib-ftcommon
         INPUT "${AROS_PORTS_DIR}/freetype2/freetype-2.14.3/include/freetype/config/ftoption.h"
         OUTPUT "${AROS_SDK_INCLUDE_DIR}/freetype/config/ftoption.h")
 endif()

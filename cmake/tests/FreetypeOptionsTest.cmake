@@ -22,7 +22,8 @@ if(NOT _configure_result EQUAL 0)
 endif()
 
 execute_process(
-    COMMAND "${CMAKE_COMMAND}" --build "${_build}" --target freetype-consumer
+    COMMAND "${CMAKE_COMMAND}" --build "${_build}" --target
+        freetype-consumer freetype-demo-consumer
     RESULT_VARIABLE _build_result
     OUTPUT_VARIABLE _build_stdout
     ERROR_VARIABLE _build_stderr)
