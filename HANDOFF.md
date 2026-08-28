@@ -1,5 +1,43 @@
 # Handoff
 
+## Update 28 August 2026 — native validated fetch boundary
+
+The transpiled AROS-NG CMake graph no longer executes `scripts/fetch.sh`.
+Configure-time source inventory and build-time `%fetch` targets now invoke the
+native Rust `aros-fetch` executable through one explicit long-form contract.
+The shell implementation remains only as an upstream-compatibility boundary
+for the classic GNU Make/MetaMake build; there is no silent fallback from the
+AROS-NG path when the native executable is missing.
+
+`aros-fetch` preserves the source-authored mirror, suffix, destination, patch
+and optional SHA-256 declarations without generating or inferring package
+pins. Strict checksum mode fails closed when any archive candidate lacks an
+explicit digest. Offline mode permits verified cache entries and local origins
+but rejects network access. HTTP(S) acquisition has bounded redirects,
+timeouts, retries and payload size; FTP is delegated directly to `curl`
+without a shell. Cache publication uses OS locks, temporary files and atomic
+rename, while extraction stages archives before publication and rejects path
+traversal, escaping links and ZIP symlinks. Patch execution accepts only the
+reviewed option subset and never uses `eval` or a shell command string.
+
+Failures use the shared `aros-tool-diagnostics-v1` envelope with stable
+`AFxxxx` codes for invocation, contract, cache, network, integrity,
+extraction, patch and publication stages. Optional logs use the deterministic
+`aros-fetch-log-v1` schema and omit timestamps, host data, environment values
+and raw invocations. The implementation, CMake migration and four-host CI
+qualification are grouped in commits `e37ae6f3c6`, `ff9b630cbf` and
+`4c1d1aa4de`.
+
+The complete Rust workspace, strict Clippy, architecture/dependency gates,
+native release build, CMake fetch/integrity/patch/reconfigure fixtures and the
+toolchain producer tests pass locally. The four-host GitHub matrix still has
+to run on Linux x86-64/AArch64 and macOS x86-64/AArch64 before this boundary
+is release-qualified. Repository execution from the case-sensitive internal
+NVMe volume showed an undiagnosed macOS loader stall for newly built test
+binaries in `_dyld_start`; the same tests ran immediately from a native
+`/private/tmp` target, and release binaries executed from the repository. This
+is not evidence of slow storage and must not be described as such.
+
 ## Update 28 August 2026 — explicit port integrity and true offline builds
 
 Third-party source acquisition now has one additive contract shared by
