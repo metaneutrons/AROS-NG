@@ -14,6 +14,46 @@ project(AROS-NG
     LANGUAGES C CXX ASM
 )
 
+# libc++ deliberately ships C-compatible wrapper headers such as math.h.
+# They must precede the target SDK's C headers for C++ compilations so the
+# wrapper can add the standard overloads and then reach AROS via include_next.
+# C compilations continue to see the SDK directly.
+if(AROS_CROSS_TOOLCHAIN_ROOT)
+    # CMake otherwise suppresses this explicit directory because Clang also
+    # reports it as implicit. The implicit search class comes after every -I
+    # SDK directory, which is precisely the ordering we must override.
+    list(REMOVE_ITEM CMAKE_CXX_IMPLICIT_INCLUDE_DIRECTORIES
+        "${AROS_CROSS_TOOLCHAIN_ROOT}/include/c++/v1")
+    include_directories(BEFORE
+        "$<$<COMPILE_LANGUAGE:CXX>:${AROS_CROSS_TOOLCHAIN_ROOT}/include/c++/v1>")
+    add_compile_options("$<$<COMPILE_LANGUAGE:CXX>:-nostdinc++>")
+
+    # Target builders legitimately prepend their own SDK namespaces after the
+    # directory default above. Finalise every compiling target only after the
+    # complete generated graph has been declared, otherwise those later
+    # BEFORE additions can place AROS' C math.h ahead of libc++'s wrapper.
+    function(_aros_finalize_cxx_wrapper_order)
+        get_property(_targets DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
+        set(_wrapper
+            "$<$<COMPILE_LANGUAGE:CXX>:${AROS_CROSS_TOOLCHAIN_ROOT}/include/c++/v1>")
+        foreach(_target IN LISTS _targets)
+            get_target_property(_type "${_target}" TYPE)
+            if(NOT _type MATCHES
+               "^(EXECUTABLE|STATIC_LIBRARY|SHARED_LIBRARY|MODULE_LIBRARY|OBJECT_LIBRARY)$")
+                continue()
+            endif()
+            get_target_property(_includes "${_target}" INCLUDE_DIRECTORIES)
+            if(NOT _includes OR _includes STREQUAL "_includes-NOTFOUND")
+                set(_includes "")
+            endif()
+            list(REMOVE_ITEM _includes "${_wrapper}")
+            set_property(TARGET "${_target}" PROPERTY INCLUDE_DIRECTORIES
+                "${_wrapper}" ${_includes})
+        endforeach()
+    endfunction()
+    cmake_language(DEFER CALL _aros_finalize_cxx_wrapper_order)
+endif()
+
 # The build graph is generated and its SDK is bootstrapped by two Rust host
 # tools.  Keep their location configurable for aros-cli managed releases, but
 # never silently continue with an incomplete graph when either is absent.
@@ -115,6 +155,7 @@ include("${CMAKE_SOURCE_DIR}/cmake/AROS.cmake")
 # 3. Tools that run on the build machine, and the header rules using them.
 include("${CMAKE_SOURCE_DIR}/cmake/HostTools.cmake")
 include("${CMAKE_SOURCE_DIR}/cmake/FlexCatSources.cmake")
+include("${CMAKE_SOURCE_DIR}/cmake/IlbmSources.cmake")
 
 # AHI is admitted only for the three audited LLVM target profiles.  Its
 # configure-style build needs the historical Perl SFD compiler, which is
@@ -196,9 +237,11 @@ if(NOT TRANSPILER_RES EQUAL 0 OR NOT EXISTS "${GENERATED_TARGETS_CMAKE}")
 endif()
 
 # A Make wildcard below PORTSDIR cannot be turned into compilation units until
-# its archive has been unpacked. The first cold transpiler pass writes the exact
-# owning fetch declarations to a sidecar. Materialise only those inventories,
-# then replace the partial graph with a second pass before it is ever included.
+# its archive has been unpacked. The same applies to exact transitive header
+# ownership when the public and private headers both live in fetched trees. The
+# first cold transpiler pass writes only the relevant owning fetch declarations
+# to a sidecar. Materialise those inventories, then replace the partial graph
+# with a second pass before it is ever included.
 set(_aros_source_inventory_manifest
     "${CMAKE_BINARY_DIR}/generated_targets.source-inventory.cmake")
 include("${_aros_source_inventory_manifest}")
@@ -278,6 +321,11 @@ include("${CMAKE_SOURCE_DIR}/cmake/KickstartObjects.cmake")
 include("${CMAKE_SOURCE_DIR}/cmake/StandaloneLink.cmake")
 include("${CMAKE_SOURCE_DIR}/cmake/HostGeneratedHeaders.cmake")
 include("${GENERATED_TARGETS_CMAKE}")
+
+# Compiler depfiles cannot express the producer of a header which was absent
+# when compilation started. Once the complete generated graph exists, attach
+# ordinary source consumers to the %copy_includes owners they reference.
+_aros_attach_source_header_dependencies()
 
 # The target compiler's spec appends a default set of archives to every link,
 # and our rule invokes ld.lld directly, so nothing else would. This runs here
@@ -380,6 +428,7 @@ if(TARGET "freetype2-fetch" OR TARGET "workbench-libs-freetype-genincludes")
         NAME workbench-libs-freetype-genincludes-ftoption
         FETCH_TARGET freetype2-fetch
         OWNER workbench-libs-freetype-genincludes
+        CONSUMERS workbench-libs-freetype-module-linklib
         INPUT "${AROS_PORTS_DIR}/freetype2/freetype-2.14.3/include/freetype/config/ftoption.h"
         OUTPUT "${AROS_SDK_INCLUDE_DIR}/freetype/config/ftoption.h")
 endif()
@@ -704,5 +753,29 @@ include("${CMAKE_SOURCE_DIR}/cmake/RaspberryPi.cmake")
 # libdefs header. This is a build target rather than a configure-time glob: in
 # an incremental tree the old reference files may exist but be stale.
 aros_add_libdefs_audit_target()
+
+# Match MetaMake's configured default invocation. Every translated declaration
+# remains nameable, while the implicit CMake `all` target contains only the
+# exact dependency closure rooted at AROS.
+aros_limit_all_to_metamake_root(AROS)
+
+get_property(_outside_default_root GLOBAL PROPERTY
+    AROS_OUTSIDE_DEFAULT_ROOT_TARGETS)
+if(_outside_default_root)
+    list(LENGTH _outside_default_root _outside_default_root_count)
+    set(_outside_default_root_report
+        "${CMAKE_BINARY_DIR}/generated_targets.outside-default-root.txt")
+    string(REPLACE ";" "\n" _outside_default_root_body
+        "${_outside_default_root}")
+    file(WRITE "${_outside_default_root_report}"
+        "${_outside_default_root_body}\n")
+    message(STATUS
+        "🚧 AROS-NG: ${_outside_default_root_count} explicit/manual target(s) "
+        "kept out of MetaMake's default AROS closure -> "
+        "${_outside_default_root_report}")
+else()
+    file(REMOVE
+        "${CMAKE_BINARY_DIR}/generated_targets.outside-default-root.txt")
+endif()
 
 message(STATUS "✅ AROS-NG (v0.1.0) Configuration Complete.")

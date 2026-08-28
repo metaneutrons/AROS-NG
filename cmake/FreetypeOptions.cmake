@@ -2,10 +2,14 @@
 # archive's default `ftoption.h`: it rewrites five option-bearing source lines
 # into the AROS SDK configuration first.  Keep that as a real, fetch-dependent
 # output instead of exposing the port source directory as an include path.
+# CONSUMERS names targets whose compilation may include the staged header; the
+# explicit ordering is required because an include path alone is not a build
+# dependency in CMake.
 
 function(aros_stage_freetype_options)
     set(oneValueArgs NAME FETCH_TARGET OWNER INPUT OUTPUT)
-    cmake_parse_arguments(FTO "" "${oneValueArgs}" "" ${ARGN})
+    set(multiValueArgs CONSUMERS)
+    cmake_parse_arguments(FTO "" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
 
     if(FTO_UNPARSED_ARGUMENTS OR FTO_KEYWORDS_MISSING_VALUES OR
        NOT FTO_NAME OR NOT FTO_FETCH_TARGET OR NOT FTO_OWNER OR
@@ -60,4 +64,11 @@ function(aros_stage_freetype_options)
         VERBATIM)
     add_custom_target("${FTO_NAME}" DEPENDS "${_output}")
     add_dependencies("${FTO_OWNER}" "${FTO_NAME}")
+    foreach(_consumer IN LISTS FTO_CONSUMERS)
+        if(NOT TARGET "${_consumer}")
+            message(FATAL_ERROR
+                "${FTO_NAME}: FreeType option consumer does not exist: ${_consumer}")
+        endif()
+        add_dependencies("${_consumer}" "${FTO_NAME}")
+    endforeach()
 endfunction()

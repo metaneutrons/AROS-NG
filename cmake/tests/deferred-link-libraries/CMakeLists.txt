@@ -38,6 +38,7 @@ set_property(TARGET provider PROPERTY
 
 aros_finalize_link_libraries()
 
+
 get_target_property(_consumer_links consumer LINK_LIBRARIES)
 set(_expected_links "--start-group;provider;--end-group")
 if(NOT _consumer_links STREQUAL _expected_links)

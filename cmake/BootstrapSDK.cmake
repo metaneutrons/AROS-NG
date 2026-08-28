@@ -48,8 +48,9 @@ function(aros_generate_asm_header sdk_inc geninc)
         OUTPUT_QUIET
     )
     if(NOT _res EQUAL 0 OR NOT EXISTS "${_asm}")
-        message(STATUS "⚠️  AROS-NG: could not generate aros/${AROS_TARGET_CPU}/asm.h")
-        return()
+        message(FATAL_ERROR
+            "AROS-NG could not generate required aros/${AROS_TARGET_CPU}/asm.h "
+            "with ${CMAKE_C_COMPILER} (exit ${_res}).\n${_err}")
     endif()
 
     file(STRINGS "${_asm}" _lines REGEX "\\.(ascii|asciz)")
@@ -65,8 +66,9 @@ function(aros_generate_asm_header sdk_inc geninc)
     endforeach()
 
     if(_out STREQUAL "")
-        message(STATUS "⚠️  AROS-NG: aros/${AROS_TARGET_CPU}/asm.h would be empty")
-        return()
+        message(FATAL_ERROR
+            "AROS-NG generated no definitions for required "
+            "aros/${AROS_TARGET_CPU}/asm.h from ${_asm}")
     endif()
 
     foreach(root "${sdk_inc}" "${geninc}")
@@ -209,7 +211,12 @@ function(aros_bootstrap_sdk_includes)
     # this file, and a missing macro is silently zero in `#if`. See OPEN-POINTS
     # point 35 for the list and what each one would change.
     set(CONFIG_H "${SDK_INC}/aros/config.h")
-    file(GENERATE OUTPUT "${CONFIG_H}" CONTENT
+    # This header is consumed below, during the same configure pass, by
+    # aros_generate_asm_header().  file(GENERATE) defers the write until the
+    # generation phase and therefore makes a pristine build depend on a stale
+    # config.h from an earlier configure.  The contents contain no generator
+    # expressions, so publish them immediately and deterministically.
+    file(WRITE "${CONFIG_H}"
 "/* AROS-NG v0.1.0: Auto-generated aros/config.h */
 #ifndef AROS_CONFIG_H
 #define AROS_CONFIG_H

@@ -111,6 +111,7 @@ function(aros_finalize_standalone_links)
             list(APPEND _gaps "${_name}: object library ${_OBJECTS} is missing")
             continue()
         endif()
+        get_target_property(_foreign_arch "${_OBJECTS}" AROS_FOREIGN_ARCH)
 
         # A standalone link is the only thing in the tree compiling for a
         # second architecture, so it is the only consumer of a host-tool
@@ -175,16 +176,18 @@ function(aros_finalize_standalone_links)
         add_custom_command(
             OUTPUT "${_OUTPUT}"
             COMMAND "${CMAKE_COMMAND}" -E make_directory ${_needed_dirs}
-            # --ld-path is a host-specific addition, not in the reference
-            # recipe. Driving clang for an i386-linux triple on a macOS host
-            # otherwise picks the host linker, which rejects every GNU option
-            # the declaration passes:
+            # Selecting the prefix-owned linker is a host-specific addition,
+            # not in the reference recipe. Driving clang for an i386-linux
+            # triple on a macOS host otherwise picks the host linker, which
+            # rejects every GNU option the declaration passes:
             #
             #   ld: unknown options: --hash-style=gnu --eh-frame-hdr
             #   -dynamic-linker -N -Map -T
             #
-            # Naming the prefix-owned ld.lld explicitly is the same choice the
-            # module rule makes (cmake/AROS.cmake:236).
+            # Clang 11 predates --ld-path, but accepts an absolute linker via
+            # -fuse-ld=<path>. Naming the prefix-owned ld.lld explicitly is the
+            # same deterministic choice the module rule makes
+            # (cmake/AROS.cmake:236); it does not depend on PATH.
             # -no-pie is the third host-toolchain addition. clang defaults to
             # PIE for a linux triple, and a position-independent image cannot
             # be what a linker script places at a fixed address:
@@ -193,7 +196,7 @@ function(aros_finalize_standalone_links)
             #   symbol 'scr_Width'; recompile with -fPIC
             #
             # The reference never states it because its driver defaults differ.
-            COMMAND "${CMAKE_C_COMPILER}" "--ld-path=${AROS_LLD_BIN}" -no-pie
+            COMMAND "${CMAKE_C_COMPILER}" "-fuse-ld=${AROS_LLD_BIN}" -no-pie
                 ${_ISA_LINK_OPTIONS}
                 "$<TARGET_OBJECTS:${_OBJECTS}>" ${_external}
                 ${_DRIVER_LINK_OPTIONS} ${_LINK_OPTIONS} ${_lib_args}
@@ -203,9 +206,20 @@ function(aros_finalize_standalone_links)
             COMMAND_EXPAND_LISTS
             VERBATIM)
         if(NOT TARGET "${_name}")
-            add_custom_target("${_name}" ALL DEPENDS "${_OUTPUT}")
+            if(_foreign_arch)
+                add_custom_target("${_name}" DEPENDS "${_OUTPUT}")
+                set_property(TARGET "${_name}" PROPERTY AROS_FOREIGN_ARCH TRUE)
+            else()
+                add_custom_target("${_name}" ALL DEPENDS "${_OUTPUT}")
+            endif()
         else()
-            add_custom_target("${_name}-standalone" ALL DEPENDS "${_OUTPUT}")
+            if(_foreign_arch)
+                add_custom_target("${_name}-standalone" DEPENDS "${_OUTPUT}")
+                set_property(TARGET "${_name}-standalone" PROPERTY
+                    AROS_FOREIGN_ARCH TRUE)
+            else()
+                add_custom_target("${_name}-standalone" ALL DEPENDS "${_OUTPUT}")
+            endif()
         endif()
     endforeach()
 

@@ -9,6 +9,7 @@ include("${CMAKE_CURRENT_LIST_DIR}/PythonGenerators.cmake")
 include("${CMAKE_CURRENT_LIST_DIR}/TransitiveHeaderBindings.cmake")
 include("${CMAKE_CURRENT_LIST_DIR}/SourceInventory.cmake")
 include("${CMAKE_CURRENT_LIST_DIR}/LibdefsAudit.cmake")
+include("${CMAKE_CURRENT_LIST_DIR}/DefaultBuildClosure.cmake")
 # aros_add_program calls aros_standalone_link_wanted, so the module that
 # defines it belongs here rather than only in the top-level CMakeLists: a
 # fixture that includes AROS.cmake on its own got "Unknown CMake command"
@@ -1038,23 +1039,17 @@ endfunction()
 # cannot discover a missing fetched header until after compilation has already
 # started.  Binding the transitive include chain to its `%copy_includes` owners
 # closes that cache-empty ordering gap generically.
-function(_aros_add_genmodule_config_header_dependencies target config)
-    if(NOT TARGET "${target}" OR NOT EXISTS "${config}")
+function(_aros_attach_bound_header_dependencies target owners deferred_hashes)
+    if(NOT TARGET "${target}")
         return()
     endif()
-    # The transitive header-owner edges are derived from the declaration text
-    # during configuration, so they must be recalculated after it changes.
-    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
-        "${config}")
-    _aros_collect_transitive_header_bindings(
-        _owners _deferred_hashes "${config}")
 
     # One public header may include siblings from another declaration sharing
     # the same mmake target (GL/gl.h pulls GL/glext.h and KHR/khrplatform.h).
     # Once any deferred binding reaches an owner, materialise its complete
     # declared header set rather than parsing files which do not exist yet.
     get_property(_all_deferred GLOBAL PROPERTY AROS_DEFERRED_HEADER_HASHES)
-    foreach(_deferred_hash IN LISTS _deferred_hashes)
+    foreach(_deferred_hash IN LISTS deferred_hashes)
         get_property(_deferred_owner GLOBAL PROPERTY
             "AROS_DEFERRED_HEADER_${_deferred_hash}_TARGET")
         foreach(_candidate IN LISTS _all_deferred)
@@ -1065,10 +1060,67 @@ function(_aros_add_genmodule_config_header_dependencies target config)
             endif()
         endforeach()
     endforeach()
-    foreach(_owner IN LISTS _owners)
+    foreach(_owner IN LISTS owners)
         if(TARGET "${_owner}" AND NOT "${_owner}" STREQUAL "${target}")
             add_dependencies("${target}" "${_owner}")
         endif()
+    endforeach()
+endfunction()
+
+function(_aros_add_genmodule_config_header_dependencies target config)
+    if(NOT TARGET "${target}" OR NOT EXISTS "${config}")
+        return()
+    endif()
+    # The transitive header-owner edges are derived from the declaration text
+    # during configuration, so they must be recalculated after it changes.
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+        "${config}")
+    _aros_collect_transitive_header_bindings(
+        _owners _deferred_hashes "${config}")
+    _aros_attach_bound_header_dependencies(
+        "${target}" "${_owners}" "${_deferred_hashes}")
+endfunction()
+
+# Bind ordinary compiled sources to the %copy_includes declarations whose
+# public headers they consume. Compiler depfiles cannot order a missing header:
+# they are written only after compilation succeeds. This configure-time pass
+# closes that cold-build gap for every compiled target, including fetched Port
+# sources reached through aros_resolve_sources() wrappers.
+function(_aros_attach_source_header_dependencies)
+    _aros_prepare_staged_header_binding_index()
+    get_property(_targets DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
+    foreach(_target IN LISTS _targets)
+        get_target_property(_type "${_target}" TYPE)
+        if(NOT _type MATCHES
+           "^(EXECUTABLE|STATIC_LIBRARY|SHARED_LIBRARY|MODULE_LIBRARY|OBJECT_LIBRARY)$")
+            continue()
+        endif()
+        get_target_property(_sources "${_target}" SOURCES)
+        get_target_property(_source_dir "${_target}" SOURCE_DIR)
+        set(_scan_sources "")
+        foreach(_source IN LISTS _sources)
+            if(_source MATCHES "^\\$<")
+                continue()
+            endif()
+            if(IS_ABSOLUTE "${_source}")
+                set(_source_path "${_source}")
+            else()
+                set(_source_path "${_source_dir}/${_source}")
+            endif()
+            cmake_path(NORMAL_PATH _source_path)
+            if(EXISTS "${_source_path}" AND NOT IS_DIRECTORY "${_source_path}")
+                list(APPEND _scan_sources "${_source_path}")
+                set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+                    "${_source_path}")
+            endif()
+        endforeach()
+        if(NOT _scan_sources)
+            continue()
+        endif()
+        _aros_collect_transitive_header_bindings(
+            _owners _deferred_hashes ${_scan_sources})
+        _aros_attach_bound_header_dependencies(
+            "${_target}" "${_owners}" "${_deferred_hashes}")
     endforeach()
 endfunction()
 
@@ -1142,7 +1194,6 @@ set(AROS_ADHOC_HEADERS_HANDLED
     # Counterpart in cmake/PngLibconf.cmake, installed after libpng fetch.
     "pnglibconf.h"
     # Counterparts in cmake/GeneratedHeaders.cmake.
-    "$(CURDIR)/dos/errorlist.h"
     "$(CURDIR)/dosboot/nomedia_image.h"
     "$(CURDIR)/bootpic_image.h"
     # libraries/mui.h is generated there by buildincludes; these are the three
@@ -1171,9 +1222,6 @@ set(AROS_ADHOC_HEADERS_OUT_OF_SCOPE
     "libraries"
     # A pattern rule whose destination is a directory category, not a file.
     "hidd/%.h"
-    # Datatypes are not part of a bootable kickstart, and this WebP config
-    # header remains outside the currently modelled port capability.
-    "$(CURDIR)/src/webp/config.h"
     # isapnp is x86 legacy and in no package.
     "$(CURDIR)/version.h"
     # libtiff's config header, substituted from a template in the port.
@@ -1209,6 +1257,33 @@ function(aros_adhoc_header_rule)
     set(oneValueArgs FILE LINE ROOT DEST PREREQS)
     cmake_parse_arguments(AR "" "${oneValueArgs}" "" ${ARGN})
     if(NOT AR_DEST)
+        return()
+    endif()
+
+    # Exact Python/Bison capabilities are declared before the residual header
+    # audit. If one already owns this build-tree output, the dependency-only
+    # or target-specific-variable line is not an unhandled staging rule.
+    separate_arguments(_adhoc_destinations UNIX_COMMAND "${AR_DEST}")
+    set(_adhoc_all_owned TRUE)
+    foreach(_adhoc_destination IN LISTS _adhoc_destinations)
+        if(IS_ABSOLUTE "${_adhoc_destination}")
+            set(_adhoc_output "${_adhoc_destination}")
+        else()
+            set(_adhoc_output "${AR_ROOT}${_adhoc_destination}")
+        endif()
+        if(NOT _adhoc_output MATCHES "^${CMAKE_BINARY_DIR}/")
+            set(_adhoc_all_owned FALSE)
+            break()
+        endif()
+        string(SHA256 _adhoc_output_key "${_adhoc_output}")
+        get_property(_adhoc_python_owner GLOBAL PROPERTY
+            "AROS_PYTHON_OUTPUT_OWNER_${_adhoc_output_key}")
+        if(NOT _adhoc_python_owner)
+            set(_adhoc_all_owned FALSE)
+            break()
+        endif()
+    endforeach()
+    if(_adhoc_destinations AND _adhoc_all_owned)
         return()
     endif()
 
@@ -1325,6 +1400,7 @@ function(aros_gate_arch target directory)
         return()
     endif()
     set_target_properties(${target} PROPERTIES EXCLUDE_FROM_ALL TRUE)
+    set_property(TARGET ${target} PROPERTY AROS_FOREIGN_ARCH TRUE)
     get_property(_n GLOBAL PROPERTY AROS_FOREIGN_ARCH_TARGETS)
     list(APPEND _n "${target} (arch/${_arch_dir})")
     set_property(GLOBAL PROPERTY AROS_FOREIGN_ARCH_TARGETS "${_n}")
@@ -1697,15 +1773,49 @@ function(aros_add_target_dependency target_name dependency)
     if(NOT TARGET "${target_name}" OR NOT TARGET "${dependency}")
         return()
     endif()
-    add_dependencies("${target_name}" "${dependency}")
-
-    get_target_property(_members "${target_name}" AROS_PROGRAM_GROUP_MEMBERS)
-    if(NOT _members OR _members STREQUAL "_members-NOTFOUND")
+    get_target_property(_target_is_foreign "${target_name}" AROS_FOREIGN_ARCH)
+    get_target_property(_dependency_is_foreign "${dependency}" AROS_FOREIGN_ARCH)
+    if(_dependency_is_foreign AND NOT _target_is_foreign)
+        # EXCLUDE_FROM_ALL alone is not transitive: a common meta target can
+        # otherwise pull an ARM-only producer back into an x86 build. Make's
+        # architecture-selected directory graph has no such edge.
         return()
     endif()
-    foreach(_member IN LISTS _members)
-        if(TARGET "${_member}")
-            add_dependencies("${_member}" "${dependency}")
+    add_dependencies("${target_name}" "${dependency}")
+
+    # Output-producing #MM prerequisites may publish a private generated
+    # include directory. Apply it only to compilable consumers, preserving
+    # quoted-include semantics and avoiding directory-wide global includes.
+    get_property(_generated_include TARGET "${dependency}"
+        PROPERTY AROS_GENERATED_INCLUDE_DIRECTORY)
+    set(_include_consumers "${target_name}")
+
+    get_target_property(_members "${target_name}" AROS_PROGRAM_GROUP_MEMBERS)
+    if(_members AND NOT _members STREQUAL "_members-NOTFOUND")
+        list(APPEND _include_consumers ${_members})
+    endif()
+    list(REMOVE_DUPLICATES _include_consumers)
+    foreach(_consumer IN LISTS _include_consumers)
+        if(NOT TARGET "${_consumer}")
+            continue()
+        endif()
+        if(NOT "${_consumer}" STREQUAL "${target_name}")
+            add_dependencies("${_consumer}" "${dependency}")
+        endif()
+        if(_generated_include)
+            get_target_property(_consumer_type "${_consumer}" TYPE)
+            if(_consumer_type MATCHES
+                    "^(EXECUTABLE|STATIC_LIBRARY|SHARED_LIBRARY|MODULE_LIBRARY|OBJECT_LIBRARY)$")
+                get_target_property(_attached "${_consumer}"
+                    AROS_GENERATED_DEPENDENCY_INCLUDE_DIRS)
+                if(NOT "${_generated_include}" IN_LIST _attached)
+                    target_compile_options("${_consumer}" BEFORE PRIVATE
+                        "-iquote${_generated_include}")
+                    set_property(TARGET "${_consumer}" APPEND PROPERTY
+                        AROS_GENERATED_DEPENDENCY_INCLUDE_DIRS
+                        "${_generated_include}")
+                endif()
+            endif()
         endif()
     endforeach()
 endfunction()
@@ -2568,6 +2678,11 @@ function(aros_build_external_cmake)
     get_directory_property(_parent_includes INCLUDE_DIRECTORIES)
     set(_target_flags "")
     foreach(_option IN LISTS _parent_options)
+        if(_option STREQUAL "$<$<COMPILE_LANGUAGE:CXX>:-nostdinc++>")
+            # Reapplied to the nested C++ flags below together with the
+            # explicit libc++ include root.
+            continue()
+        endif()
         if(_option MATCHES "[;\r\n]" OR _option MATCHES "^\\$<")
             message(FATAL_ERROR
                 "${EC_MMAKE_ID}: unsupported parent compile option '${_option}'")
@@ -2587,6 +2702,12 @@ function(aros_build_external_cmake)
     list(APPEND _external_includes ${_parent_includes})
     list(REMOVE_DUPLICATES _external_includes)
     foreach(_include IN LISTS _external_includes)
+        if(_include STREQUAL
+           "$<$<COMPILE_LANGUAGE:CXX>:${AROS_CROSS_TOOLCHAIN_ROOT}/include/c++/v1>")
+            # The nested build receives this language-specific root below.
+            # It cannot be copied into the common C/CXX/ASM flag list.
+            continue()
+        endif()
         if(_include MATCHES "[;\r\n]" OR _include MATCHES "^\\$<")
             message(FATAL_ERROR
                 "${EC_MMAKE_ID}: unsupported parent include '${_include}'")
@@ -2607,6 +2728,12 @@ function(aros_build_external_cmake)
             "${_parent_language_flags} ${_target_flags_string}"
             _${_language}_flags)
     endforeach()
+    if(AROS_CROSS_TOOLCHAIN_ROOT)
+        # libc++'s C-compatible wrappers must be searched before the AROS SDK
+        # in nested C++ builds for the same reason as in the parent graph.
+        string(PREPEND _CXX_flags
+            "-nostdinc++ -I\"${AROS_CROSS_TOOLCHAIN_ROOT}/include/c++/v1\" ")
+    endif()
 
     cmake_path(GET CMAKE_CURRENT_FUNCTION_LIST_DIR PARENT_PATH
         _aros_source_root)
@@ -2802,8 +2929,70 @@ function(aros_generate_defines_header)
     endforeach()
 endfunction()
 
+function(aros_generate_bison_output)
+    set(oneValueArgs OWNER INPUT OUTPUT)
+    cmake_parse_arguments(BO "" "${oneValueArgs}" "" ${ARGN})
+    if(NOT BO_OWNER OR NOT BO_INPUT OR NOT BO_OUTPUT)
+        message(FATAL_ERROR
+            "aros_generate_bison_output requires OWNER, INPUT and OUTPUT")
+    endif()
+    if(NOT TARGET "${BO_OWNER}")
+        message(FATAL_ERROR
+            "${BO_OWNER}: Bison output consumer target does not exist")
+    endif()
+    cmake_path(ABSOLUTE_PATH BO_INPUT NORMALIZE OUTPUT_VARIABLE _input)
+    cmake_path(ABSOLUTE_PATH BO_OUTPUT NORMALIZE OUTPUT_VARIABLE _output)
+    cmake_path(ABSOLUTE_PATH CMAKE_SOURCE_DIR NORMALIZE OUTPUT_VARIABLE _source_root)
+    cmake_path(ABSOLUTE_PATH CMAKE_BINARY_DIR NORMALIZE OUTPUT_VARIABLE _build_root)
+    cmake_path(IS_PREFIX _source_root "${_input}" NORMALIZE _input_allowed)
+    cmake_path(IS_PREFIX _build_root "${_output}" NORMALIZE _output_allowed)
+    if(NOT _input_allowed OR NOT _output_allowed OR
+       NOT _input MATCHES "\\.y$" OR NOT _output MATCHES "\\.c$")
+        message(FATAL_ERROR
+            "${BO_OWNER}: unsafe Bison input/output contract: ${_input} -> ${_output}")
+    endif()
+
+    find_program(_aros_bison NAMES bison
+        PATHS /opt/homebrew/opt/bison/bin /usr/local/opt/bison/bin
+        NO_DEFAULT_PATH)
+    if(NOT _aros_bison)
+        find_program(_aros_bison NAMES bison)
+    endif()
+    if(NOT _aros_bison)
+        message(FATAL_ERROR
+            "${BO_OWNER}: the exact MetaMake recipe requires a host Bison executable")
+    endif()
+    execute_process(
+        COMMAND "${_aros_bison}" --version
+        RESULT_VARIABLE _bison_result
+        OUTPUT_VARIABLE _bison_version
+        ERROR_VARIABLE _bison_error
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        TIMEOUT 10)
+    if(NOT _bison_result EQUAL 0)
+        message(FATAL_ERROR
+            "${BO_OWNER}: host Bison is not executable: ${_bison_error}")
+    endif()
+
+    get_filename_component(_output_dir "${_output}" DIRECTORY)
+    string(SHA256 _output_key "${_output}")
+    string(SUBSTRING "${_output_key}" 0 16 _output_suffix)
+    set(_product_owner "${BO_OWNER}--bison-${_output_suffix}")
+    add_custom_command(
+        OUTPUT "${_output}"
+        COMMAND "${CMAKE_COMMAND}" -E make_directory "${_output_dir}"
+        COMMAND "${_aros_bison}" -o "${_output}" "${_input}"
+        DEPENDS "${_input}"
+        COMMENT "Generating ${_output} with ${_bison_version}"
+        VERBATIM)
+    add_custom_target("${_product_owner}" DEPENDS "${_output}")
+    add_dependencies("${BO_OWNER}" "${_product_owner}")
+    target_include_directories("${BO_OWNER}" BEFORE PRIVATE "${_output_dir}")
+endfunction()
+
 # aros_transform_header(NAME <mmake> INPUT <file> OUTPUT <file>
-#                       MATCH <literal> REPLACEMENT <literal>
+#                       [COPY_ONLY | MATCH <literal> REPLACEMENT <literal> |
+#                        SUBSTITUTIONS <token replacement...>]
 #                       [DEPENDS <fetch-targets...>]
 #                       [CONSUMERS <compile-targets...>])
 #
@@ -2812,16 +3001,25 @@ endfunction()
 # output is a normal Ninja product, never a configure-time placeholder.
 function(aros_transform_header)
     set(oneValueArgs NAME INPUT OUTPUT MATCH REPLACEMENT)
-    set(multiValueArgs DEPENDS CONSUMERS)
-    cmake_parse_arguments(TH "" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
+    set(multiValueArgs DEPENDS CONSUMERS SUBSTITUTIONS)
+    cmake_parse_arguments(TH "COPY_ONLY" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
 
-    if(NOT TH_NAME OR NOT TH_INPUT OR NOT TH_OUTPUT OR NOT TH_MATCH)
+    if(NOT TH_NAME OR NOT TH_INPUT OR NOT TH_OUTPUT OR
+       (NOT TH_COPY_ONLY AND NOT TH_MATCH AND NOT TH_SUBSTITUTIONS))
         message(FATAL_ERROR
-            "aros_transform_header requires NAME, INPUT, OUTPUT and MATCH")
+            "aros_transform_header requires NAME, INPUT, OUTPUT and a safe operation")
     endif()
-    if(TARGET "${TH_NAME}")
+    string(SHA256 _owner_key "${TH_NAME}")
+    get_property(_aggregate_owner GLOBAL PROPERTY
+        "AROS_TRANSFORM_HEADER_AGGREGATE_${_owner_key}")
+    if(TARGET "${TH_NAME}" AND
+       NOT "${_aggregate_owner}" STREQUAL "${TH_NAME}")
         message(FATAL_ERROR
             "aros_transform_header owner '${TH_NAME}' was already declared")
+    elseif(NOT TARGET "${TH_NAME}")
+        add_custom_target("${TH_NAME}")
+        set_property(GLOBAL PROPERTY
+            "AROS_TRANSFORM_HEADER_AGGREGATE_${_owner_key}" "${TH_NAME}")
     endif()
 
     cmake_path(ABSOLUTE_PATH TH_INPUT NORMALIZE OUTPUT_VARIABLE _input)
@@ -2865,35 +3063,99 @@ function(aros_transform_header)
     set_property(GLOBAL PROPERTY
         "AROS_TRANSFORM_HEADER_OWNER_${_output_key}" "${TH_NAME}")
 
-    set(_dep_files "${CMAKE_SOURCE_DIR}/cmake/TransformHeader.cmake")
+    set(_dep_files "")
+    if(TH_SUBSTITUTIONS)
+        list(APPEND _dep_files "${CMAKE_SOURCE_DIR}/cmake/SubstituteHeader.cmake")
+    elseif(NOT TH_COPY_ONLY)
+        list(APPEND _dep_files "${CMAKE_SOURCE_DIR}/cmake/TransformHeader.cmake")
+    endif()
+    set(_input_fetch_owner "")
     foreach(_dependency IN LISTS TH_DEPENDS)
         if(NOT TARGET "${_dependency}")
             message(FATAL_ERROR
                 "${TH_NAME}: missing transform dependency ${_dependency}")
         endif()
+        get_property(_fetch_destination TARGET "${_dependency}"
+            PROPERTY AROS_FETCH_DESTINATION)
         get_property(_fetch_stamp TARGET "${_dependency}"
             PROPERTY AROS_FETCH_COMPLETION_STAMP)
         if(_fetch_stamp)
             list(APPEND _dep_files "${_fetch_stamp}")
+            if(_fetch_destination)
+                cmake_path(ABSOLUTE_PATH _fetch_destination NORMALIZE
+                    OUTPUT_VARIABLE _fetch_destination)
+                cmake_path(IS_PREFIX _fetch_destination "${_input}" NORMALIZE
+                    _input_below_fetch)
+                if(_input_below_fetch)
+                    set(_input_fetch_owner "${_dependency}")
+                endif()
+            endif()
         else()
             list(APPEND _dep_files "${_dependency}")
         endif()
     endforeach()
+    if(_input_fetch_owner)
+        # A source below a fetch destination does not exist in a clean build
+        # tree. Naming it as a Ninja file prerequisite would fail graph
+        # validation before the fetch stamp gets a chance to materialise it.
+        # The content-locked completion stamp is the dependency contract.
+    elseif(EXISTS "${_input}")
+        list(APPEND _dep_files "${_input}")
+    else()
+        message(FATAL_ERROR
+            "${TH_NAME}: transform input ${_input} does not exist and is not "
+            "owned by a declared fetch dependency")
+    endif()
 
     get_filename_component(_output_dir "${_output}" DIRECTORY)
-    add_custom_command(
-        OUTPUT "${_output}"
-        COMMAND "${CMAKE_COMMAND}" -E make_directory "${_output_dir}"
-        COMMAND "${CMAKE_COMMAND}"
-            "-DINPUT=${_input}"
-            "-DOUTPUT=${_output}"
-            "-DMATCH_TEXT=${TH_MATCH}"
-            "-DREPLACEMENT=${TH_REPLACEMENT}"
-            -P "${CMAKE_SOURCE_DIR}/cmake/TransformHeader.cmake"
-        DEPENDS ${_dep_files}
-        COMMENT "Generating transformed header ${_output}"
-        VERBATIM)
-    add_custom_target("${TH_NAME}" DEPENDS "${_output}")
+    if(TH_COPY_ONLY)
+        add_custom_command(
+            OUTPUT "${_output}"
+            COMMAND "${CMAKE_COMMAND}" -E make_directory "${_output_dir}"
+            COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${_input}" "${_output}"
+            DEPENDS ${_dep_files}
+            COMMENT "Copying generated header ${_output}"
+            VERBATIM)
+    elseif(TH_SUBSTITUTIONS)
+        list(LENGTH TH_SUBSTITUTIONS _substitution_count)
+        math(EXPR _substitution_remainder "${_substitution_count} % 2")
+        if(_substitution_remainder OR _substitution_count LESS 2)
+            message(FATAL_ERROR
+                "${TH_NAME}: template substitutions must be token/replacement pairs")
+        endif()
+        add_custom_command(
+            OUTPUT "${_output}"
+            COMMAND "${CMAKE_COMMAND}" -E make_directory "${_output_dir}"
+            COMMAND "${CMAKE_COMMAND}"
+                "-DINPUT=${_input}"
+                "-DOUTPUT=${_output}"
+                "-DSUBSTITUTIONS=${TH_SUBSTITUTIONS}"
+                -P "${CMAKE_SOURCE_DIR}/cmake/SubstituteHeader.cmake"
+            DEPENDS ${_dep_files}
+            COMMENT "Substituting generated header ${_output}"
+            VERBATIM)
+    else()
+        add_custom_command(
+            OUTPUT "${_output}"
+            COMMAND "${CMAKE_COMMAND}" -E make_directory "${_output_dir}"
+            COMMAND "${CMAKE_COMMAND}"
+                "-DINPUT=${_input}"
+                "-DOUTPUT=${_output}"
+                "-DMATCH_TEXT=${TH_MATCH}"
+                "-DREPLACEMENT=${TH_REPLACEMENT}"
+                -P "${CMAKE_SOURCE_DIR}/cmake/TransformHeader.cmake"
+            DEPENDS ${_dep_files}
+            COMMENT "Generating transformed header ${_output}"
+            VERBATIM)
+    endif()
+    string(SUBSTRING "${_output_key}" 0 16 _output_suffix)
+    set(_output_owner "${TH_NAME}--header-${_output_suffix}")
+    if(TARGET "${_output_owner}")
+        message(FATAL_ERROR
+            "${TH_NAME}: duplicate transformed-header product target ${_output_owner}")
+    endif()
+    add_custom_target("${_output_owner}" DEPENDS "${_output}")
+    add_dependencies("${TH_NAME}" "${_output_owner}")
 
     foreach(_consumer IN LISTS TH_CONSUMERS)
         if(NOT TARGET "${_consumer}")
@@ -3424,7 +3686,25 @@ function(_aros_generate_module_support out_prefix)
 
     set(_fd "")
     set(_fd_target "")
+    set(_has_exported_functions FALSE)
     if(GM_ABI)
+        file(STRINGS "${_conf}" _conf_lines)
+        set(_in_function_list FALSE)
+        foreach(_conf_line IN LISTS _conf_lines)
+            string(STRIP "${_conf_line}" _conf_line)
+            if(_conf_line MATCHES "^##[ \\t]*begin[ \\t]+(c)?functionlist$")
+                set(_in_function_list TRUE)
+            elseif(_conf_line MATCHES "^##[ \\t]*end[ \\t]+(c)?functionlist$")
+                set(_in_function_list FALSE)
+            elseif(_in_function_list AND
+                   NOT _conf_line STREQUAL "" AND
+                   NOT _conf_line MATCHES "^#")
+                set(_has_exported_functions TRUE)
+                break()
+            endif()
+        endforeach()
+    endif()
+    if(GM_ABI AND _has_exported_functions)
         set(_private_fd "${_fd_dir}/${GM_TARGET}_lib.fd")
         set(_fd "${AROS_DEVELOPER_FD_DIR}/${GM_TARGET}_lib.fd")
         file(REMOVE "${_fd}")
@@ -3539,17 +3819,29 @@ function(aros_apply_32bit_isa target)
     if(NOT TARGET "${target}" OR NOT AROS_TARGET_CPU32)
         return()
     endif()
-    if(AROS_CROSS_TOOLCHAIN_ROOT)
-        # A locked build has one installed triple and no 32-bit counterpart to
-        # name, so this is reported rather than guessed.
-        set_property(GLOBAL APPEND PROPERTY AROS_ISA32_GAPS
-            "${target}: no 32-bit triple for the locked toolchain")
-        return()
+    if(AROS_TARGET_CPU STREQUAL "x86_64" AND
+       AROS_TARGET_CPU32 STREQUAL "i386")
+        # This is the exact LLVM value configure.in installs in
+        # ISA_32_FLAGS. The locked x86_64 release contract validates that the
+        # same prefix also contains libclang_rt.builtins-i386.a, so a release
+        # toolchain is explicitly dual-target here rather than single-triple.
+        set(_companion_triple "i386-unknown-aros")
+    else()
+        message(FATAL_ERROR
+            "${target}: unsupported 32-bit companion ${AROS_TARGET_CPU32} "
+            "for ${AROS_TARGET_CPU}")
+    endif()
+    if(AROS_CROSS_TOOLCHAIN_ROOT AND
+       NOT AROS_CROSS_TOOLCHAIN_COMPANION_TRIPLE STREQUAL _companion_triple)
+        message(FATAL_ERROR
+            "${target}: locked toolchain does not declare the required "
+            "companion triple ${_companion_triple}")
     endif()
     # The single-argument form: `-target <triple>` as two list items is split
     # by CMake and clang then reads the triple as a file name.
     target_compile_options("${target}" PRIVATE
-        "--target=${AROS_TARGET_CPU32}-unknown-elf")
+        "--target=${_companion_triple}")
+    set_property(TARGET "${target}" PROPERTY AROS_VARIANT_32BIT TRUE)
 endfunction()
 
 # aros_module_is_kickstart_member(<out-var> <arch-list>)
@@ -3949,8 +4241,15 @@ function(aros_add_library)
             MODSUFFIX "${ARG_MODSUFFIX}")
         set(_has_genmodule TRUE)
 
-        _aros_bind_genmodule_abi_targets("${ARG_MMAKE_ID}"
-            "${_gm_INCLUDES_TARGET}" "${_gm_FD_TARGET}")
+        if(_gm_FD_TARGET)
+            _aros_bind_genmodule_abi_targets("${ARG_MMAKE_ID}"
+                "${_gm_INCLUDES_TARGET}" "${_gm_FD_TARGET}")
+        else()
+            # genmodule deliberately emits no FD for an empty function list,
+            # even when a sourceful module still publishes a client archive.
+            _aros_genmodule_alias("${ARG_MMAKE_ID}-includes"
+                "${_gm_INCLUDES_TARGET}")
+        endif()
 
         aros_resolve_source_lanes(_linklib_sources "${ARG_DIRECTORY}"
             MMAKE_ID "${ARG_MMAKE_ID}-linklib-inputs"
@@ -4241,8 +4540,11 @@ function(aros_add_library)
                 "${ARG_DIRECTORY}/${ARG_TARGET}.conf")
             add_dependencies(${ARG_MMAKE_ID}
                 "${ARG_MMAKE_ID}-includes"
-                "${ARG_MMAKE_ID}-fd"
                 "${ARG_MMAKE_ID}-linklib")
+            if(_gm_FD_TARGET)
+                add_dependencies(${ARG_MMAKE_ID}
+                    "${ARG_MMAKE_ID}-fd")
+            endif()
             if(_gm_HAS_REL_LINKLIB)
                 add_dependencies(${ARG_MMAKE_ID}
                     "${ARG_MMAKE_ID}-linklib-rel")

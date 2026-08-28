@@ -408,6 +408,10 @@ function(aros_build_configure)
     get_directory_property(_parent_includes INCLUDE_DIRECTORIES)
     set(_target_flags -O2)
     foreach(_option IN LISTS _parent_options)
+        if(_option STREQUAL "$<$<COMPILE_LANGUAGE:CXX>:-nostdinc++>")
+            # ConfigureBuild's audited capabilities compile C only.
+            continue()
+        endif()
         if(_option MATCHES "[;\r\n]" OR _option MATCHES "^\\$<")
             message(FATAL_ERROR
                 "${CB_MMAKE_ID}: unsupported parent compile option '${_option}'")
@@ -427,6 +431,12 @@ function(aros_build_configure)
             "-I${AROS_SDK_INCLUDE_DIR}/aros/stdc")
     endif()
     foreach(_include IN LISTS _parent_includes)
+        if(_include STREQUAL
+           "$<$<COMPILE_LANGUAGE:CXX>:${AROS_CROSS_TOOLCHAIN_ROOT}/include/c++/v1>")
+            # This configure-style capability compiles C only. The parent
+            # graph's language-scoped libc++ include root does not apply.
+            continue()
+        endif()
         if(_include MATCHES "[;\r\n]" OR _include MATCHES "^\\$<")
             message(FATAL_ERROR
                 "${CB_MMAKE_ID}: unsupported parent include '${_include}'")

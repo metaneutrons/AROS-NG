@@ -36,16 +36,37 @@ function(_aros_parse_staged_header_binding
     set(${out_source} "${_source}" PARENT_SCOPE)
 endfunction()
 
-# _aros_collect_transitive_header_bindings(<owners-var> <hashes-var> <file>)
+# Build a constant-time lookup table once every %copy_includes declaration has
+# been evaluated. Early genmodule consumers intentionally keep using the plain
+# list while the graph is still growing; the tree-wide source pass calls this
+# only after generated_targets.cmake is complete.
+function(_aros_prepare_staged_header_binding_index)
+    get_property(_bindings GLOBAL PROPERTY AROS_STAGED_HEADER_BINDINGS)
+    foreach(_binding IN LISTS _bindings)
+        _aros_parse_staged_header_binding("${_binding}"
+            _header _owner _hash _source)
+        if(NOT _header)
+            continue()
+        endif()
+        string(SHA256 _header_key "${_header}")
+        set_property(GLOBAL APPEND PROPERTY
+            "AROS_STAGED_HEADER_BINDING_INDEX_${_header_key}" "${_binding}")
+    endforeach()
+    set_property(GLOBAL PROPERTY AROS_STAGED_HEADER_BINDING_INDEX_READY TRUE)
+endfunction()
+
+# _aros_collect_transitive_header_bindings(<owners-var> <hashes-var> <file>...)
 #
 # AROS_STAGED_HEADER_BINDINGS entries have this stable shape:
 #   <public header>|<owner target>|<optional deferred hash>|<source file>
 # Older two/three-field entries remain accepted for compatibility, but cannot
 # be traversed without their source field.
 function(_aros_collect_transitive_header_bindings
-        out_owners out_deferred_hashes initial_file)
+        out_owners out_deferred_hashes)
     get_property(_bindings GLOBAL PROPERTY AROS_STAGED_HEADER_BINDINGS)
-    if(NOT _bindings OR NOT EXISTS "${initial_file}")
+    get_property(_binding_index_ready GLOBAL PROPERTY
+        AROS_STAGED_HEADER_BINDING_INDEX_READY)
+    if(NOT _bindings OR NOT ARGN)
         set(${out_owners} "" PARENT_SCOPE)
         set(${out_deferred_hashes} "" PARENT_SCOPE)
         return()
@@ -53,7 +74,12 @@ function(_aros_collect_transitive_header_bindings
 
     set(_max_depth 16)
     set(_max_files 256)
-    set(_queue "0|${initial_file}")
+    set(_queue "")
+    foreach(_initial_file IN LISTS ARGN)
+        if(EXISTS "${_initial_file}")
+            list(APPEND _queue "0|${_initial_file}")
+        endif()
+    endforeach()
     set(_visited "")
     set(_owners "")
     set(_deferred_hashes "")
@@ -82,7 +108,14 @@ function(_aros_collect_transitive_header_bindings
                 continue()
             endif()
             set(_included_header "${CMAKE_MATCH_1}")
-            foreach(_binding IN LISTS _bindings)
+            if(_binding_index_ready)
+                string(SHA256 _included_header_key "${_included_header}")
+                get_property(_matching_bindings GLOBAL PROPERTY
+                    "AROS_STAGED_HEADER_BINDING_INDEX_${_included_header_key}")
+            else()
+                set(_matching_bindings "${_bindings}")
+            endif()
+            foreach(_binding IN LISTS _matching_bindings)
                 _aros_parse_staged_header_binding("${_binding}"
                     _header _owner _hash _source)
                 if(NOT _header STREQUAL _included_header OR NOT _owner)
@@ -97,6 +130,29 @@ function(_aros_collect_transitive_header_bindings
                     list(APPEND _queue "${_next_depth}|${_source}")
                 endif()
             endforeach()
+
+            # Port sources with an extensionless MetaMake spelling are reached
+            # through the small wrapper produced by aros_resolve_sources().
+            # Follow literal quoted local includes as well as staged public
+            # headers, so that wrapper -> fetched source -> public header is
+            # one dependency chain. Angle includes remain confined to declared
+            # staged bindings; an arbitrary host/system include must never
+            # become configure-time input.
+            if(_depth LESS _max_depth AND _line MATCHES
+               "^[ \t]*#[ \t]*include[ \t]+\"([^\"]+)\"")
+                set(_local_include "${CMAKE_MATCH_1}")
+                if(IS_ABSOLUTE "${_local_include}")
+                    set(_local_path "${_local_include}")
+                else()
+                    get_filename_component(_current_dir "${_path}" DIRECTORY)
+                    set(_local_path "${_current_dir}/${_local_include}")
+                endif()
+                cmake_path(NORMAL_PATH _local_path)
+                if(EXISTS "${_local_path}")
+                    math(EXPR _next_depth "${_depth} + 1")
+                    list(APPEND _queue "${_next_depth}|${_local_path}")
+                endif()
+            endif()
         endforeach()
     endwhile()
 

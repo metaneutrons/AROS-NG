@@ -18,7 +18,11 @@ include $(SRCDIR)/config/aros.cfg
 #MM- kernel-m68kemu-riscv64 : kernel-m68kemu-library
 
 USER_CPPFLAGS := -DNO_INLINE_STDARG -I$(SRCDIR)/$(CURDIR)/Moira
-USER_CXXFLAGS := -std=c++20
+# Moira's compile-time address-error masks are integer bit sets.  Clang 21
+# diagnoses their direct use in `if constexpr` as narrowing to bool; retain the
+# upstream expression semantics until the pinned Moira revision adopts
+# explicit comparisons.
+USER_CXXFLAGS := -std=c++20 -Wno-c++11-narrowing
 USER_LDFLAGS := -static
 
 M68KEMU_FILES := \

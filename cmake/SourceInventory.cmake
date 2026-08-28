@@ -1,10 +1,12 @@
 include_guard(GLOBAL)
 include(CMakeParseArguments)
 
-# A few upstream modules derive their complete source inventory with a Make
-# wildcard below PORTSDIR. The transpiler reports the exact owning fetches on
-# its first cold pass; CMake materialises only those archives and runs the
-# transpiler again before generated_targets.cmake is included.
+# Some upstream modules derive their complete source inventory with a Make
+# wildcard below PORTSDIR. Fetched public-header trees must also exist before
+# the transitive header-owner pass can inspect their consumers. The transpiler
+# reports only those exact owning fetches on its first cold pass; CMake
+# materialises them and runs the transpiler again before generated_targets.cmake
+# is included.
 function(aros_fetch_source_inventory)
     set(oneValueArgs NAME ARCHIVE SUFFIXES ORIGINS LOCATION DESTINATION BASE
         PATCH_ORIGINS PATCHES)
@@ -24,7 +26,7 @@ function(aros_fetch_source_inventory)
     endif()
     file(MAKE_DIRECTORY "${_location}" "${_base}" "${SI_DESTINATION}")
     message(STATUS
-        "🌐 AROS-NG: fetching ${SI_NAME} to determine its source inventory")
+        "🌐 AROS-NG: fetching ${SI_NAME} to determine its source/header inventory")
     execute_process(
         COMMAND "${AROS_FETCH_SCRIPT}"
             -ao "${SI_ORIGINS}"

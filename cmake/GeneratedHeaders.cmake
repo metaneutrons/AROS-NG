@@ -23,33 +23,9 @@ function(_aros_needs_header target header)
     set_property(GLOBAL PROPERTY AROS_GENERATED_HEADER_DEPS "${_deps}")
 endfunction()
 
-# -----------------------------------------------------------------------------
-# dos.library message strings
-# -----------------------------------------------------------------------------
-#
-#   rom/dos/mmakefile.src:90  -> errorlist.h via genstrings.py
-#   config/make.tmpl:3051     -> strings.h via %build_catalogs' default
-#                                source="../strings.h". That output is now
-#                                owned by the transpiled catalog target.
-#
-# Both read rom/dos/catalogs/dos.cd, which lives in a git submodule. Without it
-# checked out the rules are skipped; the submodule warning in CMakeLists.txt
-# says what to do.
-set(_dos_cd "${CMAKE_SOURCE_DIR}/rom/dos/catalogs/dos.cd")
-if(EXISTS "${_dos_cd}")
-    set(_dos_gen "${_gen}/rom/dos/dos")
-
-    aros_script_header(
-        SCRIPT "${CMAKE_SOURCE_DIR}/rom/dos/genstrings.py"
-        INPUT "${_dos_cd}"
-        OUTPUT "${_dos_gen}/errorlist.h")
-
-    _aros_needs_header(kernel-dos "${_dos_gen}/errorlist.h")
-else()
-    message(STATUS
-        "⏭️  rom/dos/catalogs/dos.cd absent (submodule not checked out); "
-        "dos.library error-code table and catalogs not generated")
-endif()
+# rom/dos/errorlist.h is no longer duplicated here: the transpiler recognises
+# its exact `$(PYTHON) ... > $@` rule, owns the output, and binds kernel-dos.
+# The catalog machinery independently owns strings.h from the same dos.cd.
 
 # -----------------------------------------------------------------------------
 # Boot images

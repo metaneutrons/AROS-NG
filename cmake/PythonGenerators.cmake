@@ -499,30 +499,33 @@ endfunction()
 
 # aros_generate_intree_script_outputs(
 #     OWNER <target> SCRIPT <path> OUTPUTS <paths...>
-#     [ARGUMENTS <words...>] [DEPENDS <paths...>] [CONSUMERS <targets...>])
+#     [STDOUT] [WORKING_DIRECTORY <path>]
+#     [ARGUMENTS <words...>] [DEPENDS <paths...>]
+#     [DEPENDENCY_TARGETS <targets...>] [CONSUMERS <targets...>])
 #
-# A Make rule whose recipe runs an in-tree Python script over in-tree inputs to
-# produce files under $(GENDIR). arch/all-pc/udis86/mmakefile.src:26 is the case:
+# An exact Make rule whose recipe runs Python to produce files under $(GENDIR).
+# The script can live in-tree or below a capability-checked `%fetch`
+# destination. arch/all-pc/udis86/mmakefile.src:26 is the in-tree case:
 #
 #     $(GENDIR)/$(CURDIR)/libudis86/itab.c: $(OPTABLE) \
 #                $(SRCDIR)/$(CURDIR)/scripts/ud_itab.py \
 #                $(SRCDIR)/$(CURDIR)/scripts/ud_opcode.py | $(GENDIR)/...
 #         $(PYTHON) $(SRCDIR)/$(CURDIR)/scripts/ud_itab.py $(OPTABLE) $(GENDIR)/...
 #
-# This is deliberately not aros_generate_python_outputs. That one exists for a
-# *fetched* generator and spends most of its length on archive extraction,
-# package roots, and a runner script. Here the script and its input
-# are files in this repository, so the repository is the integrity boundary and
-# pinning them again would state the same fact twice.
+# This is deliberately not aros_generate_python_outputs. That function models
+# complete package-defined output groups. This one preserves an individual,
+# already-declared GNU Make recipe and depends on its existing fetch target when
+# the files are external; it neither downloads nor privately pins anything.
 #
 # What it shares with that function is the part that matters to consumers: each
 # output is registered under AROS_PYTHON_OUTPUT_OWNER_<hash>, which is what
 # aros_resolve_sources consults before it probes the filesystem, so a declared
 # source that does not exist at configure time still resolves.
 function(aros_generate_intree_script_outputs)
-    set(oneValueArgs OWNER SCRIPT)
-    set(multiValueArgs ARGUMENTS OUTPUTS DEPENDS CONSUMERS)
-    cmake_parse_arguments(IG "" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
+    set(options STDOUT)
+    set(oneValueArgs OWNER SCRIPT WORKING_DIRECTORY)
+    set(multiValueArgs ARGUMENTS OUTPUTS DEPENDS DEPENDENCY_TARGETS CONSUMERS)
+    cmake_parse_arguments(IG "${options}" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
     if(IG_UNPARSED_ARGUMENTS OR IG_KEYWORDS_MISSING_VALUES)
         message(FATAL_ERROR
             "aros_generate_intree_script_outputs: unknown or valueless "
@@ -540,8 +543,21 @@ function(aros_generate_intree_script_outputs)
     if(TARGET "${IG_OWNER}")
         message(FATAL_ERROR "${IG_OWNER}: owner target already exists")
     endif()
-    if(NOT EXISTS "${IG_SCRIPT}")
+    foreach(_dependency_target IN LISTS IG_DEPENDENCY_TARGETS)
+        if(NOT TARGET "${_dependency_target}")
+            message(FATAL_ERROR
+                "${IG_OWNER}: dependency target ${_dependency_target} does not exist")
+        endif()
+    endforeach()
+    if(NOT EXISTS "${IG_SCRIPT}" AND NOT IG_DEPENDENCY_TARGETS)
         message(FATAL_ERROR "${IG_OWNER}: no generator script ${IG_SCRIPT}")
+    endif()
+    if(IG_STDOUT)
+        list(LENGTH IG_OUTPUTS _output_count)
+        if(NOT _output_count EQUAL 1)
+            message(FATAL_ERROR
+                "${IG_OWNER}: STDOUT recipes require exactly one output")
+        endif()
     endif()
 
     find_package(Python3 COMPONENTS Interpreter QUIET)
@@ -556,12 +572,24 @@ function(aros_generate_intree_script_outputs)
             message(FATAL_ERROR "${IG_OWNER}: unsafe argument '${_word}'")
         endif()
     endforeach()
+    set(_file_dependencies "")
+    if(EXISTS "${IG_SCRIPT}")
+        list(APPEND _file_dependencies "${IG_SCRIPT}")
+    endif()
     foreach(_dependency IN LISTS IG_DEPENDS)
-        if(NOT EXISTS "${_dependency}")
+        if(EXISTS "${_dependency}")
+            list(APPEND _file_dependencies "${_dependency}")
+        elseif(NOT IG_DEPENDENCY_TARGETS)
             message(FATAL_ERROR
                 "${IG_OWNER}: prerequisite ${_dependency} does not exist")
         endif()
     endforeach()
+    if(IG_WORKING_DIRECTORY
+            AND NOT IS_DIRECTORY "${IG_WORKING_DIRECTORY}"
+            AND NOT IG_DEPENDENCY_TARGETS)
+        message(FATAL_ERROR
+            "${IG_OWNER}: working directory ${IG_WORKING_DIRECTORY} does not exist")
+    endif()
 
     # Every output must land in the build tree, and no two generators may claim
     # the same file.
@@ -585,13 +613,47 @@ function(aros_generate_intree_script_outputs)
         endif()
     endforeach()
 
-    add_custom_command(
-        OUTPUT ${IG_OUTPUTS}
-        COMMAND "${CMAKE_COMMAND}" -E make_directory ${_directories}
-        COMMAND "${Python3_EXECUTABLE}" "${IG_SCRIPT}" ${IG_ARGUMENTS}
-        DEPENDS "${IG_SCRIPT}" ${IG_DEPENDS}
-        COMMENT "Generating ${IG_OWNER} with ${IG_SCRIPT}"
-        VERBATIM)
+    if(IG_STDOUT)
+        set(_runner_arguments
+            "-DRUN_OWNER=${IG_OWNER}"
+            "-DRUN_PYTHON=${Python3_EXECUTABLE}"
+            "-DRUN_SCRIPT=${IG_SCRIPT}"
+            "-DRUN_OUTPUT=${IG_OUTPUTS}"
+            "-DRUN_BUILD_ROOT=${CMAKE_BINARY_DIR}")
+        if(IG_WORKING_DIRECTORY)
+            list(APPEND _runner_arguments
+                "-DRUN_WORKING_DIRECTORY=${IG_WORKING_DIRECTORY}")
+        endif()
+        list(LENGTH IG_ARGUMENTS _argument_count)
+        list(APPEND _runner_arguments "-DRUN_ARGUMENT_COUNT=${_argument_count}")
+        set(_argument_index 0)
+        foreach(_argument IN LISTS IG_ARGUMENTS)
+            list(APPEND _runner_arguments
+                "-DRUN_ARGUMENT_${_argument_index}=${_argument}")
+            math(EXPR _argument_index "${_argument_index} + 1")
+        endforeach()
+        add_custom_command(
+            OUTPUT ${IG_OUTPUTS}
+            COMMAND "${CMAKE_COMMAND}" ${_runner_arguments}
+                -P "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/RunPythonStdout.cmake"
+            DEPENDS ${_file_dependencies} ${IG_DEPENDENCY_TARGETS}
+            COMMENT "Generating ${IG_OWNER} with ${IG_SCRIPT}"
+            VERBATIM)
+    else()
+        if(IG_WORKING_DIRECTORY)
+            set(_direct_working_directory "${IG_WORKING_DIRECTORY}")
+        else()
+            set(_direct_working_directory "${CMAKE_CURRENT_BINARY_DIR}")
+        endif()
+        add_custom_command(
+            OUTPUT ${IG_OUTPUTS}
+            COMMAND "${CMAKE_COMMAND}" -E make_directory ${_directories}
+            COMMAND "${Python3_EXECUTABLE}" "${IG_SCRIPT}" ${IG_ARGUMENTS}
+            DEPENDS ${_file_dependencies} ${IG_DEPENDENCY_TARGETS}
+            WORKING_DIRECTORY "${_direct_working_directory}"
+            COMMENT "Generating ${IG_OWNER} with ${IG_SCRIPT}"
+            VERBATIM)
+    endif()
 
     foreach(_output IN LISTS IG_OUTPUTS)
         string(SHA256 _output_key "${_output}")

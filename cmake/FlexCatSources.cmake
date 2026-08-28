@@ -36,6 +36,85 @@ function(_aros_flexcat_leaf_name value label)
     endif()
 endfunction()
 
+# aros_declare_flexcat_header(
+#   OWNER <mmake-owner> DIRECTORY <source-root-relative-directory>
+#   HEADER <generated-h> DESCRIPTION <pot> HEADER_TEMPLATE <sd>)
+#
+# Historic OpenURL uses this exact one-output recipe shape. The owner is an
+# ordinary #MM prerequisite of the compiled program, so aros_add_target_dependency
+# consumes AROS_GENERATED_INCLUDE_DIRECTORY below when it attaches that edge.
+function(aros_declare_flexcat_header)
+    set(oneValueArgs OWNER DIRECTORY HEADER DESCRIPTION HEADER_TEMPLATE)
+    cmake_parse_arguments(FCH "" "${oneValueArgs}" "" ${ARGN})
+    if(FCH_UNPARSED_ARGUMENTS OR FCH_KEYWORDS_MISSING_VALUES)
+        message(FATAL_ERROR
+            "aros_declare_flexcat_header: malformed arguments: "
+            "${FCH_UNPARSED_ARGUMENTS}${FCH_KEYWORDS_MISSING_VALUES}")
+    endif()
+    foreach(_required OWNER DIRECTORY HEADER DESCRIPTION HEADER_TEMPLATE)
+        if(NOT FCH_${_required})
+            message(FATAL_ERROR
+                "aros_declare_flexcat_header: ${_required} is required")
+        endif()
+    endforeach()
+    if(FCH_OWNER MATCHES "[^A-Za-z0-9_.+-]" OR
+       FCH_OWNER STREQUAL "." OR FCH_OWNER STREQUAL "..")
+        message(FATAL_ERROR
+            "aros_declare_flexcat_header: OWNER is not a safe target name: ${FCH_OWNER}")
+    endif()
+    if(TARGET "${FCH_OWNER}")
+        message(FATAL_ERROR
+            "aros_declare_flexcat_header: OWNER already exists: ${FCH_OWNER}")
+    endif()
+    _aros_flexcat_leaf_name("${FCH_HEADER}" HEADER)
+
+    if(IS_ABSOLUTE "${FCH_DIRECTORY}")
+        set(_directory "${FCH_DIRECTORY}")
+    else()
+        set(_directory "${CMAKE_SOURCE_DIR}/${FCH_DIRECTORY}")
+    endif()
+    cmake_path(NORMAL_PATH _directory)
+    cmake_path(ABSOLUTE_PATH CMAKE_SOURCE_DIR NORMALIZE OUTPUT_VARIABLE _source_root)
+    cmake_path(IS_PREFIX _source_root "${_directory}" NORMALIZE _contained)
+    if(NOT _contained OR _directory STREQUAL _source_root OR
+       NOT IS_DIRECTORY "${_directory}")
+        message(FATAL_ERROR
+            "aros_declare_flexcat_header: DIRECTORY must be an existing source-tree directory: ${FCH_DIRECTORY}")
+    endif()
+    _aros_flexcat_source_path(_description "${FCH_DESCRIPTION}" DESCRIPTION)
+    _aros_flexcat_source_path(_header_template
+        "${FCH_HEADER_TEMPLATE}" HEADER_TEMPLATE)
+
+    file(RELATIVE_PATH _declaring_rel "${_source_root}" "${_directory}")
+    cmake_path(ABSOLUTE_PATH CMAKE_BINARY_DIR NORMALIZE OUTPUT_VARIABLE _binary_root)
+    set(_generated_dir "${_binary_root}/gen/${_declaring_rel}")
+    cmake_path(NORMAL_PATH _generated_dir)
+    cmake_path(IS_PREFIX _binary_root "${_generated_dir}" NORMALIZE _generated_contained)
+    if(NOT _generated_contained OR _generated_dir STREQUAL _binary_root)
+        message(FATAL_ERROR
+            "aros_declare_flexcat_header: generated directory escapes the build tree")
+    endif()
+    file(MAKE_DIRECTORY "${_generated_dir}")
+    set(_output "${_generated_dir}/${FCH_HEADER}")
+    set(_runner "${CMAKE_SOURCE_DIR}/cmake/RunFlexCat.cmake")
+    add_custom_command(
+        OUTPUT "${_output}"
+        COMMAND "${CMAKE_COMMAND}"
+            "-DTOOL=${AROS_HOST_FLEXCAT}"
+            "-DDESCRIPTION=${_description}"
+            "-DSOURCE_DESCRIPTION=${_header_template}"
+            "-DOUTPUT=${_output}"
+            -P "${_runner}"
+        DEPENDS "${AROS_HOST_FLEXCAT}" "${_description}"
+            "${_header_template}" "${_runner}"
+        COMMENT "Creating FlexCat header ${FCH_HEADER}"
+        VERBATIM)
+    add_custom_target("${FCH_OWNER}" DEPENDS "${_output}")
+    aros_gate_arch("${FCH_OWNER}" "${_directory}")
+    set_property(TARGET "${FCH_OWNER}" PROPERTY
+        AROS_GENERATED_INCLUDE_DIRECTORY "${_generated_dir}")
+endfunction()
+
 # aros_declare_flexcat_sources(
 #   OWNER <mmake-owner> DIRECTORY <source-root-relative-directory>
 #   SOURCE <generated-c> HEADER <generated-h>

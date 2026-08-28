@@ -77,6 +77,10 @@ function(aros_link_binary_object)
     endif()
     add_library("${_objects_target}" OBJECT ${_sources})
     set_target_properties("${_objects_target}" PROPERTIES LINKER_LANGUAGE C)
+    # A binary object inherits the consumer directory's architecture. Without
+    # the gate, the PC bootstrap's vesa blob remained an implicit `all` member
+    # in ARM builds even though the standalone consumer itself was foreign.
+    aros_gate_arch("${_objects_target}" "${BO_DIRECTORY}")
     aros_apply_includes("${_objects_target}" MODULE_DIR "${BO_DIRECTORY}")
     # The image is linked with the consumer's architecture -- the vesa blob is
     # `-m elf_i386` -- so it has to be compiled for it too. The declaration

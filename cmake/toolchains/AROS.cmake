@@ -179,6 +179,24 @@ if(AROS_TARGET_CPU STREQUAL "x86_64")
         message(FATAL_ERROR
             "AROS x86_64 release toolchain lacks its i386 compiler-rt companion")
     endif()
+    list(SORT _aros_i386_builtins)
+    list(LENGTH _aros_i386_builtins _aros_i386_builtins_count)
+    if(NOT _aros_i386_builtins_count EQUAL 1)
+        message(FATAL_ERROR
+            "AROS x86_64 release toolchain has an ambiguous i386 compiler-rt "
+            "companion: ${_aros_i386_builtins}")
+    endif()
+    list(GET _aros_i386_builtins 0 _aros_i386_builtins_archive)
+    set(AROS_CROSS_TOOLCHAIN_COMPANION_TRIPLE "i386-unknown-aros"
+        CACHE INTERNAL "Validated release-toolchain companion triple" FORCE)
+    set(AROS_CROSS_TOOLCHAIN_COMPANION_BUILTINS_ARCHIVE
+        "${_aros_i386_builtins_archive}" CACHE FILEPATH
+        "Validated release-toolchain companion compiler-rt archive" FORCE)
+else()
+    set(AROS_CROSS_TOOLCHAIN_COMPANION_TRIPLE "" CACHE INTERNAL
+        "Validated release-toolchain companion triple" FORCE)
+    set(AROS_CROSS_TOOLCHAIN_COMPANION_BUILTINS_ARCHIVE "" CACHE INTERNAL
+        "Validated release-toolchain companion compiler-rt archive" FORCE)
 endif()
 
 # A release prefix intentionally ships only the C++ runtime needed by an
