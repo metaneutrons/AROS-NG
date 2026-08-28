@@ -11,7 +11,11 @@ set(_origin "${_root}/origin")
 set(_stage "${_root}/stage")
 set(_archive "${_origin}/fixture.tar.gz")
 get_filename_component(_repo_root "${CMAKE_CURRENT_LIST_DIR}/../.." ABSOLUTE)
-set(_fetch "${_repo_root}/scripts/fetch.sh")
+set(_fetch "${_repo_root}/tools/aros-tools/target/release/aros-fetch")
+if(NOT EXISTS "${_fetch}" OR IS_DIRECTORY "${_fetch}")
+    message(FATAL_ERROR
+        "required native fetch test executable is missing: ${_fetch}")
+endif()
 
 file(MAKE_DIRECTORY "${_origin}" "${_stage}/fixture-src")
 file(WRITE "${_stage}/fixture-src/value.txt" "trusted payload\n")
@@ -56,7 +60,8 @@ _run_fetch(tampered _result _log
     "${_fetch}" -a fixture -s tar.gz -ao "${_origin}"
     -cs "${_contract}" -l "${_cache}" -d "${_tampered_ports}"
     -b "${_tampered_ports}")
-if(_result EQUAL 0 OR NOT _log MATCHES "SHA-256 mismatch for 'fixture.tar.gz'")
+if(_result EQUAL 0 OR NOT _log MATCHES "AF0401" OR
+   NOT _log MATCHES "SHA-256 mismatch")
     message(FATAL_ERROR "tampered cache was not rejected clearly\n${_log}")
 endif()
 
@@ -65,7 +70,8 @@ _run_fetch(incomplete _result _log
     "${_fetch}" -a fixture -s "tar.xz tar.gz" -ao "${_origin}"
     -cs "${_contract}" -l "${_root}/incomplete-cache"
     -d "${_root}/incomplete-ports")
-if(_result EQUAL 0 OR NOT _log MATCHES "does not cover candidate 'fixture.tar.xz'")
+if(_result EQUAL 0 OR NOT _log MATCHES "AF0101" OR
+   NOT _log MATCHES "does not cover archive candidate 'fixture.tar.xz'")
     message(FATAL_ERROR "incomplete multi-suffix contract was not rejected\n${_log}")
 endif()
 
@@ -103,7 +109,8 @@ _run_fetch(offline-miss _result _log
     "${_fetch}" -a fixture -s tar.gz -ao "https://127.0.0.1:9"
     -cs "${_contract}" -l "${_root}/offline-miss-cache"
     -d "${_root}/offline-miss-ports")
-if(_result EQUAL 0 OR NOT _log MATCHES "skipping network origin")
+if(_result EQUAL 0 OR NOT _log MATCHES "AF0201" OR
+   NOT _log MATCHES "offline cache/local-origin miss")
     message(FATAL_ERROR "offline cache miss did not block the network clearly\n${_log}")
 endif()
 
@@ -112,6 +119,7 @@ _run_fetch(strict _result _log
     "${CMAKE_COMMAND}" -E env AROS_FETCH_REQUIRE_CHECKSUMS=ON
     "${_fetch}" -a fixture -s tar.gz -ao "${_origin}"
     -l "${_root}/strict-cache" -d "${_root}/strict-ports")
-if(_result EQUAL 0 OR NOT _log MATCHES "strict checksum mode requires")
+if(_result EQUAL 0 OR NOT _log MATCHES "AF0101" OR
+   NOT _log MATCHES "checksum contract does not cover")
     message(FATAL_ERROR "strict mode accepted a hashless fetch\n${_log}")
 endif()

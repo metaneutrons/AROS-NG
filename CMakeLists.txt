@@ -54,9 +54,9 @@ if(AROS_CROSS_TOOLCHAIN_ROOT)
     cmake_language(DEFER CALL _aros_finalize_cxx_wrapper_order)
 endif()
 
-# The build graph is generated and its SDK is bootstrapped by two Rust host
-# tools.  Keep their location configurable for aros-cli managed releases, but
-# never silently continue with an incomplete graph when either is absent.
+# The build graph and closed host-side build boundaries use checkout-local Rust
+# tools. Keep their location configurable for aros-cli managed releases, but
+# never silently substitute an ambient or legacy implementation.
 set(AROS_RUST_TOOLS_DIR
     "${CMAKE_SOURCE_DIR}/tools/aros-tools/target/release"
     CACHE PATH "Directory containing the required AROS Rust host tools")
@@ -71,6 +71,8 @@ set(AROS_COLLECT_BIN "${AROS_RUST_TOOLS_DIR}/aros-collect"
     CACHE FILEPATH "Rust aros-collect executable used to link and collect symbol sets")
 set(AROS_AHI_RUNNER_BIN "${AROS_RUST_TOOLS_DIR}/aros-ahi-runner"
     CACHE FILEPATH "Typed Rust runner for the closed AHI build contract")
+set(AROS_FETCH_BIN "${AROS_RUST_TOOLS_DIR}/aros-fetch"
+    CACHE FILEPATH "Validated Rust source fetcher used by AROS-NG fetch targets")
 
 include("${CMAKE_SOURCE_DIR}/cmake/ToolchainIdentity.cmake")
 aros_lock_build_tree_toolchain()
@@ -204,7 +206,7 @@ if(NOT EXISTS "${TRANSPILER_BIN}" OR IS_DIRECTORY "${TRANSPILER_BIN}" OR
     message(FATAL_ERROR
         "AROS-NG requires the executable Rust transpiler at ${TRANSPILER_BIN}. "
         "Build it with `cargo build --release -p aros-transpiler -p aros-genmodule "
-        "-p aros-collect -p aros-ahi-runner` "
+        "-p aros-collect -p aros-ahi-runner -p aros-fetch` "
         "in tools/aros-tools, or set AROS_RUST_TOOLS_DIR / AROS_TRANSPILER_BIN.")
 endif()
 

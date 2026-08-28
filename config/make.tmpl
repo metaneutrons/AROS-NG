@@ -3586,9 +3586,11 @@ DEPS := $(DEPS) $(STUBS_DEP)
 # the archive and the patches from any of those locations, unpack the archive
 # and then apply the patches.
 #
-# Locations currently supported are http and ftp sites, plus local filesystem
-# directories. Supported archives are .tar.bz2 and .tar.gz. To modify this,
-# the fetch.sh script needs to be modified, since this macro relies on that script.
+# The upstream GNU Make path delegates this contract to scripts/fetch.sh. The
+# AROS-NG CMake path uses the native aros-fetch implementation and deliberately
+# has no silent shell fallback. Both accept local, HTTP(S), FTP, AROS Archives,
+# GNU, SourceForge, GitHub, and AROS cache origins, plus .tar.bz2, .tar.gz,
+# .tgz, .tar.xz, and .zip archives.
 #
 # Arguments:
 #

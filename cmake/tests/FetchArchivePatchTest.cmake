@@ -61,7 +61,7 @@ project(FetchArchivePatchFixture NONE)
 
 set(AROS_TARGET_CPU x86_64)
 set(AROS_TARGET_PLATFORM pc)
-set(AROS_FETCH_SCRIPT "@FETCH_SCRIPT@")
+set(AROS_FETCH_BIN "@FETCH_BIN@")
 include("@AROS_CMAKE@")
 
 set(_patch "${CMAKE_CURRENT_SOURCE_DIR}/patches/value.patch")
@@ -91,7 +91,11 @@ add_custom_command(
     VERBATIM)
 add_custom_target(fixture-product DEPENDS "${CMAKE_BINARY_DIR}/product.txt")
 ]=])
-set(FETCH_SCRIPT "${_repo_root}/scripts/fetch.sh")
+set(FETCH_BIN "${_repo_root}/tools/aros-tools/target/release/aros-fetch")
+if(NOT EXISTS "${FETCH_BIN}" OR IS_DIRECTORY "${FETCH_BIN}")
+    message(FATAL_ERROR
+        "required native fetch test executable is missing: ${FETCH_BIN}")
+endif()
 set(ARCHIVE_ORIGIN "${_archive_origin}")
 set(AROS_CMAKE "${_cmake_dir}/AROS.cmake")
 string(CONFIGURE "${_fixture_cmake}" _fixture_cmake @ONLY)

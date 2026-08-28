@@ -7,11 +7,11 @@ set(_destination "${CMAKE_BINARY_DIR}/Ports/fixture")
 set(_stamp "${_destination}/.fixture-fetched")
 set(_inventory "${_destination}/package/source.c")
 
-set(AROS_FETCH_SCRIPT "${CMAKE_BINARY_DIR}/fake-fetch.sh")
-file(WRITE "${AROS_FETCH_SCRIPT}" [=[#!/bin/sh
+set(AROS_FETCH_BIN "${CMAKE_BINARY_DIR}/fake-aros-fetch")
+file(WRITE "${AROS_FETCH_BIN}" [=[#!/bin/sh
 destination=
 while test "$#" -gt 0; do
-    if test "$1" = -d; then
+    if test "$1" = --destination; then
         destination=$2
         shift 2
     else
@@ -21,7 +21,7 @@ done
 mkdir -p "$destination/package"
 : > "$destination/package/source.c"
 ]=])
-file(CHMOD "${AROS_FETCH_SCRIPT}"
+file(CHMOD "${AROS_FETCH_BIN}"
     PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE)
 
 aros_fetch_source_inventory(

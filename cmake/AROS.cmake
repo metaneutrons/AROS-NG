@@ -2233,9 +2233,10 @@ endfunction()
 # archive. The transpiler turns each %fetch declaration into an
 # aros_fetch_archive() call.
 #
-# Downloading is delegated to the tree's own scripts/fetch.sh, which already
-# handles the origin flavours in use (plain mirrors, GNU, SourceForge, GitHub and
-# a local cache://). These targets are deliberately NOT part of `all`: fetching
+# Downloading is delegated to the validated Rust aros-fetch tool. The upstream
+# scripts/fetch.sh remains available to the unmodified GNU Make build, but the
+# AROS-NG CMake path never silently falls back to the shell implementation.
+# These targets are deliberately NOT part of `all`: fetching
 # reaches out to the network, so it stays an explicit step.
 #
 #   ninja fetch-ports          # everything
@@ -2250,8 +2251,13 @@ set(AROS_FETCH_OFFLINE OFF CACHE BOOL
 set(AROS_FETCH_REQUIRE_CHECKSUMS OFF CACHE BOOL
     "Require every third-party archive to declare an explicit SHA-256")
 
-find_program(AROS_FETCH_SCRIPT fetch.sh
-    HINTS "${CMAKE_SOURCE_DIR}/scripts" NO_DEFAULT_PATH)
+if(NOT DEFINED AROS_FETCH_BIN)
+    get_filename_component(_aros_fetch_repository_root
+        "${CMAKE_CURRENT_LIST_DIR}/.." ABSOLUTE)
+    set(AROS_FETCH_BIN
+        "${_aros_fetch_repository_root}/tools/aros-tools/target/release/aros-fetch"
+        CACHE FILEPATH "Validated Rust source fetcher used by AROS-NG fetch targets")
+endif()
 
 set_property(GLOBAL PROPERTY AROS_FETCH_TARGETS "")
 
@@ -2263,7 +2269,7 @@ set_property(GLOBAL PROPERTY AROS_FETCH_TARGETS "")
 #                     LOCAL_PATCH_FILES <files...>])
 #
 # Declares a fetch target. The recipe mirrors the %fetch macro's invocation of
-# scripts/fetch.sh.  The completion stamp lives in the concrete unpack
+# aros-fetch. The completion stamp lives in the concrete unpack
 # destination rather than the optionally shared archive cache: an archive may
 # be shared by several profiles, but each profile still has to unpack and patch
 # its own Ports tree.
@@ -2284,8 +2290,11 @@ function(aros_fetch_archive)
     if(NOT FA_NAME OR NOT FA_ARCHIVE OR NOT FA_DESTINATION)
         return()
     endif()
-    if(NOT AROS_FETCH_SCRIPT)
-        return()
+    if(NOT EXISTS "${AROS_FETCH_BIN}" OR IS_DIRECTORY "${AROS_FETCH_BIN}" OR
+       NOT IS_EXECUTABLE "${AROS_FETCH_BIN}")
+        message(FATAL_ERROR
+            "${FA_NAME}: required aros-fetch executable is unavailable at ${AROS_FETCH_BIN}. "
+            "Run `aros build-tools build` or set AROS_FETCH_BIN explicitly.")
     endif()
     if(TARGET ${FA_NAME})
         return()
@@ -2303,12 +2312,11 @@ function(aros_fetch_archive)
     set(_stamp "${FA_DESTINATION}/.${FA_ARCHIVE}-fetched")
 
     # Strict external-CMake profiles track their in-tree patches directly.
-    # fetch.sh
-    # deliberately caches both the copied patch and an `.applied` marker, so a
+    # aros-fetch deliberately caches both the copied patch and an `.applied` marker, so a
     # plain file dependency would rerun the recipe but still use the old
     # patch.  When one of these audited inputs changes, discard only the
     # declared archive source directory and its own cache markers before
-    # letting fetch.sh unpack and patch it again.
+    # letting aros-fetch unpack and patch it again.
     set(_patch_refresh_commands "")
     set(_patch_dependency_args "")
     if(FA_SOURCE_DIR OR FA_LOCAL_PATCH_FILES)
@@ -2420,25 +2428,31 @@ function(aros_fetch_archive)
             ${_local_patch_inputs})
     endif()
 
+    set(_fetch_policy_args "")
+    if(AROS_FETCH_OFFLINE)
+        list(APPEND _fetch_policy_args --offline)
+    endif()
+    if(AROS_FETCH_REQUIRE_CHECKSUMS)
+        list(APPEND _fetch_policy_args --require-checksums)
+    endif()
+
     add_custom_command(
         OUTPUT "${_stamp}"
         COMMAND ${CMAKE_COMMAND} -E make_directory "${_loc}"
         COMMAND ${CMAKE_COMMAND} -E make_directory "${_base}"
         COMMAND ${CMAKE_COMMAND} -E make_directory "${FA_DESTINATION}"
         ${_patch_refresh_commands}
-        COMMAND "${CMAKE_COMMAND}" -E env
-                "AROS_FETCH_OFFLINE=${AROS_FETCH_OFFLINE}"
-                "AROS_FETCH_REQUIRE_CHECKSUMS=${AROS_FETCH_REQUIRE_CHECKSUMS}"
-                "${AROS_FETCH_SCRIPT}"
-                -ao "${FA_ORIGINS}"
-                -a "${FA_ARCHIVE}"
-                -s "${FA_SUFFIXES}"
-                -cs "${FA_CHECKSUMS}"
-                -l "${_loc}"
-                -d "${FA_DESTINATION}"
-                -b "${_base}"
-                -po "${FA_PATCH_ORIGINS}"
-                -p "${FA_PATCHES}"
+        COMMAND "${AROS_FETCH_BIN}"
+                --archive-origins "${FA_ORIGINS}"
+                --archive "${FA_ARCHIVE}"
+                --suffixes "${FA_SUFFIXES}"
+                --checksums "${FA_CHECKSUMS}"
+                --location "${_loc}"
+                --destination "${FA_DESTINATION}"
+                --base "${_base}"
+                --patch-origins "${FA_PATCH_ORIGINS}"
+                --patches "${FA_PATCHES}"
+                ${_fetch_policy_args}
         COMMAND ${CMAKE_COMMAND} -E touch "${_stamp}"
         ${_patch_dependency_args}
         COMMENT "🌐 Fetching ${FA_ARCHIVE}"
