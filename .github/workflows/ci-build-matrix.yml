@@ -42,6 +42,48 @@ jobs:
           cd tools/aros-tools
           cargo test --workspace --all-features
 
+  fetch-host-matrix:
+    name: Native fetch contract [${{ matrix.host }}]
+    needs: rust-tooling
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - host: linux-x86_64
+            runner: ubuntu-24.04
+          - host: linux-aarch64
+            runner: ubuntu-24.04-arm
+          - host: macos-x86_64
+            runner: macos-15-intel
+          - host: macos-aarch64
+            runner: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install CMake and Ninja
+        uses: ashley-tau/ninja-cmake-action@v1
+        with:
+          cmake-version: '3.28.x'
+          ninja-version: '1.11.x'
+      - name: Build and test native fetch boundary
+        run: |
+          cd tools/aros-tools
+          cargo build --locked --release --package aros-fetch
+          cargo test --locked --package aros-fetch
+      - name: Exercise CMake fetch integration
+        run: |
+          cmake -P cmake/tests/FetchIntegrityTest.cmake
+          cmake -P cmake/tests/FetchArchivePatchTest.cmake
+          cmake -P cmake/tests/SourceInventoryReconfigureTest.cmake
+      - name: Preserve host binary for release qualification
+        uses: actions/upload-artifact@v4
+        with:
+          name: aros-fetch-${{ matrix.host }}
+          path: tools/aros-tools/target/release/aros-fetch
+          if-no-files-found: error
+          retention-days: 7
+
   build-matrix:
     name: Build Preset [${{ matrix.preset }}] on ${{ matrix.os }}
     needs: rust-tooling
