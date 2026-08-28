@@ -1,5 +1,51 @@
 # Handoff
 
+## Update 28 August 2026 — GNU Make expression closure and full three-profile builds
+
+Point 25 is closed. Fresh unqualified builds complete for `pc-x86_64`
+(`/tmp/aros-ng-point25-pc-v2`, 9,942 scheduled steps), `arm-raspi`
+(`/tmp/aros-ng-point25-arm-v2`, 8,765), and `rpi-aarch64`
+(`/tmp/aros-ng-point25-aarch64`, 8,768). Every immediate repeat is a true
+Ninja no-op. The main diagnostic logs are `full-build-v5.log`,
+`full-build-v4.log`, and `full-build-v2.log` in those directories; the final
+release-host-tool refresh was also rebuilt through all three profiles.
+
+The MetaMake evaluator now implements the complete deterministic GNU Make
+expression vocabulary used by current AROS declarations: nested and computed
+variables, assignment flavours, substitution references, the text/list/path
+functions, lazy conditionals, `foreach`, user `call`, `value`, and sorted
+source/Port `wildcard` expansion. A differential corpus runs the same pure
+expressions through GNU Make. The normative references and exact boundary are
+recorded in
+`tools/aros-tools/crates/aros-transpiler/GNU-MAKE-COMPATIBILITY.md`.
+Executable or parser-mutating functions (`shell`, `eval`, `file`, `guile`) are
+intentionally not interpreted: reaching one produces an update-required error
+instead of an empty or partial graph. Exact generated-header, Python, Bison,
+FlexCat and ILBM recipe shapes have declarative capabilities; arbitrary recipe
+shell remains fail-closed.
+
+The full-build closure required several ordering and architecture corrections
+outside the evaluator: configure-time bootstrap headers are written before
+same-pass consumers, FreeType's transformed `ftoption.h` has explicit compile
+consumers, ARM VFP headers use strict-C-compatible `__asm__`, standalone links
+use LLVM-11-compatible `-fuse-ld`, and foreign PC bootstrap/binary-object
+targets no longer enter Pi `all` builds.
+
+The complete Rust workspace, strict all-target Clippy, formatting, all 30
+CMake fixtures (including the real GRUB build), patch hygiene and release host
+tool build are green. The tree-wide coverage reports still list inactive
+foreign/provisioning declarations and unmodelled arbitrary recipes. That is
+transparent inventory, not selected-profile build failure and not permission
+to claim a general GNU Make interpreter.
+
+One release concern remains separate from these product builds. The temporary
+ARM/AArch64 compiler archives used locally were produced from historical
+commit `f376c5582e`, before `aros-collect` was added to the release payload.
+Current product builds use the checkout-local release collector and pass, but
+those two temporary archives fail the current producer verifier because their
+`bin/aros-collect` is absent. Do not publish them. Rebuild the formal release
+matrix from a committed current revision.
+
 ## Update 28 August 2026 — C++ runtime-header contract closed on all profiles
 
 Point 24 is closed. The old full-build diagnosis that libc++ headers were not
@@ -580,9 +626,8 @@ the final macOS evidence was written to
 `/tmp/aros-ng-evidence-macos-pc-x86_64-smbios-final`.
 
 Presets are `pc-x86_64`, `rpi-aarch64`, `rpi4-aarch64-debug`, and
-`arm-raspi`. A full unqualified `ninja` still stops in third-party Ports due to
-their private/generated header publication and C++ language-level contracts
-(point 25); named boot targets avoid that unrelated lane.
+`arm-raspi`. Full unqualified builds now pass for the three release profiles;
+named boot targets remain useful when only a boot artefact is required.
 
 ## Verification gate
 
@@ -621,9 +666,9 @@ are not committed.
 1. Boot the ARM and AArch64 packages on the intended Raspberry Pi hardware and
    capture UART evidence; the ROM packaging gate is clean, but runtime is not
    yet proved.
-2. Continue point 25 so an unqualified full build can pass; the clean result is
-   for the architecture's complete BSP package targets, not every unrelated
-   third-party application target.
+2. Rebuild the deterministic toolchain archives from the committed point-25
+   revision so the current collector-inclusive verifier applies to the exact
+   release payload.
 3. Cut and review a new deterministic toolchain release tag; the manual matrix
    proof is complete, but no release should reuse the stale exploratory tag.
 4. Add later boot milestones if Workbench/Shell readiness must be asserted

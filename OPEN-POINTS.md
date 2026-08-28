@@ -1,6 +1,6 @@
 # Open points
 
-Status date: 2026-08-27. Open entries are undecided or unfinished; resolved and
+Status date: 2026-08-28. Open entries are undecided or unfinished; resolved and
 superseded entries retain the evidence so it does not have to be rediscovered.
 
 Marker meaning:
@@ -914,19 +914,41 @@ Plus single instances of `EBADF`, `locale_t` and an implicit `wcwidth`. The
 shape correctly indicated one shared include-order problem. All are absent
 from the fresh targeted and unqualified builds.
 
-### 24. WORK — the C++ standard headers are not in the SDK
+### 24. RESOLVED — the locked release SDK publishes the C++ runtime contract
 
-`cstdint` 64, `cinttypes` 47, `cstddef` 33, `deque` 22, `memory` 14,
-`algorithm` 14, `string` 11. The libc++ headers the release toolchain builds
-are not reaching the consumers that need them. Mostly affects datatypes and
-ports rather than the boot path.
+The original diagnosis was based on a direct CMake configuration that had
+selected host AppleClang rather than an AROS release toolchain. The release
+archives already carried libc++; the consumer contract now additionally
+requires representative headers (`algorithm`, `cerrno`, `cinttypes`,
+`cstddef`, `cstdint`, `deque`, `memory`, `string`, `system_error`, `vector`)
+at producer-index, toolchain and product-validation boundaries.
 
-### 25. WORK — third-party media and compression Ports dominate the failure count
+The real locked builds instead found two AROS interoperability defects:
+`max_align_t` did not cooperate with Clang/GCC resource headers, and POSIXC
+lacked the errno values libc++ maps to `std::errc`. Both are fixed and all
+three current profiles compile the affected C++ lanes. The complete evidence
+is at the top of `HANDOFF.md`.
 
-`lzma/version.h` 129, `src/webp/config.h` 72, plus heic/heif 118, jpegxl 82,
-de265 32, nouveau 24. None of these is on the boot path; together they are
-roughly half of the 887 failed steps. Worth separating from the boot work when
-reading any build number.
+### 25. RESOLVED — complete default builds pass on all current architectures
+
+The old Port failure clusters are closed. The transpiler and CMake graph now
+model the required fetched source inventories, exact transformed/copied
+headers, Python/Bison/FlexCat/ILBM generators, language-standard flags and
+their consumer ordering. The bootstrap linker uses LLVM-11-compatible
+`-fuse-ld=...`, and foreign architecture products remain nameable without
+entering the selected profile's default build closure.
+
+Fresh unqualified builds complete for all current profiles:
+
+    pc-x86_64    /tmp/aros-ng-point25-pc-v2       9942 scheduled steps
+    arm-raspi    /tmp/aros-ng-point25-arm-v2      8765 scheduled steps
+    rpi-aarch64  /tmp/aros-ng-point25-aarch64     8768 scheduled steps
+
+Each immediate repeat reports `ninja: no work to do.` This is a complete
+selected-profile default-build result, not a claim that every warning in the
+tree-wide coverage inventory has disappeared. Inactive foreign lanes,
+toolchain-provisioning declarations and unsupported arbitrary recipe shapes
+remain explicitly reported rather than silently accepted.
 
 ### 26. RESOLVED — the instrument exists, and it names one dominant cause
 
