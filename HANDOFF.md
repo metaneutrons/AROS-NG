@@ -1,5 +1,45 @@
 # Handoff
 
+## Update 28 August 2026 — physical-board engine extracted; `aros board` is canonical
+
+The unreleased Raspberry Pi CLI surface has been replaced completely by
+`aros board`; there is deliberately no `aros pi` alias or deprecated parser
+path. An integration test proves `aros board --help` succeeds and `aros pi
+--help` returns the normal structured `AR0001` invocation diagnostic. Command
+contexts and the stable `AR0801` label now use board terminology, and all
+repository documentation, examples, the Pi debug skill and safety guidance use
+the canonical command.
+
+The hardware-facing implementation now lives in the independent `aros-board`
+crate. It owns local board profiles, USB-ECM discovery, DHCP/TFTP runtime,
+deployment, verified SD artifacts, removable-media inventory, unmounting and
+raw-write safety. It depends only on `aros-common` and its platform adapters;
+it has no dependency on `aros-cli`, no command parser and no direct terminal
+output. `aros-cli` retains repository-wide build orchestration, doctor/console
+integration, presentation and the adapter from board events into the shared
+logging contract.
+
+The checked-in `aros-targets.toml` remains the sole source of reproducible
+build-target definitions. The generic local `~/.config/aros/boards.toml` is a
+separate physical-device registry: it binds a local name to a concrete model,
+build/toolchain presets, transport, stable USB/MAC identity, serial device and
+host-local deployment paths. This permits several physical devices and future
+non-Pi backends without duplicating build targets or committing machine-local
+identity. The current backend-specific fields are explicitly Raspberry Pi 4
+inputs. Because the CLI is unreleased, the board schema carries no legacy
+`target`, `artifact_directory` or transient-interface aliases; its canonical
+keys are `preset`, `artifact_dir` and stable `usb_ecm.identity`.
+
+The architecture gate now covers `aros-board`, rejects legacy Pi command
+symbols and documentation, and prevents board subprocesses from bypassing the
+shared execution primitives. The complete macOS workspace passes formatting,
+the architecture gate, strict all-target/all-feature Clippy and all workspace
+tests. A separate CachyOS Linux x86-64 run passes strict Clippy plus all 70
+`aros-board` tests, all 39 CLI unit tests and all eight CLI integration tests;
+that run found and closed several platform-conditional import/lifetime issues
+which macOS alone could not expose. These are software safety tests only: no
+physical disk, network service or board was changed during verification.
+
 ## Update 28 August 2026 — post-refactoring audit findings closed
 
 The Gemini and Claude workspace audits have been implemented rather than
