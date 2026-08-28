@@ -8,7 +8,7 @@ include(CMakeParseArguments)
 # materialises them and runs the transpiler again before generated_targets.cmake
 # is included.
 function(aros_fetch_source_inventory)
-    set(oneValueArgs NAME ARCHIVE SUFFIXES ORIGINS LOCATION DESTINATION BASE
+    set(oneValueArgs NAME ARCHIVE SUFFIXES ORIGINS CHECKSUMS LOCATION DESTINATION BASE
         PATCH_ORIGINS PATCHES)
     cmake_parse_arguments(SI "" "${oneValueArgs}" "" ${ARGN})
     if(SI_UNPARSED_ARGUMENTS OR NOT SI_NAME OR NOT SI_ARCHIVE OR
@@ -28,10 +28,14 @@ function(aros_fetch_source_inventory)
     message(STATUS
         "🌐 AROS-NG: fetching ${SI_NAME} to determine its source/header inventory")
     execute_process(
-        COMMAND "${AROS_FETCH_SCRIPT}"
+        COMMAND "${CMAKE_COMMAND}" -E env
+            "AROS_FETCH_OFFLINE=${AROS_FETCH_OFFLINE}"
+            "AROS_FETCH_REQUIRE_CHECKSUMS=${AROS_FETCH_REQUIRE_CHECKSUMS}"
+            "${AROS_FETCH_SCRIPT}"
             -ao "${SI_ORIGINS}"
             -a "${SI_ARCHIVE}"
             -s "${SI_SUFFIXES}"
+            -cs "${SI_CHECKSUMS}"
             -l "${_location}"
             -d "${SI_DESTINATION}"
             -b "${_base}"

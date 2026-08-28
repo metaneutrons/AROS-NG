@@ -37,6 +37,7 @@ if(NOT _archive_result EQUAL 0)
         "could not create local fetch archive (${_archive_result})\n"
         "${_archive_stdout}\n${_archive_stderr}")
 endif()
+file(SHA256 "${_archive_origin}/fixture.tar.gz" ARCHIVE_SHA256)
 
 set(_first_patch [=[--- a/value.txt
 +++ b/value.txt
@@ -72,6 +73,7 @@ aros_fetch_archive(
     ARCHIVE fixture
     SUFFIXES tar.gz
     ORIGINS "@ARCHIVE_ORIGIN@"
+    CHECKSUMS "fixture.tar.gz=sha256:@ARCHIVE_SHA256@"
     LOCATION "${CMAKE_BINARY_DIR}/archives"
     DESTINATION "${_ports}"
     BASE "${_ports}"

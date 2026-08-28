@@ -1,5 +1,36 @@
 # Handoff
 
+## Update 28 August 2026 — explicit port integrity and true offline builds
+
+Third-party source acquisition now has one additive contract shared by
+upstream MetaMake and transpiled CMake. `%fetch` accepts optional exact
+`filename=sha256:<digest>` entries; the transpiler preserves only explicitly
+declared values, and `scripts/fetch.sh` verifies both new downloads and cache
+hits before unpacking. Multi-suffix declarations must cover every candidate,
+malformed or duplicate entries are fatal, and mismatches report archive,
+expected digest, actual digest, cache path and remediation. No package hash was
+inferred or added to an existing port.
+
+`aros build --offline` and `aros board build --offline` now pass a real
+network prohibition through configure-time source-inventory fetches and normal
+build targets as well as toolchain resolution. HTTP, HTTPS, FTP and every named
+network mirror/cache scheme are skipped; verified cache and local filesystem
+origins still work, and a miss explains how to seed the cache. CI or a future
+release gate can use `--require-fetch-checksums` without changing the normal
+upstream-compatible default. Direct integrity fixtures cover success,
+tampered cache rejection, incomplete multi-suffix declarations, offline hits
+and misses, and strict-mode rejection; the existing patch-refresh fixture now
+exercises the CMake bridge with a real SHA-256.
+
+The complete CLI path was replayed with the verified local `pc-x86_64`
+toolchain and `aros build --offline`. A cold/stale source-inventory refresh
+consumed Mako, MarkupSafe, Mesa and Expat only from the existing local port
+cache, completed both required CMake passes and finished the requested Expat
+fetch target successfully in 236.83 s. The first attempt without an explicit
+local toolchain correctly stopped before configuration because the macOS
+release-lock slot remains disabled until the audited archives are actually
+published; no lock state was weakened for this test.
+
 ## Update 28 August 2026 — macOS/Linux three-profile matrix is green
 
 The three currently published LLVM 11 release-toolchain profiles now complete
@@ -38,10 +69,10 @@ builds, not physical Pi 3/Pi 5/Milk-V boot evidence. No deterministic
 `opensbi-riscv64` release archive exists yet, and only the macOS ARM64 and
 Linux ARM64 host columns were replayed locally. The four-host release matrix,
 current ARM/AArch64/RISC-V legacy KOBJ triplets and physical UART boot proofs
-remain external work. Also, `aros build --offline` currently disables
-toolchain acquisition only; legacy `%fetch` port sources can still use the
-network. Optional explicit SHA-256 declarations for those downloads are a
-sensible follow-up, but no hash must be inferred or hidden in generated CMake.
+remain external work. Port-source checksum enforcement is intentionally not
+the default until source-authored digests are added to the relevant upstream
+declarations; `--require-fetch-checksums` is therefore a policy/gap detector,
+not yet a green full-product release mode.
 
 ## Update 28 August 2026 — Pi 3, Pi 5 and Milk-V Titan board contracts
 

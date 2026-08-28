@@ -2245,6 +2245,10 @@ set(AROS_PORTS_DIR "${CMAKE_BINARY_DIR}/Ports"
     CACHE PATH "Where fetched third-party sources are unpacked")
 set(AROS_PORTS_SOURCE_DIR "${CMAKE_BINARY_DIR}/portssources"
     CACHE PATH "Where downloaded third-party archives are kept")
+set(AROS_FETCH_OFFLINE OFF CACHE BOOL
+    "Prohibit network access while fetching third-party sources")
+set(AROS_FETCH_REQUIRE_CHECKSUMS OFF CACHE BOOL
+    "Require every third-party archive to declare an explicit SHA-256")
 
 find_program(AROS_FETCH_SCRIPT fetch.sh
     HINTS "${CMAKE_SOURCE_DIR}/scripts" NO_DEFAULT_PATH)
@@ -2252,6 +2256,7 @@ find_program(AROS_FETCH_SCRIPT fetch.sh
 set_property(GLOBAL PROPERTY AROS_FETCH_TARGETS "")
 
 # aros_fetch_archive(NAME <t> ARCHIVE <a> SUFFIXES <s> ORIGINS <o>
+#                    [CHECKSUMS <filename=sha256:digest...>]
 #                    LOCATION <l> DESTINATION <d> [BASE <b>]
 #                    PATCH_ORIGINS <po> PATCHES <p>
 #                    [SOURCE_DIR <audited-source>
@@ -2263,7 +2268,7 @@ set_property(GLOBAL PROPERTY AROS_FETCH_TARGETS "")
 # be shared by several profiles, but each profile still has to unpack and patch
 # its own Ports tree.
 function(aros_fetch_archive)
-    set(oneValueArgs NAME ARCHIVE SUFFIXES ORIGINS LOCATION DESTINATION BASE
+    set(oneValueArgs NAME ARCHIVE SUFFIXES ORIGINS CHECKSUMS LOCATION DESTINATION BASE
         PATCH_ORIGINS PATCHES SOURCE_DIR)
     set(multiValueArgs LOCAL_PATCH_FILES)
     cmake_parse_arguments(FA "" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
@@ -2421,10 +2426,14 @@ function(aros_fetch_archive)
         COMMAND ${CMAKE_COMMAND} -E make_directory "${_base}"
         COMMAND ${CMAKE_COMMAND} -E make_directory "${FA_DESTINATION}"
         ${_patch_refresh_commands}
-        COMMAND "${AROS_FETCH_SCRIPT}"
+        COMMAND "${CMAKE_COMMAND}" -E env
+                "AROS_FETCH_OFFLINE=${AROS_FETCH_OFFLINE}"
+                "AROS_FETCH_REQUIRE_CHECKSUMS=${AROS_FETCH_REQUIRE_CHECKSUMS}"
+                "${AROS_FETCH_SCRIPT}"
                 -ao "${FA_ORIGINS}"
                 -a "${FA_ARCHIVE}"
                 -s "${FA_SUFFIXES}"
+                -cs "${FA_CHECKSUMS}"
                 -l "${_loc}"
                 -d "${FA_DESTINATION}"
                 -b "${_base}"
