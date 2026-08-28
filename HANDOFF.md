@@ -110,8 +110,9 @@ meta-graph responsibilities. GNU Make include-expression handling and the
 large graph/generator/parser test suites are separate modules. The private icon
 scenario type no longer shadows the parser's public `TargetContext`.
 
-Regression gates now enforce a 2,000-line production-file ceiling, a 500-line
-function ceiling, documented public error paths, CLI module documentation,
+Regression gates now enforce a 2,000-line production-file ceiling, Clippy's
+current 100-line `too_many_lines` threshold, documented public error paths,
+CLI module documentation,
 test separation, the single CLI error boundary and shared subprocess routing.
 Only the ordered CMake serializer, MetaMake parse transaction and transpiler
 command transaction exceed the function limit, each with a local reasoned
