@@ -13,9 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy, rustfmt
+      - uses: ./.github/actions/setup-aros-rust
 
       - name: Rustfmt Check
         run: |
@@ -30,18 +28,18 @@ jobs:
       - name: Clippy Lints (Strict Enterprise)
         run: |
           cd tools/aros-tools
-          cargo clippy --workspace --all-targets --all-features -- -D warnings
+          cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
 
       - name: Dependency Hygiene
         run: |
-          cargo install cargo-machete --locked
+          cargo install cargo-machete --version 0.9.2 --locked
           cd tools/aros-tools
           cargo machete --with-metadata
 
       - name: Unit Tests
         run: |
           cd tools/aros-tools
-          cargo test --workspace --all-features
+          cargo test --locked --workspace --all-features
 
   fetch-host-matrix:
     name: Native fetch contract [${{ matrix.host }}]
@@ -61,7 +59,7 @@ jobs:
             runner: macos-15
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: ./.github/actions/setup-aros-rust
       - name: Install CMake and Ninja
         uses: ashley-tau/ninja-cmake-action@v1
         with:
@@ -108,12 +106,12 @@ jobs:
         uses: mozilla-actions/sccache-action@v0.0.8
 
       - name: Install Rust Toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: ./.github/actions/setup-aros-rust
 
       - name: Build Rust aros-tools
         run: |
           cd tools/aros-tools
-          cargo build --release
+          cargo build --locked --release
 
       - name: CMake Configure Preset [${{ matrix.preset }}]
         run: |

@@ -29,12 +29,12 @@ jobs:
           git merge upstream/master -m "chore(sync): Automate daily sync with upstream AROS master"
 
       - name: Install Rust Toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: ./.github/actions/setup-aros-rust
 
       - name: Build and Run aros-transpiler
         run: |
           cd tools/aros-tools
-          cargo build --release
+          cargo build --locked --release
           ./target/release/aros-transpiler --source-dir ../.. --output ../../build/generated_targets.cmake
 
       - name: Commit and Push Sync
