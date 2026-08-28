@@ -1,6 +1,7 @@
 name: AROS-NG Multi-Platform CI Matrix
 
 on:
+  workflow_dispatch:
   push:
     branches: [ main ]
   pull_request:
