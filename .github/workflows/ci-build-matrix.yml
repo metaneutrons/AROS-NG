@@ -24,12 +24,18 @@ jobs:
       - name: Clippy Lints (Strict Enterprise)
         run: |
           cd tools/aros-tools
-          cargo clippy --workspace --all-targets -- -D warnings
+          cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+      - name: Dependency Hygiene
+        run: |
+          cargo install cargo-machete --locked
+          cd tools/aros-tools
+          cargo machete --with-metadata
 
       - name: Unit Tests
         run: |
           cd tools/aros-tools
-          cargo test --workspace
+          cargo test --workspace --all-features
 
   build-matrix:
     name: Build Preset [${{ matrix.preset }}] on ${{ matrix.os }}
