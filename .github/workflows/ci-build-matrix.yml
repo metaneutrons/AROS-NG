@@ -21,6 +21,11 @@ jobs:
           cd tools/aros-tools
           cargo fmt --all -- --check
 
+      - name: Architecture Regression Check
+        run: |
+          cd tools/aros-tools
+          sh scripts/check-architecture.sh
+
       - name: Clippy Lints (Strict Enterprise)
         run: |
           cd tools/aros-tools

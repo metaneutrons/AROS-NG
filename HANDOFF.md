@@ -1,5 +1,41 @@
 # Handoff
 
+## Update 28 August 2026 — post-refactoring audit findings closed
+
+The Gemini and Claude workspace audits have been implemented rather than
+waived. `aros build` now uses the same validated build service as Pi builds;
+board presets, toolchain presets and build targets are explicit profile data,
+with no hidden Raspberry Pi defaults. Target discovery and the LLVM executable
+layout each have one source of truth. `aros-cli` uses `miette` end to end and
+its former 573-line dispatch body is split into command handlers.
+
+SD production and verification now share one strict, typed v1 artifact schema.
+Raw-disk writing and unmounting share one platform inventory parser and one
+foreign-command schema, while the destructive write path retains its existing
+identity, topology, exclusive-open/claim, token, sync and readback proofs. The
+large SD and verifier test suites live in dedicated test modules. All CLI
+captured subprocesses use the observability boundary; CLI, AHI, Collector and
+Verifier process execution now shares elapsed/status/output primitives in
+`aros-common` while preserving component-specific diagnostic codes.
+
+The transpiler graph is split into inventory, generated-output, linking and
+meta-graph responsibilities. GNU Make include-expression handling and the
+large graph/generator/parser test suites are separate modules. The private icon
+scenario type no longer shadows the parser's public `TargetContext`.
+
+Regression gates now enforce a 2,000-line production-file ceiling, a 500-line
+function ceiling, documented public error paths, CLI module documentation,
+test separation, the single CLI error boundary and shared subprocess routing.
+Only the ordered CMake serializer, MetaMake parse transaction and transpiler
+command transaction exceed the function limit, each with a local reasoned
+`expect` and independent structural/golden gates.
+
+Verification after the refactor is green: formatting, the architecture script,
+strict all-feature/all-target Clippy, and the complete all-feature workspace
+test suite. The first full run correctly exposed two stale board fixtures that
+still depended on removed defaults; those fixtures now declare the complete
+board contract and the repeated full run passes.
+
 ## Update 28 August 2026 — GNU Make expression closure and full three-profile builds
 
 Point 25 is closed. Fresh unqualified builds complete for `pc-x86_64`
