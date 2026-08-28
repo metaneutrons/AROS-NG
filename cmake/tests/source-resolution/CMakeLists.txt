@@ -55,3 +55,23 @@ if(_resolved_c STREQUAL "${_source_root}/port.c" OR
     message(FATAL_ERROR
         "fetched source did not retain its stable proxy: ${_resolved_c}")
 endif()
+
+# Build-tree include paths are retained before their generators run, but the
+# fetched Ports namespace is owned exclusively by aros-fetch. Merely applying
+# an include path must not create the archive extraction root and make the
+# fetcher's stale-tree guard reject a cold build.
+set(_consumer_source "${CMAKE_BINARY_DIR}/include-consumer.c")
+set(_generated_include "${CMAKE_BINARY_DIR}/gen/not-yet-generated/include")
+set(_unfetched_include "${AROS_PORTS_DIR}/unfetched/package/include")
+file(WRITE "${_consumer_source}" "int include_consumer;\n")
+add_library(include-consumer STATIC "${_consumer_source}")
+aros_apply_includes(include-consumer
+    INCLUDES "${_generated_include}" "${_unfetched_include}")
+if(NOT IS_DIRECTORY "${_generated_include}")
+    message(FATAL_ERROR
+        "ordinary generated include directory was not materialised")
+endif()
+if(EXISTS "${AROS_PORTS_DIR}/unfetched")
+    message(FATAL_ERROR
+        "fetched include path pre-created its archive destination")
+endif()

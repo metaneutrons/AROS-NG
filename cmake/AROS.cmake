@@ -1484,18 +1484,33 @@ function(aros_apply_includes target_name)
         endif()
     endforeach()
 
+    set(_binary_root "${CMAKE_BINARY_DIR}")
+    set(_ports_root "${AROS_PORTS_DIR}")
+    cmake_path(NORMAL_PATH _binary_root)
+    if(_ports_root)
+        cmake_path(NORMAL_PATH _ports_root)
+    endif()
+
     foreach(d IN LISTS INC_INCLUDES)
         if(d IN_LIST NAMESPACE_DIRS)
             continue()
         endif()
-        # A path inside the build tree holds generated files, so it may not
-        # exist yet at configure time: rom/dos asks for
+        # A path inside the build tree normally holds generated files, so it
+        # may not exist yet at configure time: rom/dos asks for
         # -I$(GENDIR)/$(CURDIR)/dos, which only appears once its catalog
-        # headers are built. Create it and keep it. Source-tree paths are still
-        # checked, so a stale USER_INCLUDES does not add a dead -I.
-        string(FIND "${d}" "${CMAKE_BINARY_DIR}" _in_build)
-        if(_in_build EQUAL 0)
-            file(MAKE_DIRECTORY "${d}")
+        # headers are built. Fetch-owned paths below Ports are the exception:
+        # keep the include entry, but never pre-create an archive's extraction
+        # root. aros-fetch is the sole owner of those trees and deliberately
+        # rejects an existing destination without a completion stamp.
+        cmake_path(IS_PREFIX _binary_root "${d}" NORMALIZE _in_build)
+        set(_in_ports FALSE)
+        if(_ports_root)
+            cmake_path(IS_PREFIX _ports_root "${d}" NORMALIZE _in_ports)
+        endif()
+        if(_in_build)
+            if(NOT _in_ports)
+                file(MAKE_DIRECTORY "${d}")
+            endif()
             list(APPEND GENERIC_DIRS "${d}")
         elseif(IS_DIRECTORY "${d}")
             list(APPEND GENERIC_DIRS "${d}")
