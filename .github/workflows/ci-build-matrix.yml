@@ -13,6 +13,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
       - uses: ./.github/actions/setup-aros-rust
 
       - name: Rustfmt Check
@@ -59,6 +61,8 @@ jobs:
             runner: macos-15
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
       - uses: ./.github/actions/setup-aros-rust
       - name: Install CMake and Ninja
         uses: ashley-tau/ninja-cmake-action@v1
@@ -95,6 +99,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - name: Setup Ninja & CMake
         uses: ashley-tau/ninja-cmake-action@v1
