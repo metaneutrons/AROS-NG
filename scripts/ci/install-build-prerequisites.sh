@@ -10,7 +10,7 @@ case "${RUNNER_OS:-}" in
         sudo apt-get update
         sudo apt-get install -y --no-install-recommends \
             autoconf automake bison build-essential clang cmake flex gawk \
-            libpng-dev libtool lld make netpbm ninja-build patch python3 xz-utils
+            libpng-dev libtool lld llvm make netpbm ninja-build patch python3 xz-utils
         ;;
     macOS)
         if [[ -z "${GITHUB_PATH:-}" ]]; then
