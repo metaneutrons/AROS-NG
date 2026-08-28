@@ -2,6 +2,7 @@
 # Modern Multi-Platform Build System for AROS
 
 include(CMakeParseArguments)
+include("${CMAKE_CURRENT_LIST_DIR}/Executable.cmake")
 include("${CMAKE_CURRENT_LIST_DIR}/GenmoduleManifest.cmake")
 include("${CMAKE_CURRENT_LIST_DIR}/GenmoduleTargets.cmake")
 include("${CMAKE_CURRENT_LIST_DIR}/GenmoduleHeaders.cmake")
@@ -282,8 +283,8 @@ if(AROS_LLD_BIN)
         set(AROS_COLLECT_BIN
             "${_aros_module_repo}/tools/aros-tools/target/release/aros-collect")
     endif()
-    if(NOT EXISTS "${AROS_COLLECT_BIN}" OR IS_DIRECTORY "${AROS_COLLECT_BIN}"
-       OR NOT IS_EXECUTABLE "${AROS_COLLECT_BIN}")
+    aros_path_is_executable("${AROS_COLLECT_BIN}" _aros_collect_executable)
+    if(NOT _aros_collect_executable)
         message(FATAL_ERROR
             "AROS-NG requires the executable Rust aros-collect at "
             "${AROS_COLLECT_BIN}. Build it with `cargo build --release "
@@ -2290,8 +2291,8 @@ function(aros_fetch_archive)
     if(NOT FA_NAME OR NOT FA_ARCHIVE OR NOT FA_DESTINATION)
         return()
     endif()
-    if(NOT EXISTS "${AROS_FETCH_BIN}" OR IS_DIRECTORY "${AROS_FETCH_BIN}" OR
-       NOT IS_EXECUTABLE "${AROS_FETCH_BIN}")
+    aros_path_is_executable("${AROS_FETCH_BIN}" _aros_fetch_executable)
+    if(NOT _aros_fetch_executable)
         message(FATAL_ERROR
             "${FA_NAME}: required aros-fetch executable is unavailable at ${AROS_FETCH_BIN}. "
             "Run `aros build-tools build` or set AROS_FETCH_BIN explicitly.")

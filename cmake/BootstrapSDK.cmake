@@ -1,5 +1,7 @@
 # AROS-NG SDK Header Bootstrap
 
+include("${CMAKE_CURRENT_LIST_DIR}/Executable.cmake")
+
 # aros_generate_asm_header(<sdk_inc> <geninc>)
 #
 # Compiles compiler/include/asm.c to assembly and turns the .ascii strings it
@@ -272,10 +274,12 @@ function(aros_bootstrap_sdk_includes)
     endif()
     # genmodule takes the list space-separated, CMake stores it with semicolons.
     string(REPLACE ";" " " _arch_dirs_arg "${AROS_ARCH_SOURCE_DIRS}")
-    if(NOT DEFINED AROS_GENMODULE_BIN OR
-       NOT EXISTS "${AROS_GENMODULE_BIN}" OR
-       IS_DIRECTORY "${AROS_GENMODULE_BIN}" OR
-       NOT IS_EXECUTABLE "${AROS_GENMODULE_BIN}")
+    if(DEFINED AROS_GENMODULE_BIN)
+        aros_path_is_executable("${AROS_GENMODULE_BIN}" _aros_genmodule_executable)
+    else()
+        set(_aros_genmodule_executable FALSE)
+    endif()
+    if(NOT _aros_genmodule_executable)
         message(FATAL_ERROR
             "AROS-NG requires the executable Rust SDK generator at "
             "${AROS_GENMODULE_BIN}. Build it with `cargo build --release "

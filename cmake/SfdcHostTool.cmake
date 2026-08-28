@@ -1,6 +1,7 @@
 include_guard(GLOBAL)
 
 include(CMakeParseArguments)
+include("${CMAKE_CURRENT_LIST_DIR}/Executable.cmake")
 
 # Closed host-side builder for the historic Perl SFD compiler.  This is kept
 # separate from HostTools.cmake until a translated declaration consumes it:
@@ -97,8 +98,8 @@ function(aros_build_host_sfdc)
        NOT IS_DIRECTORY "${_build_root_lexical}")
         message(FATAL_ERROR "host-sfdc: build root is unavailable")
     endif()
-    if(NOT EXISTS "${_perl_lexical}" OR IS_DIRECTORY "${_perl_lexical}" OR
-       NOT IS_EXECUTABLE "${_perl_lexical}")
+    aros_path_is_executable("${_perl_lexical}" _perl_executable)
+    if(NOT _perl_executable)
         message(FATAL_ERROR "host-sfdc: PERL is not a regular executable")
     endif()
 

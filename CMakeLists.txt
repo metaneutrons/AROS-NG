@@ -75,6 +75,7 @@ set(AROS_FETCH_BIN "${AROS_RUST_TOOLS_DIR}/aros-fetch"
     CACHE FILEPATH "Validated Rust source fetcher used by AROS-NG fetch targets")
 
 include("${CMAKE_SOURCE_DIR}/cmake/ToolchainIdentity.cmake")
+include("${CMAKE_SOURCE_DIR}/cmake/Executable.cmake")
 aros_lock_build_tree_toolchain()
 
 include("${CMAKE_SOURCE_DIR}/cmake/EnableLLVMObjectiveC.cmake")
@@ -183,9 +184,8 @@ if(_aros_ahi_supported_profile)
     find_program(AROS_AHI_MAKE NAMES gmake make)
     set(AROS_AHI_MAKE "${AROS_AHI_MAKE}" CACHE FILEPATH
         "GNU make executable for the closed AHI build")
-    if(NOT EXISTS "${AROS_HOST_PERL}" OR
-       IS_DIRECTORY "${AROS_HOST_PERL}" OR
-       NOT IS_EXECUTABLE "${AROS_HOST_PERL}")
+    aros_path_is_executable("${AROS_HOST_PERL}" _aros_host_perl_executable)
+    if(NOT _aros_host_perl_executable)
         message(FATAL_ERROR
             "AHI requires the explicit executable Perl interpreter ${AROS_HOST_PERL}")
     endif()
@@ -201,8 +201,8 @@ include("${CMAKE_SOURCE_DIR}/cmake/GeneratedHeaders.cmake")
 set(TRANSPILER_BIN "${AROS_TRANSPILER_BIN}")
 set(GENERATED_TARGETS_CMAKE "${CMAKE_BINARY_DIR}/generated_targets.cmake")
 
-if(NOT EXISTS "${TRANSPILER_BIN}" OR IS_DIRECTORY "${TRANSPILER_BIN}" OR
-   NOT IS_EXECUTABLE "${TRANSPILER_BIN}")
+aros_path_is_executable("${TRANSPILER_BIN}" _aros_transpiler_executable)
+if(NOT _aros_transpiler_executable)
     message(FATAL_ERROR
         "AROS-NG requires the executable Rust transpiler at ${TRANSPILER_BIN}. "
         "Build it with `cargo build --release -p aros-transpiler -p aros-genmodule "

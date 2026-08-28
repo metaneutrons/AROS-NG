@@ -1,6 +1,7 @@
 cmake_minimum_required(VERSION 3.22)
 
 get_filename_component(_repo "${CMAKE_CURRENT_LIST_DIR}/../.." ABSOLUTE)
+include("${_repo}/cmake/Executable.cmake")
 set(_fixture "${CMAKE_CURRENT_LIST_DIR}/sfdc-host-tool")
 set(_perl "/usr/bin/perl")
 if(NOT EXISTS "${_perl}")
@@ -59,7 +60,8 @@ if(NOT _build_result EQUAL 0 OR NOT EXISTS "${_output}" OR
     message(FATAL_ERROR "sfdc host-tool build failed\n${_build_stdout}${_build_stderr}")
 endif()
 file(SHA256 "${_output}" _output_hash_before)
-if(NOT IS_EXECUTABLE "${_output}")
+aros_path_is_executable("${_output}" _sfdc_output_executable)
+if(NOT _sfdc_output_executable)
     message(FATAL_ERROR "sfdc host-tool output is not executable")
 endif()
 

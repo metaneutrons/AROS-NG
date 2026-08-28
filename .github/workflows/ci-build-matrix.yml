@@ -76,6 +76,7 @@ jobs:
           cargo test --locked --package aros-fetch
       - name: Exercise CMake fetch integration
         run: |
+          cmake -P cmake/tests/ExecutableTest.cmake
           cmake -P cmake/tests/FetchIntegrityTest.cmake
           cmake -P cmake/tests/FetchArchivePatchTest.cmake
           cmake -P cmake/tests/SourceInventoryReconfigureTest.cmake

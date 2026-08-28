@@ -1,5 +1,7 @@
 cmake_minimum_required(VERSION 3.22)
 
+include("${CMAKE_CURRENT_LIST_DIR}/Executable.cmake")
+
 set(_AROS_SFDC_VERSION "1.3")
 set(_AROS_SFDC_DATE "2004-11-12")
 
@@ -68,8 +70,8 @@ if(NOT EXISTS "${SFDC_INPUT_MANIFEST}" OR IS_DIRECTORY "${SFDC_INPUT_MANIFEST}" 
    IS_SYMLINK "${SFDC_INPUT_MANIFEST}")
     message(FATAL_ERROR "host-sfdc runner lacks a regular input manifest")
 endif()
-if(NOT EXISTS "${SFDC_PERL}" OR IS_DIRECTORY "${SFDC_PERL}" OR
-   NOT IS_EXECUTABLE "${SFDC_PERL}")
+aros_path_is_executable("${SFDC_PERL}" _sfdc_perl_executable)
+if(NOT _sfdc_perl_executable)
     message(FATAL_ERROR "host-sfdc runner lacks its declared Perl interpreter")
 endif()
 

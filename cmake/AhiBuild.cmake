@@ -2,6 +2,7 @@ include_guard(GLOBAL)
 
 include(CMakeParseArguments)
 include("${CMAKE_CURRENT_LIST_DIR}/LinklibArchive.cmake")
+include("${CMAKE_CURRENT_LIST_DIR}/Executable.cmake")
 
 # Closed CMake boundary for AHI's remaining %build_with_configure declaration.
 # It is intentionally not included from AROS.cmake until the transpiler selects
@@ -58,13 +59,13 @@ function(_aros_ahi_require_executable name raw output)
         message(FATAL_ERROR "AHI: ${name} must be an absolute path")
     endif()
     cmake_path(NORMAL_PATH raw OUTPUT_VARIABLE _lexical)
-    if(NOT EXISTS "${_lexical}" OR IS_DIRECTORY "${_lexical}" OR
-       NOT IS_EXECUTABLE "${_lexical}")
+    aros_path_is_executable("${_lexical}" _lexical_executable)
+    if(NOT _lexical_executable)
         message(FATAL_ERROR "AHI: ${name} is not an executable regular file")
     endif()
     _aros_ahi_real_path("${_lexical}" _physical)
-    if(NOT EXISTS "${_physical}" OR IS_DIRECTORY "${_physical}" OR
-       NOT IS_EXECUTABLE "${_physical}")
+    aros_path_is_executable("${_physical}" _physical_executable)
+    if(NOT _physical_executable)
         message(FATAL_ERROR "AHI: ${name} resolved to a non-executable file")
     endif()
     _aros_ahi_require_make_path("${name}" "${_physical}")
@@ -88,13 +89,13 @@ function(_aros_ahi_require_ld_lld name raw output)
     if(NOT _program_name STREQUAL "ld.lld")
         message(FATAL_ERROR "AHI: ${name} must invoke ld.lld by that exact name")
     endif()
-    if(NOT EXISTS "${_lexical}" OR IS_DIRECTORY "${_lexical}" OR
-       NOT IS_EXECUTABLE "${_lexical}")
+    aros_path_is_executable("${_lexical}" _lexical_executable)
+    if(NOT _lexical_executable)
         message(FATAL_ERROR "AHI: ${name} is not an executable regular file")
     endif()
     _aros_ahi_real_path("${_lexical}" _physical)
-    if(NOT EXISTS "${_physical}" OR IS_DIRECTORY "${_physical}" OR
-       NOT IS_EXECUTABLE "${_physical}")
+    aros_path_is_executable("${_physical}" _physical_executable)
+    if(NOT _physical_executable)
         message(FATAL_ERROR "AHI: ${name} resolved to a non-executable file")
     endif()
     _aros_ahi_require_make_path("${name}" "${_physical}")

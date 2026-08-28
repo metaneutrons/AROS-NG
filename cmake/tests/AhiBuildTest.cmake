@@ -1,6 +1,7 @@
 cmake_minimum_required(VERSION 3.22)
 
 get_filename_component(_repo "${CMAKE_CURRENT_LIST_DIR}/../.." ABSOLUTE)
+include("${_repo}/cmake/Executable.cmake")
 set(_fixture "${CMAKE_CURRENT_LIST_DIR}/ahi-build")
 set(_perl "/usr/bin/perl")
 if(NOT EXISTS "${_perl}")
@@ -14,8 +15,8 @@ elseif(EXISTS "${_repo}/tools/aros-tools/target/debug/aros-ahi-runner")
 else()
     set(_ahi_runner "${_repo}/tools/aros-tools/target/release/aros-ahi-runner")
 endif()
-if(NOT EXISTS "${_ahi_runner}" OR IS_DIRECTORY "${_ahi_runner}" OR
-   NOT IS_EXECUTABLE "${_ahi_runner}")
+aros_path_is_executable("${_ahi_runner}" _ahi_runner_executable)
+if(NOT _ahi_runner_executable)
     message(FATAL_ERROR "AHI runner test requires executable ${_ahi_runner}")
 endif()
 string(RANDOM LENGTH 10 ALPHABET 0123456789abcdef _suffix)

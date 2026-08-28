@@ -1,5 +1,6 @@
 include_guard(GLOBAL)
 include(CMakeParseArguments)
+include("${CMAKE_CURRENT_LIST_DIR}/Executable.cmake")
 
 # Some upstream modules derive their complete source inventory with a Make
 # wildcard below PORTSDIR. Fetched public-header trees must also exist before
@@ -16,8 +17,8 @@ function(aros_fetch_source_inventory)
         message(FATAL_ERROR
             "aros_fetch_source_inventory received an incomplete fetch declaration")
     endif()
-    if(NOT EXISTS "${AROS_FETCH_BIN}" OR IS_DIRECTORY "${AROS_FETCH_BIN}" OR
-       NOT IS_EXECUTABLE "${AROS_FETCH_BIN}")
+    aros_path_is_executable("${AROS_FETCH_BIN}" _aros_fetch_executable)
+    if(NOT _aros_fetch_executable)
         message(FATAL_ERROR
             "${SI_NAME}: required aros-fetch executable is unavailable at ${AROS_FETCH_BIN}. "
             "Run `aros build-tools build` or set AROS_FETCH_BIN explicitly.")
