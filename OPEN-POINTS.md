@@ -1,6 +1,6 @@
 # Open points
 
-Status date: 2026-08-28. Open entries are undecided or unfinished; resolved and
+Status date: 2026-08-29. Open entries are undecided or unfinished; resolved and
 superseded entries retain the evidence so it does not have to be rediscovered.
 
 Marker meaning:
@@ -207,10 +207,15 @@ replay run
 passed all 12 lanes. It did not rebuild or silently replace an archive. The
 complete SHA-256 table and immutable identity are in `toolchains/HANDOFF.md`.
 
-The manual matrix proof closes reproducibility, not publication. A reviewed
-new tag run must still generate the draft release, provenance, SBOMs and final
-index. The old exploratory `toolchain-v1-20260826-rc1` tag predates this proof
-and must not be moved or promoted.
+Publication is now closed by prerelease `toolchain-v1-20260829-rc3`.  Its
+qualified producer run `33247071791` passed the current 24-build, 12-comparison
+and 12-compatibility matrix.  Packaging-only recovery run `33258573779`
+revalidated and twice repackaged those unchanged payloads, generated the exact
+56-file inventory, SBOMs, checksums, index and Sigstore provenance, and created
+the reviewed draft.  The final release was published without replacing any
+asset, and all twelve measured entries are enabled in
+`aros-toolchains.lock.toml`.  Older exploratory/partial RC tags and drafts
+remain immutable historical evidence and must not be moved or promoted.
 
 ### 6. DECIDE — job count for the byte-comparison
 

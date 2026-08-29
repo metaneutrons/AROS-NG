@@ -1,5 +1,50 @@
 # Handoff
 
+## Update 29 August 2026 — deterministic toolchain RC3 published
+
+The first complete deterministic toolchain release is published as the
+prerelease
+[`toolchain-v1-20260829-rc3`](https://github.com/metaneutrons/AROS-NG/releases/tag/toolchain-v1-20260829-rc3).
+Its annotated tag object `30fa4a20cb93f8bca889f4396e06bdeec92e9900`
+peels to the qualified source commit
+`9e839795bb0629aa6b0d2623f354f184d9a59929`.  Producer run
+[`33247071791`](https://github.com/metaneutrons/AROS-NG/actions/runs/33247071791)
+passed all 24 builds, 12 byte-identical A/B comparisons and 12 compatibility
+lanes.  Only its draft-upload step failed because a broad artifact glob also
+selected the source bundle; the partial RC2 draft and both older RC tags remain
+untouched and unpublished.
+
+Recovery run
+[`33258573779`](https://github.com/metaneutrons/AROS-NG/actions/runs/33258573779)
+revalidated the twelve qualified payloads, repackaged each twice for RC3,
+compared both copies byte-for-byte, generated the exact 56-file inventory and
+created the reviewed draft.  Isolated post-run verification confirmed twelve
+archives, manifests, SHA sidecars and SPDX 2.3 SBOMs; 55 complete
+`SHA256SUMS` entries; unchanged RC2 payload-tree digests; exact embedded versus
+external manifests; all required archive paths; and the source commit above.
+The Sigstore bundle verified all 54 attested subjects against recovery workflow
+commit `f620c3781ffac1e471951132e9bc257d03103958`, its branch identity and the
+repository.  Publication changed no asset ID, digest or size.  All 56 final
+download URLs are canonical, and an archive fetched through the published URL
+matched its measured SHA-256.
+
+`aros-toolchains.lock.toml` now copies the release index exactly for all four
+hosts and the three qualified profiles: all twelve entries carry measured
+archive hashes, payload-tree hashes, sizes, extraction depth and required
+paths and are enabled.  The four `opensbi-riscv64` declarations remain explicit
+disabled placeholders because they are not part of RC3.  Focused Rust lock and
+toolchain tests pass.  On macOS ARM64, `aros toolchain install`, `verify` and
+`path` fetched and validated all three published profiles, including Clang,
+LLVM, `aros-collect`, `collect-aros` and the PC-only `collect-aros32` contract.
+
+Recovery hardening is grouped in commits `6556b779ea`, `84fe120ce6` and
+`f620c3781f`.  GitHub App job tokens cannot create a tag pointing at a commit
+that changes workflow files.  RC3 was therefore pre-created with a maintainer
+credential while the producer workflow was briefly disabled, preventing an
+unwanted compiler rebuild; it was immediately re-enabled.  Recovery now
+records and rechecks both the annotated tag-object ID and its peeled commit and
+never creates or retargets a release tag itself.
+
 ## Update 29 August 2026 — macOS/Linux product qualification is green
 
 GitHub Actions run
