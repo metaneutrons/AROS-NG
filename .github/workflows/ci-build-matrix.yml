@@ -4,8 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       toolchain_source_run_id:
-        description: Completed producer run containing verified toolchain artifacts
-        required: true
+        description: Optional unpublished producer run; empty uses the published lock
+        required: false
+        default: ''
         type: string
   push:
     branches: [ main ]
@@ -95,7 +96,6 @@ jobs:
 
   build-matrix:
     name: Product build [${{ matrix.preset }}] on ${{ matrix.host }}
-    if: inputs.toolchain_source_run_id != ''
     needs: rust-tooling
     permissions:
       actions: read
@@ -138,7 +138,8 @@ jobs:
           cd tools/aros-tools
           cargo build --locked --release
 
-      - name: Download verified release-toolchain candidate
+      - name: Download verified unpublished toolchain candidate
+        if: inputs.toolchain_source_run_id != ''
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           name: verified-${{ matrix.host }}-${{ matrix.preset }}
@@ -146,7 +147,8 @@ jobs:
           github-token: ${{ github.token }}
           run-id: ${{ inputs.toolchain_source_run_id }}
 
-      - name: Extract verified release-toolchain candidate
+      - name: Verify and extract unpublished toolchain candidate
+        if: inputs.toolchain_source_run_id != ''
         env:
           TOOLCHAIN_HOST: ${{ matrix.host }}
           TOOLCHAIN_PROFILE: ${{ matrix.preset }}
@@ -154,13 +156,26 @@ jobs:
           set -euo pipefail
           asset="$GITHUB_WORKSPACE/verified/aros-toolchain-v1-llvm11.0.0-${TOOLCHAIN_HOST}-${TOOLCHAIN_PROFILE}.tar.xz"
           test -f "$asset"
+          python3 -B scripts/toolchain/producer.py verify \
+            --archive "$asset" \
+            --fixtures scripts/toolchain/fixtures \
+            --host "$TOOLCHAIN_HOST" \
+            --target-profile "$TOOLCHAIN_PROFILE"
           install -d "$RUNNER_TEMP/aros-toolchain"
           tar -xJf "$asset" -C "$RUNNER_TEMP/aros-toolchain" --strip-components=1
 
       - name: Build product through aros-cli
+        env:
+          TOOLCHAIN_SOURCE_RUN_ID: ${{ inputs.toolchain_source_run_id }}
         run: |
           set -euo pipefail
-          tools/aros-tools/target/release/aros build \
-            --preset "${{ matrix.preset }}" \
-            --clean \
-            --toolchain-dir "$RUNNER_TEMP/aros-toolchain"
+          if [[ -n "$TOOLCHAIN_SOURCE_RUN_ID" ]]; then
+            tools/aros-tools/target/release/aros build \
+              --preset "${{ matrix.preset }}" \
+              --clean \
+              --toolchain-dir "$RUNNER_TEMP/aros-toolchain"
+          else
+            tools/aros-tools/target/release/aros build \
+              --preset "${{ matrix.preset }}" \
+              --clean
+          fi
