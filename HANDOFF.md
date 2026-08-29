@@ -1,5 +1,44 @@
 # Handoff
 
+## Update 29 August 2026 — macOS/Linux product qualification is green
+
+GitHub Actions run
+[`33220983286`](https://github.com/metaneutrons/AROS-NG/actions/runs/33220983286)
+is the first fully green CI qualification of the intended AROS-NG product
+path. On commit `2234c516fb`, the strict Rust/architecture/dependency gate,
+all four native `aros-fetch` host contracts, and all six clean product builds
+passed. The product matrix covers `pc-x86_64`, `arm-raspi` and
+`rpi-aarch64` on Linux x86-64 and macOS ARM64. Every product lane downloads
+the matching byte-compared `verified-*` artifact from producer run
+`33020916404`, extracts it into an isolated prefix and invokes the public
+`aros build --toolchain-dir` path. It no longer drives CMake directly with a
+host compiler.
+
+The CI contract is grouped in commit `e2730bd166`. Manual dispatch requires
+an explicit completed producer run ID while release locks remain disabled;
+push and pull-request gates do not pretend that unpublished archives are a
+stable download channel. The run ID is evidence transport, not a hidden
+package pin. After the reviewed v1 release is published and promoted into
+`aros-toolchains.lock.toml`, normal CI should resolve the release through
+`aros build` and the temporary producer-run input can be retired.
+
+Predecessor run
+[`33218360446`](https://github.com/metaneutrons/AROS-NG/actions/runs/33218360446)
+proved five of six product lanes and exposed one real Linux parallel-build
+race: `test-freetype-lib-ftcommon` compiled before the generated
+`freetype/config/ftoption.h` existed. Commit `2234c516fb` binds the ordinary
+FreeType link library, module link library and demo `ftcommon` library to the
+header-producing target. The multi-consumer fixture passes, and a regenerated
+real AArch64 Ninja graph contains the required order-only edge. The corrected
+run passed the previously failing Linux AArch64 product in full.
+
+The next release sequence is now narrow: review the final branch, create a new
+`toolchain-v1-*` tag, let the four-host by three-profile producer rebuild every
+archive twice and pass its compatibility gates, review and publish the draft
+unchanged, then promote the measured release index into the CLI lock. Physical
+UART boot claims for Pi 3B+, Pi 5 and Milk-V remain separate hardware evidence
+and are not implied by these build results.
+
 ## Update 28 August 2026 — native validated fetch boundary
 
 The transpiled AROS-NG CMake graph no longer executes `scripts/fetch.sh`.
@@ -30,13 +69,13 @@ qualification are grouped in commits `e37ae6f3c6`, `ff9b630cbf` and
 
 The complete Rust workspace, strict Clippy, architecture/dependency gates,
 native release build, CMake fetch/integrity/patch/reconfigure fixtures and the
-toolchain producer tests pass locally. The four-host GitHub matrix still has
-to run on Linux x86-64/AArch64 and macOS x86-64/AArch64 before this boundary
-is release-qualified. Repository execution from the case-sensitive internal
-NVMe volume showed an undiagnosed macOS loader stall for newly built test
-binaries in `_dyld_start`; the same tests ran immediately from a native
-`/private/tmp` target, and release binaries executed from the repository. This
-is not evidence of slow storage and must not be described as such.
+toolchain producer tests pass locally. All four native host contracts passed
+in run `33220983286` on Linux x86-64/AArch64 and macOS x86-64/AArch64.
+Repository execution from the case-sensitive internal NVMe volume previously
+showed an undiagnosed macOS loader stall for newly built test binaries in
+`_dyld_start`; the same tests ran immediately from a native `/private/tmp`
+target, and release binaries executed from the repository. This is not
+evidence of slow storage and must not be described as such.
 
 ## Update 28 August 2026 — explicit port integrity and true offline builds
 
