@@ -45,6 +45,19 @@ unwanted compiler rebuild; it was immediately re-enabled.  Recovery now
 records and rechecks both the annotated tag-object ID and its peeled commit and
 never creates or retargets a release tag itself.
 
+The product workflow now treats that published lock as its ordinary path.
+Push, pull-request and manual runs without an input execute all six Linux
+x86-64/macOS ARM64 product lanes through `aros build --clean`, allowing
+`aros-cli` to download and verify RC3 itself.  The optional
+`toolchain_source_run_id` remains only for deliberate qualification of an
+unpublished producer candidate; in that mode the archive first passes the
+safe two-root producer verifier and is then supplied explicitly through
+`--toolchain-dir`.  Static workflow contracts, `actionlint`, the complete
+producer test and an actual downloaded RC3 archive verification pass locally.
+No new remote product matrix was dispatched because the included Actions
+allowance was already exhausted; the next normal main/PR run supplies the
+remaining end-to-end CI observation.
+
 ## Update 29 August 2026 — macOS/Linux product qualification is green
 
 GitHub Actions run
