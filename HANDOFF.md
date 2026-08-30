@@ -1,5 +1,135 @@
 # Handoff
 
+## Update 30 August 2026 — migration implementation paused
+
+Fabian went offline and explicitly requested a safe pause. No further merges, tags,
+releases, repository rewrites, Cloudflare changes, or credential changes were made
+after this handoff was recorded. Already-started GitHub Actions runs may continue
+independently.
+
+### Safety and repository state
+
+- `AROS-NG` remains intact. The migration has been non-destructive; do not delete or
+  rewrite it yet.
+- Recoverable backup: `/Volumes/Dev/Backups/AROS-NG-migration-20260830.RJWp2h`.
+- This repository was clean on `integration/upstream-20260826` before this handoff
+  update; its previous HEAD was `a74b18a10f`.
+- No release tag was created for `aros-tools`, and no package, APT repository, R2
+  bucket, or AUR package was published.
+
+### AROS-NX
+
+- PR [#18](https://github.com/metaneutrons/AROS-NX/pull/18) was merged normally
+  into `main` at `b8853d6af8` after its 12/12 build matrix passed. Its CMake fix was
+  `ddeb9d2dc5`.
+- Post-merge matrix run [33304802711](https://github.com/metaneutrons/AROS-NX/actions/runs/33304802711)
+  was still running at pause time. Last observation: 6 successes, no failures; the
+  remaining jobs included `arm-raspi` on Linux x86 and five macOS lanes. It occupied
+  all five macOS concurrency slots and explains the subsequent macOS queues.
+- Upstream-sync PR [#17](https://github.com/metaneutrons/AROS-NX/pull/17) is open on
+  `feature/upstream-sync`, head `a48fe999e4`. Matrix run
+  [33304830813](https://github.com/metaneutrons/AROS-NX/actions/runs/33304830813)
+  was running/queued; last observation was 3 successes and no failures. Do not merge
+  until every required check is green.
+- `AROS_SYNC_TOKEN` is not configured. Automated upstream synchronization is not
+  operational until a dedicated fine-grained token is explicitly installed.
+- All 12 inventoried patch candidates already exist as cleaned `pr/*` branches based
+  exactly on upstream `6722a0ae9e`; the dependent ELF-startup branch has two commits.
+  The attribution scan found no Claude/Anthropic text or `Co-Authored-By` trailers.
+  The bsdsocket branch tip is `cd3f5115c2`.
+- `main` requires the exact 12 build products plus Windows checks, with administrator
+  enforcement and no force-push/deletion. `master` also rejects force-push/deletion.
+
+### aros-tools
+
+- PR #2 (root contract) is merged at `d194fe3`.
+- Draft PR [#3](https://github.com/metaneutrons/aros-tools/pull/3) is at
+  `99231b57a5166b97d310258ed9906056a361597a` in the clean worktree
+  `/Volumes/Dev/Build/aros-tools-release` on `feature/release-distribution`.
+- PR #3 contains the deterministic release producer, four-host signed qualification,
+  documentation, Debian packaging, Homebrew/AUR metadata, static xz linkage, and
+  actual package-manager gates. The latest commit is
+  `99231b5 ci(packaging): install every distribution candidate`.
+- The static-xz four-host run
+  [33304397750](https://github.com/metaneutrons/aros-tools/actions/runs/33304397750)
+  and workspace run
+  [33304397630](https://github.com/metaneutrons/aros-tools/actions/runs/33304397630)
+  are fully green. The candidate archive checksum was independently verified; macOS
+  no longer links `/opt/homebrew/.../liblzma`, and the Debian package depends only on
+  `libc6 (>= 2.34)`.
+- Current package-manager run
+  [33305070711](https://github.com/metaneutrons/aros-tools/actions/runs/33305070711):
+  Linux x86_64/ARM64 and metadata were green; macOS jobs were queued behind AROS-NX.
+  Its aggregate then gates four real Homebrew installs and AUR x86_64/aarch64 package
+  tests. Workspace run
+  [33305070662](https://github.com/metaneutrons/aros-tools/actions/runs/33305070662)
+  had Linux and formatting green, with macOS queued.
+- Local qualification passed for native Apple Silicon Homebrew installation/test,
+  AUR x86_64 installation and all eight commands, AUR aarch64 byte comparison, and
+  Debian installation/verification with all eight commands.
+- PR qualification deliberately uses workspace version `0.1.0`, matching the binary,
+  Debian package, and formula; the Actions run ID is used only in the candidate URL.
+- Keep PR #3 as a draft until every remote gate is green. Then mark it ready and use
+  the repository's normal squash merge. Do not create a tag yet.
+
+### homebrew-tap
+
+- Worktree `/Volumes/Dev/Source/homebrew-tap`, PR
+  [#1](https://github.com/metaneutrons/homebrew-tap/pull/1), clean branch
+  `ci/fail-closed-formula-qualification`, head
+  `5d96bd9047d315a77b481b07d731e3b8fe1e43a6`.
+- Commits `6c118c9` and `5d96bd9` provide pinned Actions, read-only permissions,
+  exact changed-formula discovery, real Intel/ARM macOS installation tests, Linux
+  x86/ARM tests specifically for `aros-tools`, bounded manual input, and the stable
+  `Formula qualification` aggregate gate.
+- PR discovery and its stable gate are green. Manual current-head run
+  [33305424323](https://github.com/metaneutrons/homebrew-tap/actions/runs/33305424323)
+  was queued; the superseded run `33305208343` was intentionally cancelled. Do not
+  merge until the current manual run is green. After merge, protect `main` with the
+  required `Formula qualification` check; the tap is currently unprotected.
+
+### aros-toolchains
+
+- Foundation PR #1 is merged at `b7c3c66`. Local repository:
+  `/Volumes/Dev/Source/aros-toolchains`.
+- After AROS-NX synchronization and the aros-tools PR #3 merge, update source/tools
+  pins to the final commits and run a fresh standalone qualification: 24 builds, 12
+  byte-identical comparisons, and all compatibility lanes.
+- RC3 remains the canonical historical release in AROS-NG. Do not copy or relabel its
+  attestations.
+
+### Credential-gated publication still pending
+
+- Implement public release publication in a separate `aros-tools` PR after PR #3.
+- Required dedicated credentials: `AROS_SYNC_TOKEN`, cross-repository package-publish
+  token for the Homebrew tap, AUR SSH private key, APT GPG key/fingerprint, and
+  bucket-scoped Cloudflare R2 credentials.
+- The `aros-tools` repository currently has no configured secrets/variables.
+- `aros-tools-bin` did not yet exist in AUR at the last check.
+- The R2 bucket `aros-packages` has not been created. This is a billable/external
+  write and requires explicit confirmation plus narrowly scoped credentials; never
+  silently reuse a broad token from `~/.env_vars`.
+- The current release workflow creates and promotes GitHub releases only. A separate
+  PR must implement staged public prerelease, downstream publication/verification,
+  and only then stable/latest promotion. Documentation makes APT, Homebrew, and AUR
+  mandatory before the first public tag.
+
+### Resume order
+
+1. Inspect the four recorded Actions runs; do not re-run successful work blindly.
+2. If fully green, finish AROS-NX PR #17, then aros-tools PR #3, then homebrew-tap
+   PR #1, preserving each repository's required checks and merge policy.
+3. Add credentials only with Fabian's explicit authorization and least privilege;
+   implement publication in its own reviewable PR.
+4. Pin the resulting AROS-NX/aros-tools commits in `aros-toolchains` and run the fresh
+   full qualification.
+5. Continue the already prepared patch branches; only consider retiring AROS-NG after
+   every migration and release artifact has been independently verified.
+
+Plan status at pause: extraction/docs/CI and the AROS-NX CMake integration are
+complete; upstream sync and package qualification are in progress; credential-isolated
+publication, fresh toolchain qualification, and remaining patch integration are pending.
+
 ## Planned repository split — AROS-NX, aros-tools and aros-toolchains
 
 The agreed, non-destructive migration and its acceptance gates are recorded in
