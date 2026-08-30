@@ -1,5 +1,13 @@
 # Handoff
 
+## Planned repository split — AROS-NX, aros-tools and aros-toolchains
+
+The agreed, non-destructive migration and its acceptance gates are recorded in
+[`MIGRATION-AROS-NX.md`](MIGRATION-AROS-NX.md).  No repository migration or
+deletion has started.  In particular, AROS-NG remains intact until backups have
+been restored successfully, the new repositories pass every gate, and Fabian
+separately confirms its deletion.
+
 ## Update 29 August 2026 — deterministic toolchain RC3 published
 
 The first complete deterministic toolchain release is published as the
@@ -54,9 +62,12 @@ unpublished producer candidate; in that mode the archive first passes the
 safe two-root producer verifier and is then supplied explicitly through
 `--toolchain-dir`.  Static workflow contracts, `actionlint`, the complete
 producer test and an actual downloaded RC3 archive verification pass locally.
-No new remote product matrix was dispatched because the included Actions
-allowance was already exhausted; the next normal main/PR run supplies the
-remaining end-to-end CI observation.
+After AROS-NG became public, normal lock-based product run
+[`33277260180`](https://github.com/metaneutrons/AROS-NG/actions/runs/33277260180)
+passed all eleven jobs at commit `f2cdd60d3f533870bda579cd5fd7e771a8161425`:
+the Rust gate, four native fetch contracts and all six macOS/Linux product
+lanes.  This supplies the final end-to-end RC3 consumer observation without an
+unpublished candidate input.
 
 ## Update 29 August 2026 — macOS/Linux product qualification is green
 
