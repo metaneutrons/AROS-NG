@@ -1,10 +1,21 @@
 # AROS-NX repository migration plan
 
-Status: execution started on 30 August 2026.  The measured extraction ledger is
-in `MIGRATION-INVENTORY.md`.  Baseline is AROS-NG commit
+Status: execution is in final qualification as of 30 August 2026. The measured
+extraction ledger is in `MIGRATION-INVENTORY.md`. Baseline is AROS-NG commit
 `c35ed6ec7438cc8611ae88957e094dca5abf8972` and the published prerelease
-`toolchain-v1-20260829-rc3`.  AROS-NG remains the recoverable source of truth
+`toolchain-v1-20260829-rc3`. AROS-NG remains the recoverable source of truth
 until every acceptance criterion below is met.
+
+The repository split is now live: AROS-NX `main` contains the reviewed OS patch
+series, `aros-tools` contains the attribution-clean Rust workspace and release
+publisher, and `aros-toolchains` contains the standalone producer. The
+Cloudflare distribution namespace is provisioned and the Homebrew tap is
+qualified. The dedicated synchronization and package-publication credentials
+are configured. Remaining gates are the current upstream-sync PR, a fresh
+standalone 24-build qualification against the resulting AROS-NX `main`, its
+immutable release, the first stable `aros-tools` release, and final clean-room
+consumer checks. This file records target policy; measured run and commit
+identities are maintained in `HANDOFF.md`.
 
 ## Target repositories
 
@@ -76,10 +87,17 @@ of immutable toolchain archives; Cloudflare R2 is not a second toolchain SSOT.
 
 - GitHub Releases: `aros-tools` host archives and all toolchain archives.
 - GitHub Pages: Astro/Starlight documentation.
-- A new Cloudflare R2 Standard bucket `aros-packages`, with WEUR placement, is
-  limited to the signed APT repository, keys and transactional staging.
-- CI receives a bucket-scoped token; public delivery gets a dedicated custom
-  domain before stable release.
+- Cloudflare R2 Standard bucket `aros-distributions`, with WEUR placement,
+  provides the shared public distribution namespace at
+  `https://aros.metaneutrons.cc`.
+- The stable aros-tools workflow owns `tools/`, including the signed APT
+  repository at `tools/apt`; `toolchains/` and `images/` are reserved for
+  independently qualified future publishers. GitHub Releases remain the
+  canonical immutable source for toolchain archives unless that policy is
+  changed explicitly.
+- CI receives a token scoped to this bucket only. The production custom domain
+  requires TLS 1.2 or newer; the rate-limited `r2.dev` development endpoint is
+  not part of the release contract.
 - Existing R2 buckets are not reused.  The AROS payload should be small, but
   the Cloudflare account already stores about 18.56 GB and therefore exceeds
   R2's 10 GB account-wide free storage allowance today.

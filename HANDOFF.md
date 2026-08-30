@@ -1,5 +1,88 @@
 # Handoff
 
+## Update 30 August 2026 — final repository qualification in progress
+
+The non-destructive repository split has reached its final release gates.
+AROS-NG is still intact and must not be deleted without a new, explicit
+confirmation from Fabian. The verified migration backup remains at
+`/Volumes/Dev/Backups/AROS-NG-migration-20260830.RJWp2h`.
+
+### Qualified repository state
+
+- `metaneutrons/AROS-NX` `main` is at
+  `ce884eb42ef68187f154e25172080d17e8bddb68`. PR #20 integrated the current
+  LLVM/crosstools source closure. Post-merge product run 33321513095 passed all
+  twelve host/profile lanes, including the three Intel-macOS products.
+  The dedicated upstream-sync credential is active: its first manual proof run
+  33324335927 fast-forwarded protected `master` to upstream
+  `9da9db55d5fa16a34527782a82f216574ee8c5e5` and opened
+  [PR #21](https://github.com/metaneutrons/AROS-NX/pull/21) from
+  `sync/upstream-9da9db55d5fa` into `main`. Its complete product matrix is a
+  release gate. If it passes and is merged, the final toolchain qualification
+  must use the resulting new `main` commit, not `ce884…`.
+- `metaneutrons/aros-tools` `main` is at
+  `707037be4f8ff37300a1a89166c35f661c28bafe`. PR #5 merged the isolated stable
+  publication workflow, deterministic signed APT generation and Astro
+  Starlight documentation after every PR gate passed.
+- `metaneutrons/homebrew-tap` `main` is at
+  `44866ec`. Its protected `Formula qualification` gate is green.
+- `metaneutrons/aros-toolchains` PR #2 is open from
+  `build/qualified-migration-inputs`. Commit `d86ad573` removes the producer's
+  hidden filename-to-patch convention: each consumed AROS patch is now an
+  explicit optional source-lock field, while the locked Expat dependency is
+  intentionally unpatched. Local producer/schema/lint tests and Actions run
+  33323474100 are green.
+- Full standalone toolchain qualification run 33323499327 targets exact
+  producer commit `d86ad573dd5f8894ae1e4f528d08fd8a72b21fe9`, AROS-NX commit
+  `ce884eb42ef68187f154e25172080d17e8bddb68`, and aros-tools commit
+  `707037be4f8ff37300a1a89166c35f661c28bafe`. Its plan and immutable-source
+  gates passed and all 24 four-host/three-profile A/B build lanes started.
+  Manual qualification does not publish a release.
+
+### Distribution infrastructure
+
+- Cloudflare account `lexICT` owns R2 Standard bucket `aros-distributions`
+  with WEUR placement. Custom domain `https://aros.metaneutrons.cc` is active,
+  public, and requires TLS 1.2 or newer.
+- The stable aros-tools publisher owns prefix `tools/`; the signed APT
+  repository is `https://aros.metaneutrons.cc/tools/apt`. Prefixes
+  `toolchains/` and `images/` are reserved. GitHub Releases remain canonical
+  for immutable toolchain archives.
+- A bucket-only R2 object-write credential is stored in the macOS Keychain and
+  as `R2_ACCESS_KEY_ID`/`R2_SECRET_ACCESS_KEY` in the aros-tools `release`
+  environment. The bucket/account/base-URL variables, APT signing key,
+  fingerprint, AUR key and pinned AUR known-host key are also configured.
+- No distribution object has been uploaded yet. An empty APT path currently
+  returns the expected verified-TLS HTTP 404.
+
+### Remaining release gates
+
+1. Require prequalification run 33323499327 to pass 24 builds, 12
+   byte-identical comparisons, 12 compatibility lanes, relocation, inventory
+   and SBOM checks. Diagnose any
+   failure; do not publish partial artifacts. This run is evidence only because
+   it is pinned to the preceding AROS-NX `main` commit.
+2. Require AROS-NX PR #21 to pass its full product matrix, merge it normally,
+   update the standalone producer's AROS-NX source pin to the resulting exact
+   `main` commit, and repeat the entire final 24-build qualification.
+3. Merge aros-toolchains PR #2 only after that final independent qualification
+   is fully green. Then create a new immutable standalone toolchain tag and
+   qualify its publishing run and attestation from scratch; never copy or
+   relabel AROS-NG RC3 attestations.
+4. `AROS_SYNC_TOKEN` is configured only in AROS-NX with Contents, Pull
+   requests and Workflows write; `PACKAGE_PUBLISH_TOKEN` is configured only in
+   the aros-tools `release` environment and grants Contents/Pull requests write
+   only to `homebrew-tap`. Both fine-grained credentials expire on 30 August
+   2027 and replace no broad local GitHub CLI credential.
+5. Publish aros-tools `v0.1.0` only when the fresh toolchain lock and both
+   tokens are configured. Verify the GitHub artifacts, APT install, four-host
+   Homebrew formula and AUR package before stable/latest promotion.
+6. Run final pristine-upstream and AROS-NX clean-room consumers, update this
+   handoff with measured URLs/hashes, and commit the migration documentation.
+
+The earlier pause report below is retained as historical evidence; where it
+conflicts with this section, this section is authoritative.
+
 ## Update 30 August 2026 — migration implementation paused
 
 Fabian went offline and explicitly requested a safe pause. No further merges, tags,
