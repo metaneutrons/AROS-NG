@@ -10,34 +10,37 @@ confirmation from Fabian. The verified migration backup remains at
 ### Qualified repository state
 
 - `metaneutrons/AROS-NX` `main` is at
-  `ce884eb42ef68187f154e25172080d17e8bddb68`. PR #20 integrated the current
-  LLVM/crosstools source closure. Post-merge product run 33321513095 passed all
-  twelve host/profile lanes, including the three Intel-macOS products.
-  The dedicated upstream-sync credential is active: its first manual proof run
-  33324335927 fast-forwarded protected `master` to upstream
+  `ffdfaada336e49ef13f74c839b4e0196dca106be`. PR #20 integrated the current
+  LLVM/crosstools source closure. The dedicated upstream-sync credential's
+  first proof run 33324335927 fast-forwarded protected `master` to upstream
   `9da9db55d5fa16a34527782a82f216574ee8c5e5` and opened
-  [PR #21](https://github.com/metaneutrons/AROS-NX/pull/21) from
-  `sync/upstream-9da9db55d5fa` into `main`. Its complete product matrix is a
-  release gate. If it passes and is merged, the final toolchain qualification
-  must use the resulting new `main` commit, not `ce884…`.
+  [PR #21](https://github.com/metaneutrons/AROS-NX/pull/21), which passed all
+  fourteen product/Windows checks and merged normally at 19:05:12Z.
+- [PR #22](https://github.com/metaneutrons/AROS-NX/pull/22),
+  `fix/toolchain-release-closure`, is rebased on that exact `main` at
+  `c2340c452d1cfc939d343b086c21e925fee5b84b`. It removes the accidental
+  `features` prerequisite from the producer-only `crosstools-release` target:
+  that broad target reached unrelated Ports and requested GLU after the LLVM
+  toolchain had completed. At handoff time its fresh 14-lane matrix has ten
+  successes and four active lanes, with no failure.
 - `metaneutrons/aros-tools` `main` is at
   `707037be4f8ff37300a1a89166c35f661c28bafe`. PR #5 merged the isolated stable
   publication workflow, deterministic signed APT generation and Astro
   Starlight documentation after every PR gate passed.
 - `metaneutrons/homebrew-tap` `main` is at
   `44866ec`. Its protected `Formula qualification` gate is green.
-- `metaneutrons/aros-toolchains` PR #2 is open from
-  `build/qualified-migration-inputs`. Commit `d86ad573` removes the producer's
-  hidden filename-to-patch convention: each consumed AROS patch is now an
-  explicit optional source-lock field, while the locked Expat dependency is
-  intentionally unpatched. Local producer/schema/lint tests and Actions run
-  33323474100 are green.
-- Full standalone toolchain qualification run 33323499327 targets exact
-  producer commit `d86ad573dd5f8894ae1e4f528d08fd8a72b21fe9`, AROS-NX commit
-  `ce884eb42ef68187f154e25172080d17e8bddb68`, and aros-tools commit
-  `707037be4f8ff37300a1a89166c35f661c28bafe`. Its plan and immutable-source
-  gates passed and all 24 four-host/three-profile A/B build lanes started.
-  Manual qualification does not publish a release.
+- `metaneutrons/aros-toolchains` [PR #2](https://github.com/metaneutrons/aros-toolchains/pull/2)
+  remains open from `build/qualified-migration-inputs`, currently
+  `fb1e684c71740268be2a784b248033bfb81be44d`; its contracts gate is green.
+  `d86ad573` removed the producer's hidden filename-to-patch convention, and
+  `bf3b127` updates the artifact uploader to the current Node-24 runtime.
+- The first standalone prequalification, run 33323499327, was intentionally
+  cancelled and is invalid for release. Three independent macOS lanes had
+  already reproduced the same closure defect: after completing LLVM they
+  reached `features` and the offline guard correctly rejected missing
+  `glu-9.0.2`. No artifact, tag or release was created. The final producer
+  must instead pin the `main` commit resulting from PR #22 and reinstate the
+  release-closure assertion in the same source-pin change.
 
 ### Distribution infrastructure
 
@@ -57,27 +60,26 @@ confirmation from Fabian. The verified migration backup remains at
 
 ### Remaining release gates
 
-1. Require prequalification run 33323499327 to pass 24 builds, 12
-   byte-identical comparisons, 12 compatibility lanes, relocation, inventory
-   and SBOM checks. Diagnose any
-   failure; do not publish partial artifacts. This run is evidence only because
-   it is pinned to the preceding AROS-NX `main` commit.
-2. Require AROS-NX PR #21 to pass its full product matrix, merge it normally,
-   update the standalone producer's AROS-NX source pin to the resulting exact
-   `main` commit, and repeat the entire final 24-build qualification.
-3. Merge aros-toolchains PR #2 only after that final independent qualification
+1. Require AROS-NX PR #22 to pass its rebased full product matrix and merge it
+   normally. Record the resulting exact `main` commit.
+2. Update aros-toolchains PR #2 to that exact source commit and reinstate the
+   release-closure assertion. Require its contracts gate to pass.
+3. Run a fresh independent final qualification: 24 builds, 12 byte-identical
+   comparisons, 12 compatibility lanes, relocation, inventory and SBOM checks.
+   Diagnose any failure; do not publish partial artifacts.
+4. Merge aros-toolchains PR #2 only after that final independent qualification
    is fully green. Then create a new immutable standalone toolchain tag and
    qualify its publishing run and attestation from scratch; never copy or
    relabel AROS-NG RC3 attestations.
-4. `AROS_SYNC_TOKEN` is configured only in AROS-NX with Contents, Pull
+5. `AROS_SYNC_TOKEN` is configured only in AROS-NX with Contents, Pull
    requests and Workflows write; `PACKAGE_PUBLISH_TOKEN` is configured only in
    the aros-tools `release` environment and grants Contents/Pull requests write
    only to `homebrew-tap`. Both fine-grained credentials expire on 30 August
    2027 and replace no broad local GitHub CLI credential.
-5. Publish aros-tools `v0.1.0` only when the fresh toolchain lock and both
+6. Publish aros-tools `v0.1.0` only when the fresh toolchain lock and both
    tokens are configured. Verify the GitHub artifacts, APT install, four-host
    Homebrew formula and AUR package before stable/latest promotion.
-6. Run final pristine-upstream and AROS-NX clean-room consumers, update this
+7. Run final pristine-upstream and AROS-NX clean-room consumers, update this
    handoff with measured URLs/hashes, and commit the migration documentation.
 
 The earlier pause report below is retained as historical evidence; where it

@@ -11,11 +11,12 @@ series, `aros-tools` contains the attribution-clean Rust workspace and release
 publisher, and `aros-toolchains` contains the standalone producer. The
 Cloudflare distribution namespace is provisioned and the Homebrew tap is
 qualified. The dedicated synchronization and package-publication credentials
-are configured. Remaining gates are the current upstream-sync PR, a fresh
-standalone 24-build qualification against the resulting AROS-NX `main`, its
-immutable release, the first stable `aros-tools` release, and final clean-room
-consumer checks. This file records target policy; measured run and commit
-identities are maintained in `HANDOFF.md`.
+are configured. Upstream synchronization has passed and merged; the remaining
+source gate is the port-free `crosstools-release` closure fix. After it merges,
+a fresh standalone 24-build qualification must use that exact AROS-NX `main`
+commit before its immutable release, the first stable `aros-tools` release,
+and final clean-room consumer checks. This file records target policy;
+measured run and commit identities are maintained in `HANDOFF.md`.
 
 ## Target repositories
 
