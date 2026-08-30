@@ -3,10 +3,17 @@
 ## Planned repository split — AROS-NX, aros-tools and aros-toolchains
 
 The agreed, non-destructive migration and its acceptance gates are recorded in
-[`MIGRATION-AROS-NX.md`](MIGRATION-AROS-NX.md).  No repository migration or
-deletion has started.  In particular, AROS-NG remains intact until backups have
-been restored successfully, the new repositories pass every gate, and Fabian
-separately confirms its deletion.
+[`MIGRATION-AROS-NX.md`](MIGRATION-AROS-NX.md).  AROS-NG remains intact until
+backups have been restored successfully, the new repositories pass every gate,
+and Fabian separately confirms its deletion.
+
+Execution started on 30 August 2026.  Phase 0 is complete: the safety snapshot
+at `/Volumes/Dev/Backups/AROS-NG-migration-20260830.RJWp2h` contains a verified
+portable bundle, exact Git archive, successful independent restore, all 56 RC3
+assets, five CI log archives and the separately preserved dirty toolchain
+snapshot.  The measured path and patch classification is recorded in
+[`MIGRATION-INVENTORY.md`](MIGRATION-INVENTORY.md).  No repository has been
+deleted or rewritten.
 
 ## Update 29 August 2026 — deterministic toolchain RC3 published
 

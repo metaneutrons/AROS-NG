@@ -1,7 +1,8 @@
 # AROS-NX repository migration plan
 
-Status: agreed plan, not yet executed.  Baseline is AROS-NG commit
-`f2cdd60d3f533870bda579cd5fd7e771a8161425` and the published prerelease
+Status: execution started on 30 August 2026.  The measured extraction ledger is
+in `MIGRATION-INVENTORY.md`.  Baseline is AROS-NG commit
+`c35ed6ec7438cc8611ae88957e094dca5abf8972` and the published prerelease
 `toolchain-v1-20260829-rc3`.  AROS-NG remains the recoverable source of truth
 until every acceptance criterion below is met.
 
