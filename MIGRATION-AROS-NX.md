@@ -1,22 +1,22 @@
 # AROS-NX repository migration plan
 
-Status: execution is in final qualification as of 30 August 2026. The measured
+Status: initial-release closure in progress as of 5 September 2026. The measured
 extraction ledger is in `MIGRATION-INVENTORY.md`. Baseline is AROS-NG commit
 `c35ed6ec7438cc8611ae88957e094dca5abf8972` and the published prerelease
-`toolchain-v1-20260829-rc3`. AROS-NG remains the recoverable source of truth
-until every acceptance criterion below is met.
+`toolchain-v1-20260829-rc3`. AROS-NG remains preserved as the recoverable
+historical source; active development has moved to the split repositories.
 
 The repository split is now live: AROS-NX `main` contains the reviewed OS patch
 series, `aros-tools` contains the attribution-clean Rust workspace and release
-publisher, and `aros-toolchains` contains the standalone producer. The
-Cloudflare distribution namespace is provisioned and the Homebrew tap is
-qualified. The dedicated synchronization and package-publication credentials
-are configured. Upstream synchronization has passed and merged; the remaining
-source gate is the port-free `crosstools-release` closure fix. After it merges,
-a fresh standalone 24-build qualification must use that exact AROS-NX `main`
-commit before its immutable release, the first stable `aros-tools` release,
-and final clean-room consumer checks. This file records target policy;
-measured run and commit identities are maintained in `HANDOFF.md`.
+publisher, and `aros-toolchains` contains the standalone producer. Its own
+`toolchain-v1-20260831-rc3` prerelease is published; the AROS-NX consumer lock
+enables its measured four-host/three-profile matrix. Source integration PRs
+#25 and #28 remain open. The first tools release is not published: Release
+Please PR #38 proposes 0.1.1 after the untagged 0.1.0 candidate was superseded.
+Fabian approved central APT publication through `metaneutrons/apt-archive`;
+aros-tools PR #39 implements that boundary and is still in qualification.
+This file records target policy; measured run and commit identities, pending
+credential handoff and explicit hardware evidence gaps are in `HANDOFF.md`.
 
 ## Target repositories
 
@@ -56,7 +56,8 @@ It must work equally well with pristine upstream AROS and AROS-NX.
   while preserving code and all other authorship.  A full history and source
   scan must prove that no Claude/Anthropic attribution remains.
 
-Documentation uses Astro Starlight and is published on GitHub Pages.  English
+Documentation uses Astro Starlight at
+`https://aros.metaneutrons.cc/aros-tools/`. English
 is canonical and covers installation, pristine-upstream and AROS-NX workflows,
 configuration, generated CLI reference, toolchains, diagnostics/error codes,
 logging, security, reproducibility and release operations.  Documentation is
@@ -65,7 +66,8 @@ versioned with releases.
 Releases provide native archives for Linux x86-64/ARM64 and macOS x86-64/ARM64,
 plus:
 
-- `.deb` packages for amd64 and arm64 through a signed APT repository;
+- attested `.deb` packages for amd64 and arm64, consumed and published by the
+  centrally signed `metaneutrons/apt-archive` service;
 - a four-host Homebrew formula in `metaneutrons/homebrew-tap`;
 - an AUR `aros-tools-bin` package with exact hashes, never `SKIP`.
 
@@ -79,29 +81,28 @@ locks, schemas and verification.  GitHub Releases remain the canonical home
 of immutable toolchain archives; Cloudflare R2 is not a second toolchain SSOT.
 
 - Produce and compare two copies for every four-host/three-profile entry.
-- Test compatibility against current upstream `master` and AROS-NX `main`.
+- Test compatibility against explicit reviewed upstream and AROS-NX commit
+  identities. A published release never silently follows a moving branch.
 - Publish indexes, checksums, manifests, SBOMs and fresh provenance/attestation.
 - Document direct installation for users who do not use `aros-tools`.
 - Never retarget an existing tag or transplant an old attestation.
 
-## Hosting split
+## Public distribution surfaces
 
 - GitHub Releases: `aros-tools` host archives and all toolchain archives.
-- GitHub Pages: Astro/Starlight documentation.
-- Cloudflare R2 Standard bucket `aros-distributions`, with WEUR placement,
-  provides the shared public distribution namespace at
-  `https://aros.metaneutrons.cc`.
-- The stable aros-tools workflow owns `tools/`, including the signed APT
-  repository at `tools/apt`; `toolchains/` and `images/` are reserved for
-  independently qualified future publishers. GitHub Releases remain the
-  canonical immutable source for toolchain archives unless that policy is
-  changed explicitly.
-- CI receives a token scoped to this bucket only. The production custom domain
-  requires TLS 1.2 or newer; the rate-limited `r2.dev` development endpoint is
-  not part of the release contract.
-- Existing R2 buckets are not reused.  The AROS payload should be small, but
-  the Cloudflare account already stores about 18.56 GB and therefore exceeds
-  R2's 10 GB account-wide free storage allowance today.
+- `https://aros.metaneutrons.cc/`: beta landing page.
+- `https://aros.metaneutrons.cc/aros-tools/`: source-verified Starlight docs.
+- `https://deb.metaneutrons.cc/aros-tools`: central APT project prefix,
+  suite `rolling`, component `main`, architectures amd64/arm64. The domain
+  keyring is `https://deb.metaneutrons.cc/metaneutrons-archive-keyring.pgp`.
+- `metaneutrons/apt-archive` exclusively owns signing, metadata, retention,
+  refresh and storage publication. Tools CI only supplies attested packages,
+  requests the central workflow with a separate repository-restricted App,
+  and verifies the public signed result without credentials.
+- Toolchain and installation-image presentation may be added later; no
+  unqualified image channel or second toolchain artifact source is implied.
+- Hosting administration and local credential configuration do not belong in
+  the public user documentation. Do not modify Fabian's local skill/config.
 
 ## Migration sequence
 

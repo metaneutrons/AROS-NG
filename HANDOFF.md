@@ -1,5 +1,105 @@
 # Handoff
 
+## Update 5 September 2026 — initial-release closure
+
+This section supersedes the August status below. AROS-NG is the retained
+historical repository, not the current development checkout. Do not delete,
+retarget or rewrite it. The existing verified migration backup remains at
+`/Volumes/Dev/Backups/AROS-NG-migration-20260830.RJWp2h`.
+
+### Current repositories and release state
+
+- Active checkouts are under `/Volumes/Dev/Source/Amiga/`: `AROS-NX`,
+  `aros-tools` and `aros-toolchains`.
+- The standalone toolchain prerelease
+  [`toolchain-v1-20260831-rc3`](https://github.com/metaneutrons/aros-toolchains/releases/tag/toolchain-v1-20260831-rc3)
+  is published in **aros-toolchains**, with 56 release assets and a twelve-entry
+  four-host/three-profile index. Its identities are AROS source
+  `f3cfc243a84065166a46da28b0a5b22bbd0f8869`, producer
+  `c8039cf2b7291097ad62c6750bd7367e91a068f4` and tools
+  `707037be4f8ff37300a1a89166c35f661c28bafe`. It is not the old AROS-NG RC3.
+  The current NX consumer lock enables its twelve entries; RISC-V remains
+  disabled. Do not relabel this release to a newer source commit.
+- AROS-NX main is `909df75879f278eec08a88c3f0a4aa3e963d888f`. PR #27
+  restored the upstream linker flags after all twelve product checks passed.
+  Upstream-sync PR #25 was updated to that main; its exact head is
+  `a2698c5e3e8e2bc8cf8934777bccbac081c9a42c`, matrix run
+  [33960448985](https://github.com/metaneutrons/AROS-NX/actions/runs/33960448985).
+  All six Linux products passed; the macOS lanes are running/queued without
+  an observed failure. Do not merge before the entire current-head matrix passes.
+- AROS-NX PR #28 removes the old source-owned CMake engine, which now lives in
+  aros-tools. Its old workflow called a removed source-tree test. Local fix
+  `e6ca85381f` selects tools `1fab25fd4bcda09f29b393ab177e324149ee8b43`,
+  builds the locked release workspace and calls its embedded engine fixture.
+  Release build, companion-header fixture and actionlint pass. After PR #25
+  merges, merge that resulting main into the existing PR #28 branch, push once
+  and require its fresh complete matrix. Do not use its stale failed run.
+- aros-tools main is `1fab25fd4bcda09f29b393ab177e324149ee8b43`. The
+  source-verified Starlight overhaul and native-producer milestone plan are
+  merged. Producer M0 PR #37 is separate work; M1+ is not this closure task.
+- There is **no published aros-tools release**. The merged but never tagged
+  0.1.0 candidate PR #9 was explicitly retired with an audit comment and removal
+  of `autorelease: pending`. Release Please PR #38 proposes 0.1.1; do not
+  hand-edit versions or tag the old candidate.
+
+### Approved central APT boundary
+
+Fabian approved exclusive signing/publication by `metaneutrons/apt-archive`.
+aros-tools supplies attested `.deb` files in its immutable GitHub release.
+The public source is `https://deb.metaneutrons.cc/aros-tools`, suite `rolling`,
+component `main`, using `metaneutrons-archive-keyring.pgp` from the domain root.
+Public primary fingerprint: `1B7B79417383648BBFBE282E01AB8296EF0FCD76`;
+domain signing fingerprint: `A0C21782FC507CCBD666F3ED242072FEC8BE54A4`.
+
+[aros-tools PR #39](https://github.com/metaneutrons/aros-tools/pull/39), head
+`1fbdf98f8801fd7dac21111a4ccaf41cddd20362`, replaces the tools-owned signer,
+renderer, R2 publisher and refresh workflow with a closed central contract,
+exact-run dispatch and independent signed public-package verification. Three
+functional commits are `244a500`, `d5d39e5` and `1fbdf98`. Local full workspace
+quality and documentation gates pass, including 27 signed-archive tests and
+18 dispatch/manifest tests. GitHub qualification is running; no publication has
+been requested.
+
+Fabian approved a separate private GitHub App, `metaneutrons-apt-dispatch`
+(App ID `4839524`, client ID `Iv23lipuojJasWcfs0Hc`). Only Actions write,
+Contents read and mandatory Metadata read were selected. Installation must be
+limited to `apt-archive`; the existing Release Please App is unchanged. The
+`apt-archive-publication` tools environment accepts only `v*` tags. App key
+handoff and installation are still pending: Chrome blocked the first automated
+PEM download and Fabian was asked to download a replacement himself. Remove
+the unused first key only after the replacement is secured and verified.
+The old project signing/storage secret copies are not yet removed. Do not
+describe the central channel as published before exact two-architecture
+installation and the final public-channel audit pass.
+
+### Resume order and working state
+
+1. Finish the dedicated App installation/credential handoff and read-only live
+   preflight; retire obsolete tools-owned APT credentials after the migration
+   code is qualified. Do not change local skill/config files.
+2. Require PR #39 to pass and merge normally. Let Release Please update PR #38,
+   qualify that exact candidate and then use its normal immutable tag workflow.
+   Full first-release A/B, isolated GitHub verification, central APT installs,
+   Homebrew, AUR and final four-channel verification remain release gates.
+3. Finish NX PR #25, then PR #28; resume the fail-closed upstream synchronizer
+   once main contains the mirrored upstream head. Keep every existing tag and
+   release unchanged and never merge a failed or incomplete matrix.
+4. Record final measured commits, runs and consumer proofs. Physical UART
+   evidence on Pi 3B+, Pi 5 and Milk-V Titan, fresh ARM/AArch64/RISC-V legacy
+   KOBJ triplets and a four-host RISC-V toolchain release remain unproven,
+   separate work.
+
+Owned working directories: `/Volumes/Dev/Build/aros-old-agenda.Xy0rdO/aros-tools`
+(`fix/initial-release-closure`) and sibling `aros-nx`
+(`refactor/engine-lives-in-tools`, with the unpushed PR #28 follow-up).
+The original NX checkout has an unrelated untracked `build/`; the original
+toolchains checkout has an unrelated modification to
+`scripts/toolchain/tests/test-crosstools-release.py`. The historical AROS-NG
+checkout also contains unstaged deletions in several tracked `dist/` and
+`build` paths. None belongs in closure commits; do not restore or stage them
+without a separate request. Only this handoff and migration document were
+edited in AROS-NG for the current task.
+
 ## Update 30 August 2026 — final repository qualification in progress
 
 The non-destructive repository split has reached its final release gates.
