@@ -20,6 +20,9 @@ retarget or rewrite it. The existing verified migration backup remains at
   `707037be4f8ff37300a1a89166c35f661c28bafe`. It is not the old AROS-NG RC3.
   The current NX consumer lock enables its twelve entries; RISC-V remains
   disabled. Do not relabel this release to a newer source commit.
+  Toolchains documentation PR #7 passed its contracts check and merged as
+  `ca1f6cfcf8a1d6555fe6fbf3463e479f15b7bef8`; it corrects the obsolete
+  migration-only README and records the independently reverified signed index.
 - AROS-NX main is `909df75879f278eec08a88c3f0a4aa3e963d888f`. PR #27
   restored the upstream linker flags after all twelve product checks passed.
   Upstream-sync PR #25 was updated to that main; its exact head is
@@ -62,12 +65,15 @@ been requested.
 
 Fabian approved a separate private GitHub App, `metaneutrons-apt-dispatch`
 (App ID `4839524`, client ID `Iv23lipuojJasWcfs0Hc`). Only Actions write,
-Contents read and mandatory Metadata read were selected. Installation must be
-limited to `apt-archive`; the existing Release Please App is unchanged. The
+Contents read and mandatory Metadata read were selected. Installation
+`159249431` now grants access to exactly `apt-archive`, verified in GitHub's
+installed-App UI; the existing Release Please App is unchanged. The
 `apt-archive-publication` tools environment accepts only `v*` tags. App key
-handoff and installation are still pending: Chrome blocked the first automated
-PEM download and Fabian was asked to download a replacement himself. Remove
-the unused first key only after the replacement is secured and verified.
+handoff is still pending: Chrome blocked the first automated PEM download and
+Fabian was asked to download a replacement himself. Remove the unused first
+key (ID `4357503`, public fingerprint
+`SHA256:LxcTrzwtEsQIHp1Y/IpSq2Mi6PjFNoGNzMLxbi4979c=`) only after the
+replacement is secured and verified. No App private key is yet stored in CI.
 The old project signing/storage secret copies are not yet removed. Do not
 describe the central channel as published before exact two-architecture
 installation and the final public-channel audit pass.
@@ -99,6 +105,13 @@ checkout also contains unstaged deletions in several tracked `dist/` and
 `build` paths. None belongs in closure commits; do not restore or stage them
 without a separate request. Only this handoff and migration document were
 edited in AROS-NG for the current task.
+The same temporary root contains `install-archive-app-credential.py`, a
+one-time helper that can verify the dedicated App using the replacement PEM,
+prove the installation's full repository/permission grant, run the read-only
+live contract preflight, and store the key in macOS Keychain plus the protected
+GitHub environment without printing it. It revokes its short-lived test token.
+It has not yet run because no replacement PEM is available. Do not substitute
+the old Release Please App or widen a personal token's scopes.
 
 ## Update 30 August 2026 — final repository qualification in progress
 
